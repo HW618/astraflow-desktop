@@ -274,6 +274,14 @@ function getStoredModelId(supported: StudioVideoModelOption[]) {
   return supported[0]?.id ?? ""
 }
 
+function isVideoGenerationPending(generation: StudioVideoGeneration) {
+  return (
+    generation.id.startsWith("pending-") ||
+    generation.status === "queued" ||
+    generation.status === "running"
+  )
+}
+
 function StudioVideoWorkbench({
   sessionId,
   onSessionChange,
@@ -372,12 +380,17 @@ function StudioVideoWorkbench({
   }, [selectedModelId])
 
   const reloadGenerations = React.useCallback(
-    async (activeSessionId: string) => {
+    async (
+      activeSessionId: string,
+      options: { clearOnError?: boolean } = {}
+    ) => {
       try {
         const next = await fetchVideoGenerations(activeSessionId)
         setGenerations(next)
       } catch {
-        setGenerations([])
+        if (options.clearOnError ?? true) {
+          setGenerations([])
+        }
       }
     },
     []
@@ -392,6 +405,18 @@ function StudioVideoWorkbench({
       void reloadGenerations(sessionId)
     })
   }, [sessionId, reloadGenerations])
+
+  React.useEffect(() => {
+    if (!sessionId || !generations.some(isVideoGenerationPending)) {
+      return
+    }
+
+    const interval = window.setInterval(() => {
+      void reloadGenerations(sessionId, { clearOnError: false })
+    }, 2_500)
+
+    return () => window.clearInterval(interval)
+  }, [generations, sessionId, reloadGenerations])
 
   function updateParam(field: StudioVideoParameterField, value: unknown) {
     setParamValues((current) => ({
