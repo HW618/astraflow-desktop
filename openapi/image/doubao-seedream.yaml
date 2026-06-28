@@ -2,12 +2,15 @@ openapi: 3.1.0
 x-language: en-US
 info:
   title: ModelVerse doubao-seedream Image API
-  version: "1.0.0"
+  version: "1.1.0"
   description: |
     Self-contained OpenAPI 3.1 schema for the ModelVerse OpenAI-compatible
     `doubao-seedream-4.5` and `doubao-seedream-5-0-260128` image generation
     API.
 
+    This file includes the documented text-to-image, reference-image,
+    group-image, streaming, web-search, and output-format fields for this
+    model family.
 
 servers:
   - url: https://api.modelverse.cn
@@ -29,8 +32,12 @@ paths:
       summary: Generate images with doubao-seedream
       description: |
         Generate images from a prompt, optionally using up to 14 reference
-        images. Set `stream` to `true` to receive Server-Sent Events for
-        partial success, partial failure, and completion events.
+        images. The API supports single-image and group-image generation.
+        Set `stream` to `true` to receive Server-Sent Events for partial
+        success, partial failure, and completion events.
+
+        The `tools` and `output_format` request fields are documented only for
+        `doubao-seedream-5-0-260128`.
       requestBody:
         required: true
         content:
@@ -158,6 +165,23 @@ components:
     DoubaoSeedreamGenerationRequest:
       type: object
       additionalProperties: false
+      allOf:
+        - if:
+            properties:
+              model:
+                const: doubao-seedream-4.5
+            required:
+              - model
+          then:
+            not:
+              anyOf:
+                - required:
+                    - tools
+                - required:
+                    - output_format
+            x-model-unsupported-fields:
+              - tools
+              - output_format
       required:
         - model
         - prompt
@@ -168,10 +192,12 @@ components:
           $ref: "#/components/schemas/DoubaoSeedreamPrompt"
         images:
           type: array
+          minItems: 1
           maxItems: 14
           description: |
             Reference image inputs. Each item can be an accessible URL or a
             Base64 data URL such as `data:image/png;base64,<base64_image>`.
+            The image format segment in the Base64 data URL should be lowercase.
           items:
             type: string
         size:
@@ -186,7 +212,8 @@ components:
           description: |
             Whether to enable streaming output. `false` returns all image
             results after generation completes; `true` returns SSE events as
-            each image result is available.
+            each image result is available. Streaming works for both single
+            images and generated image groups.
         response_format:
           type: string
           enum:
@@ -194,19 +221,25 @@ components:
             - b64_json
           default: url
           description: |
-            Image return format. URL links are valid for 24 hours after image
+            Image delivery format. URL links are valid for 24 hours after
             generation; `b64_json` returns Base64-encoded image data.
         watermark:
           type: boolean
           default: true
-          description: Whether to add the documented "AI generated" watermark in the lower-right corner.
+          description: |
+            Whether to add the documented "AI generated" watermark in the
+            lower-right corner.
         optimize_prompt_options:
           type: object
           additionalProperties: true
-          description: Prompt optimization options documented as an object.
+          description: Prompt optimization configuration.
         tools:
           type: array
-          description: Tool configuration. The source document states this parameter is supported only by `doubao-seedream-5-0-260128`.
+          minItems: 1
+          description: |
+            Tools the model may call while generating the image. This parameter
+            is supported only by `doubao-seedream-5-0-260128`; it is not
+            supported by `doubao-seedream-4.5`.
           items:
             $ref: "#/components/schemas/DoubaoSeedreamTool"
         output_format:
@@ -215,14 +248,16 @@ components:
             - png
             - jpeg
           default: jpeg
-          description: Output image file format. The source document states this parameter is supported only by `doubao-seedream-5-0-260128`.
+          description: |
+            Output image file format. The source document states this
+            parameter is supported only by `doubao-seedream-5-0-260128`.
 
     DoubaoSeedreamModel:
       type: string
       enum:
         - doubao-seedream-4.5
         - doubao-seedream-5-0-260128
-      description: Model name documented for this API.
+      description: Request model name documented for this API. Response `model` values may include a version suffix.
 
     DoubaoSeedreamPrompt:
       type: string
@@ -232,15 +267,24 @@ components:
     DoubaoSeedreamSize:
       type: string
       description: |
-        Image size. The documented keyword values are `2K` and `4K`; explicit
-        pixel dimensions use `<width>x<height>`. For explicit dimensions, the
-        documented total pixel range is 3,686,400 to 16,777,216 and the aspect
-        ratio range is 1/16 to 16.
+        Image size. Supports two mutually exclusive forms: keyword resolution
+        (`2K` or `4K`) or explicit pixel dimensions using `<width>x<height>`.
+        For explicit dimensions, the documented total pixel range is 3,686,400
+        to 16,777,216 and the aspect-ratio range is 1/16 to 16.
       default: 2048x2048
       x-min-pixels: 3686400
       x-max-pixels: 16777216
       x-min-aspect-ratio: "1:16"
       x-max-aspect-ratio: "16:1"
+      x-recommended-values:
+        - 2048x2048
+        - 2304x1728
+        - 1728x2304
+        - 2560x1440
+        - 1440x2560
+        - 2496x1664
+        - 1664x2496
+        - 3024x1296
       oneOf:
         - pattern: "^[24][Kk]$"
         - pattern: "^[1-9][0-9]*x[1-9][0-9]*$"
@@ -284,11 +328,13 @@ components:
       properties:
         type:
           type: string
-          const: web_search
+          enum:
+            - web_search
           default: web_search
           description: |
             Web search tool. When enabled, the model decides whether to search
-            the internet based on the prompt.
+            the internet based on the prompt, such as for products or weather,
+            which can improve freshness at the cost of additional latency.
 
     DoubaoSeedreamGenerationResponse:
       type: object
@@ -297,6 +343,7 @@ components:
         - model
         - created
         - data
+        - usage
       properties:
         model:
           type: string
@@ -318,6 +365,15 @@ components:
     DoubaoSeedreamImageData:
       type: object
       additionalProperties: false
+      oneOf:
+        - required:
+            - url
+            - size
+        - required:
+            - b64_json
+            - size
+        - required:
+            - error
       properties:
         url:
           type: string
@@ -337,6 +393,10 @@ components:
     DoubaoSeedreamUsage:
       type: object
       additionalProperties: false
+      required:
+        - generated_images
+        - output_tokens
+        - total_tokens
       properties:
         generated_images:
           type: integer
@@ -345,7 +405,7 @@ components:
           type: integer
           description: |
             Tokens spent on generated images. The source describes this as the
-            rounded value of `sum(image_width * image_height) / 256`.
+            integer value of `sum(image_width * image_height) / 256`.
         total_tokens:
           type: integer
           description: Total tokens consumed by the request; currently equal to `output_tokens`.
@@ -393,6 +453,13 @@ components:
         - model
         - created
         - image_index
+      oneOf:
+        - required:
+            - url
+            - size
+        - required:
+            - b64_json
+            - size
       properties:
         type:
           type: string

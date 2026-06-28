@@ -61,6 +61,13 @@ type NormalizedOutput = {
   height?: number | null
 }
 
+const ASYNC_TASK_MAX_POLLS = 45
+const ASYNC_TASK_POLL_INTERVAL_MS = 2_000
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 function dataUrlFromBase64(value: string, fallbackMime: string) {
   if (value.startsWith("data:")) {
     return value
@@ -127,9 +134,21 @@ function buildOpenaiPayload(
 
     const value = coerceFieldValue(field, params[field.name])
 
-    if (value !== undefined) {
-      payload[field.name] = value
+    if (value === undefined) {
+      continue
     }
+
+    if (field.options && field.options.length > 0 && field.arrayItemKey !== undefined) {
+      const stringValue = String(value)
+      payload[field.name] = [
+        field.arrayItemKey
+          ? { [field.arrayItemKey]: stringValue }
+          : stringValue,
+      ]
+      continue
+    }
+
+    payload[field.name] = value
   }
 
   if (attachments.length > 0) {
@@ -230,6 +249,22 @@ function buildGeminiPayload(
   }
 }
 
+function buildAsyncTaskPayload(modelId: string, prompt: string) {
+  if (modelId === "midjourney-fast-imagine") {
+    return {
+      model: modelId,
+      input: {
+        prompt,
+      },
+    }
+  }
+
+  return {
+    model: modelId,
+    input: {},
+  }
+}
+
 function extractOpenaiOutputs(payload: unknown): NormalizedOutput[] {
   if (!payload || typeof payload !== "object") {
     return []
@@ -315,12 +350,157 @@ function extractGeminiOutputs(payload: unknown): NormalizedOutput[] {
   return outputs
 }
 
+function extractAsyncTaskOutputs(payload: unknown): NormalizedOutput[] {
+  if (!payload || typeof payload !== "object") {
+    return []
+  }
+
+  const finalPayload =
+    "status" in payload
+      ? (payload as { status?: unknown }).status
+      : payload
+
+  if (!finalPayload || typeof finalPayload !== "object") {
+    return []
+  }
+
+  const output = (finalPayload as { output?: Record<string, unknown> }).output
+  const urls = Array.isArray(output?.urls) ? output.urls : []
+
+  return urls
+    .filter((url): url is string => typeof url === "string" && url.length > 0)
+    .map((url) => ({
+      url,
+      dataUrl: null,
+      mimeType: null,
+      width: null,
+      height: null,
+    }))
+}
+
 function extractOutputs(adapter: string, payload: unknown): NormalizedOutput[] {
   if (adapter === "gemini-generate-content") {
     return extractGeminiOutputs(payload)
   }
 
+  if (adapter === "async-task") {
+    return extractAsyncTaskOutputs(payload)
+  }
+
   return extractOpenaiOutputs(payload)
+}
+
+function getProviderErrorMessage(payload: unknown, fallback: string) {
+  if (!payload || typeof payload !== "object") {
+    return fallback
+  }
+
+  const error = (payload as { error?: { message?: unknown } }).error
+  if (typeof error?.message === "string" && error.message) {
+    return error.message
+  }
+
+  const statusPayload =
+    "status" in payload
+      ? (payload as { status?: unknown }).status
+      : payload
+
+  if (statusPayload && typeof statusPayload === "object") {
+    const output = (statusPayload as { output?: Record<string, unknown> })
+      .output
+    if (typeof output?.error_message === "string" && output.error_message) {
+      return output.error_message
+    }
+  }
+
+  return fallback
+}
+
+function getAsyncTaskId(payload: unknown) {
+  if (!payload || typeof payload !== "object") {
+    return null
+  }
+
+  const output = (payload as { output?: Record<string, unknown> }).output
+  const taskId = output?.task_id
+
+  if (typeof taskId === "string" && taskId) {
+    return taskId
+  }
+
+  if (typeof taskId === "number" && Number.isFinite(taskId)) {
+    return String(taskId)
+  }
+
+  return null
+}
+
+function getAsyncTaskStatus(payload: unknown) {
+  if (!payload || typeof payload !== "object") {
+    return null
+  }
+
+  const output = (payload as { output?: Record<string, unknown> }).output
+  const status = output?.task_status
+
+  return typeof status === "string" ? status : null
+}
+
+async function pollAsyncTask({
+  submitUrl,
+  taskId,
+  apiKey,
+}: {
+  submitUrl: string
+  taskId: string
+  apiKey: string
+}) {
+  const statusUrl = new URL("/v1/tasks/status", submitUrl)
+  statusUrl.searchParams.set("task_id", taskId)
+
+  for (let attempt = 0; attempt < ASYNC_TASK_MAX_POLLS; attempt += 1) {
+    if (attempt > 0) {
+      await sleep(ASYNC_TASK_POLL_INTERVAL_MS)
+    }
+
+    const response = await fetch(statusUrl, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+    })
+    const text = await response.text()
+    let parsed: unknown = null
+
+    try {
+      parsed = text ? JSON.parse(text) : null
+    } catch {
+      parsed = text
+    }
+
+    if (!response.ok) {
+      return { ok: false, status: response.status, body: parsed }
+    }
+
+    const taskStatus = getAsyncTaskStatus(parsed)
+
+    if (taskStatus === "Success") {
+      return { ok: true, status: response.status, body: parsed }
+    }
+
+    if (taskStatus === "Failure") {
+      return { ok: false, status: response.status, body: parsed }
+    }
+  }
+
+  return {
+    ok: false,
+    status: 504,
+    body: {
+      error: {
+        message: "Async image task timed out.",
+      },
+    },
+  }
 }
 
 async function callProvider({
@@ -464,32 +644,61 @@ export async function POST(request: Request, context: RouteContext) {
           parsed.data.params,
           parsed.data.attachments
         )
-      : buildOpenaiPayload(
-          modelConstant,
-          parsed.data.prompt,
-          fields,
-          parsed.data.params,
-          parsed.data.attachments
-        )
+      : registry.openapi.adapter === "async-task"
+        ? buildAsyncTaskPayload(modelConstant, parsed.data.prompt)
+        : buildOpenaiPayload(
+            modelConstant,
+            parsed.data.prompt,
+            fields,
+            parsed.data.params,
+            parsed.data.attachments
+          )
 
   try {
-    const providerResponse = await callProvider({
+    let providerResponse = await callProvider({
       url: endpointUrl,
       payload,
       apiKey,
       adapter: registry.openapi.adapter,
     })
 
+    if (providerResponse.ok && registry.openapi.adapter === "async-task") {
+      const taskId = getAsyncTaskId(providerResponse.body)
+
+      if (!taskId) {
+        providerResponse = {
+          ok: false,
+          status: 502,
+          body: {
+            submit: providerResponse.body,
+            error: {
+              message: "No async task id returned by the provider.",
+            },
+          },
+        }
+      } else {
+        const statusResponse = await pollAsyncTask({
+          submitUrl: endpointUrl,
+          taskId,
+          apiKey,
+        })
+
+        providerResponse = {
+          ok: statusResponse.ok,
+          status: statusResponse.status,
+          body: {
+            submit: providerResponse.body,
+            status: statusResponse.body,
+          },
+        }
+      }
+    }
+
     if (!providerResponse.ok) {
-      const message =
-        (providerResponse.body &&
-          typeof providerResponse.body === "object" &&
-          "error" in providerResponse.body &&
-          typeof (providerResponse.body as { error?: { message?: string } })
-            .error?.message === "string" &&
-          (providerResponse.body as { error: { message: string } }).error
-            .message) ||
+      const message = getProviderErrorMessage(
+        providerResponse.body,
         `Provider returned ${providerResponse.status}`
+      )
 
       updateStudioImageGeneration(generation.id, {
         status: "error",

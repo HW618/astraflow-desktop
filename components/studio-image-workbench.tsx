@@ -6,12 +6,18 @@ import {
   RiCloseLine,
   RiDownloadLine,
   RiLoader4Line,
+  RiQuestionLine,
   RiSaveLine,
 } from "@remixicon/react"
 
 import { useI18n } from "@/components/i18n-provider"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
 import {
   Select,
   SelectContent,
@@ -207,7 +213,11 @@ function StudioImageWorkbench({
   )
 
   const fields = selectedModel?.fields ?? []
-  const hasImageField = fields.some((field) => field.kind === "image")
+  const promptField = fields.find((field) => field.name === "prompt")
+  const imageField = fields.find(
+    (field) => field.kind === "image" && !field.hidden
+  )
+  const hasImageField = Boolean(imageField)
 
   React.useEffect(() => {
     let cancelled = false
@@ -473,10 +483,15 @@ function StudioImageWorkbench({
         </div>
 
         <div className="mt-4 flex flex-col gap-1.5">
-          <label className="text-xs font-medium text-muted-foreground">
-            {t.studioImagePrompt}
-          </label>
+          {promptField ? (
+            <ParameterLabel field={promptField} label={t.studioImagePrompt} />
+          ) : (
+            <label className="text-xs font-medium text-muted-foreground">
+              {t.studioImagePrompt}
+            </label>
+          )}
           <Textarea
+            id="studio-image-prompt"
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
             placeholder={t.studioImagePromptPlaceholder}
@@ -492,6 +507,7 @@ function StudioImageWorkbench({
             onAddUrl={addUrlAttachment}
             onAddFiles={addLocalFiles}
             onRemove={removeAttachment}
+            field={imageField}
           />
         ) : null}
 
@@ -576,19 +592,62 @@ type ParameterControlProps = {
   disabled?: boolean
 }
 
+type ParameterLabelProps = {
+  field: StudioImageParameterField
+  label?: string
+  className?: string
+}
+
+function ParameterLabel({ field, label, className }: ParameterLabelProps) {
+  const description = field.description?.trim()
+
+  return (
+    <div className={cn("flex min-w-0 items-center gap-1.5", className)}>
+      <span className="truncate text-xs font-medium text-muted-foreground">
+        {label ?? field.label}
+      </span>
+      {description ? (
+        <Popover>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              className="inline-flex size-4 shrink-0 items-center justify-center rounded-full border border-border text-muted-foreground outline-none transition hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/30 [&_svg]:size-3"
+              aria-label={`${label ?? field.label} description`}
+            >
+              <RiQuestionLine aria-hidden />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent
+            side="top"
+            align="start"
+            className="max-h-[min(60vh,22rem)] w-72 gap-2 overflow-y-auto rounded-2xl p-3 text-xs leading-relaxed"
+          >
+            <p className="font-medium text-foreground">
+              {label ?? field.label}
+            </p>
+            <p className="whitespace-pre-wrap break-words text-muted-foreground">
+              {description}
+            </p>
+          </PopoverContent>
+        </Popover>
+      ) : null}
+    </div>
+  )
+}
+
 function ParameterControl({
   field,
   value,
   onChange,
   disabled,
 }: ParameterControlProps) {
+  const suggestionListId = React.useId()
+
   if (field.kind === "boolean") {
     const next = Boolean(value)
     return (
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs font-medium text-muted-foreground">
-          {field.label}
-        </span>
+        <ParameterLabel field={field} />
         <Toggle
           pressed={next}
           onPressedChange={(pressed) => onChange(pressed)}
@@ -602,20 +661,25 @@ function ParameterControl({
   }
 
   if (field.kind === "select" && field.options && field.options.length > 0) {
+    const noneSentinel = "__none__"
+    const selected =
+      typeof value === "string" && value.length > 0 ? value : noneSentinel
+    const canClear = !field.required
     return (
       <div className="flex flex-col gap-1.5">
-        <span className="text-xs font-medium text-muted-foreground">
-          {field.label}
-        </span>
+        <ParameterLabel field={field} />
         <Select
-          value={typeof value === "string" ? value : ""}
-          onValueChange={(next) => onChange(next)}
+          value={selected}
+          onValueChange={(next) => onChange(next === noneSentinel ? "" : next)}
           disabled={disabled}
         >
           <SelectTrigger className="w-full rounded-2xl">
             <SelectValue placeholder={field.label} />
           </SelectTrigger>
           <SelectContent>
+            {canClear ? (
+              <SelectItem value={noneSentinel}>—</SelectItem>
+            ) : null}
             {field.options.map((option) => (
               <SelectItem key={option.value} value={option.value}>
                 {option.label}
@@ -632,14 +696,14 @@ function ParameterControl({
     const max = field.max ?? 100
     const step = field.step ?? 1
     const numeric =
-      typeof value === "number" ? value : Number(value ?? field.defaultValue ?? min)
+      typeof value === "number"
+        ? value
+        : Number(value ?? field.defaultValue ?? min)
     const safe = Number.isFinite(numeric) ? numeric : min
     return (
       <div className="flex flex-col gap-2">
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-medium text-muted-foreground">
-            {field.label}
-          </span>
+        <div className="flex items-center justify-between gap-2">
+          <ParameterLabel field={field} />
           <Input
             type="number"
             min={min}
@@ -667,9 +731,7 @@ function ParameterControl({
     const numeric = typeof value === "number" ? value : value === "" ? "" : value
     return (
       <div className="flex flex-col gap-1.5">
-        <span className="text-xs font-medium text-muted-foreground">
-          {field.label}
-        </span>
+        <ParameterLabel field={field} />
         <Input
           type="number"
           value={numeric as number | string}
@@ -685,15 +747,25 @@ function ParameterControl({
 
   return (
     <div className="flex flex-col gap-1.5">
-      <span className="text-xs font-medium text-muted-foreground">
-        {field.label}
-      </span>
+      <ParameterLabel field={field} />
       <Input
+        list={field.suggestedValues?.length ? suggestionListId : undefined}
         value={typeof value === "string" ? value : ""}
         onChange={(event) => onChange(event.target.value)}
         className="h-9 rounded-2xl"
         disabled={disabled}
       />
+      {field.suggestedValues?.length ? (
+        <datalist id={suggestionListId}>
+          {field.suggestedValues.map((option) => (
+            <option
+              key={option.value}
+              value={option.value}
+              label={option.label}
+            />
+          ))}
+        </datalist>
+      ) : null}
     </div>
   )
 }
@@ -705,6 +777,7 @@ type ReferenceImagesFieldProps = {
   onAddUrl: () => void
   onAddFiles: (files: FileList | null) => void
   onRemove: (id: string) => void
+  field?: StudioImageParameterField
   disabled?: boolean
 }
 
@@ -715,6 +788,7 @@ function ReferenceImagesField({
   onAddUrl,
   onAddFiles,
   onRemove,
+  field,
   disabled,
 }: ReferenceImagesFieldProps) {
   const { t } = useI18n()
@@ -722,9 +796,13 @@ function ReferenceImagesField({
 
   return (
     <div className="mt-4 flex flex-col gap-2">
-      <span className="text-xs font-medium text-muted-foreground">
-        {t.studioImageReferences}
-      </span>
+      {field ? (
+        <ParameterLabel field={field} label={t.studioImageReferences} />
+      ) : (
+        <span className="text-xs font-medium text-muted-foreground">
+          {t.studioImageReferences}
+        </span>
+      )}
       <div className="flex flex-wrap gap-2">
         {attachments.map((attachment) => (
           <div

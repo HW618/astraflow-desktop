@@ -52,7 +52,7 @@ const gemini25Flash: ImageOpenapiRegistryEntry = {
 
 const gemini31Flash: ImageOpenapiRegistryEntry = {
   file: "openapi/image/gemini-3.1-flash-image.yaml",
-  operationId: "generateContentGemini31FlashImage",
+  operationId: "generateGemini31FlashImageContent",
   method: "POST",
   path: "/v1beta/models/gemini-3.1-flash-image-preview:generateContent",
   contentType: "application/json",
@@ -121,7 +121,7 @@ const gptImage2: ImageOpenapiRegistryEntry = {
 
 const midjourneyImagine: ImageOpenapiRegistryEntry = {
   file: "openapi/image/midjourney.yaml",
-  operationId: "submitMidjourneyImagineTask",
+  operationId: "submitMidjourneyTask",
   method: "POST",
   path: "/v1/tasks/submit",
   contentType: "application/json",
@@ -152,10 +152,6 @@ export const IMAGE_MODEL_REGISTRY: Record<string, ImageModelRegistryEntry> = {
   "wan2.7-image-pro": { supported: true, openapi: wan27 },
   "gemini-3-pro-image": { supported: true, openapi: gemini3Pro },
   "gemini-3-pro-image-preview": { supported: true, openapi: gemini3Pro },
-  "publishers/google/models/gemini-3-pro-image-preview": {
-    supported: true,
-    openapi: gemini3Pro,
-  },
   "gpt-image-1": { supported: false, disabledReason: "missing-openapi" },
   "gpt-image-1-mini": { supported: false, disabledReason: "missing-openapi" },
   "gpt-image-1.5": { supported: false, disabledReason: "missing-openapi" },

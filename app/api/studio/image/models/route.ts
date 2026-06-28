@@ -54,6 +54,12 @@ function normalizeTotal(value: ListResponse["TotalCount"], fallback: number) {
   return fallback
 }
 
+function hasPublisherModelReference(model: SquareModel) {
+  return [model.Id, model.Name].some((value) =>
+    value?.toLowerCase().includes("publisher")
+  )
+}
+
 async function fetchAllImageModels({
   credentials,
   projectId,
@@ -83,10 +89,12 @@ async function fetchAllImageModels({
     models.push(...normalizeList(page.SquareModels))
   }
 
-  return models.filter((model) =>
-    (model.OutputModalities ?? []).some(
-      (modality) => modality.toLowerCase() === "image"
-    )
+  return models.filter(
+    (model) =>
+      !hasPublisherModelReference(model) &&
+      (model.OutputModalities ?? []).some(
+        (modality) => modality.toLowerCase() === "image"
+      )
   )
 }
 

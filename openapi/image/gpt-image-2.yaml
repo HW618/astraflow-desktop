@@ -210,6 +210,13 @@ components:
       x-min-pixels: 655360
       x-max-pixels: 8294400
       x-max-aspect-ratio: "3:1"
+      x-recommended-values:
+        - 1024x1024
+        - 1024x1536
+        - 1536x1024
+        - 2048x2048
+        - 2048x1152
+        - 2160x3840
       oneOf:
         - const: auto
         - pattern: "^[1-9][0-9]*x[1-9][0-9]*$"

@@ -162,6 +162,12 @@ function hasHotTag(model: SquareModel) {
   )
 }
 
+function hasPublisherModelReference(model: SquareModel) {
+  return [model.Id, model.Name].some((value) =>
+    value?.toLowerCase().includes("publisher")
+  )
+}
+
 function searchableText(model: SquareModel) {
   return [
     model.Id,
@@ -416,11 +422,14 @@ export async function GET(request: Request) {
       orderBy,
       order,
     })
+    const visibleModels = allModels.filter(
+      (model) => !hasPublisherModelReference(model)
+    )
     const searchedModels = keywordForSearch
-      ? allModels.filter((model) =>
+      ? visibleModels.filter((model) =>
           searchableText(model).includes(keywordForSearch)
         )
-      : allModels
+      : visibleModels
     const outputModels = searchedModels.filter((model) =>
       matchesOutputType(model, outputType)
     )

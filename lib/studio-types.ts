@@ -100,6 +100,7 @@ export type StudioImageFieldOption = {
 export type StudioImageParameterField = {
   name: string
   label: string
+  description?: string
   kind: StudioImageFieldKind
   required: boolean
   advanced: boolean
@@ -107,6 +108,7 @@ export type StudioImageParameterField = {
   constantValue?: string | number | boolean
   defaultValue?: string | number | boolean
   options?: StudioImageFieldOption[]
+  suggestedValues?: StudioImageFieldOption[]
   min?: number
   max?: number
   step?: number
@@ -114,6 +116,7 @@ export type StudioImageParameterField = {
   acceptUrl?: boolean
   acceptMultiple?: boolean
   placeholder?: string
+  arrayItemKey?: string
 }
 
 export type StudioImageModelOpenapi = {
