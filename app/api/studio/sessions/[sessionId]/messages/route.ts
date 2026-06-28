@@ -9,11 +9,31 @@ import {
 
 export const runtime = "nodejs"
 
-const createMessageSchema = z.object({
-  role: z.enum(["user", "assistant"]),
-  content: z.string().trim().min(1).max(80_000),
-  status: z.enum(["complete", "streaming", "error"]).default("complete"),
+const attachmentSchema = z.object({
+  type: z.literal("image"),
+  name: z.string().trim().min(1).max(255),
+  mimeType: z
+    .string()
+    .trim()
+    .regex(/^image\/[a-z0-9.+-]+$/i, "Only image attachments are supported."),
+  dataUrl: z
+    .string()
+    .trim()
+    .regex(/^data:image\//i, "Attachment must be a base64 data URL.")
+    .max(12_000_000),
 })
+
+const createMessageSchema = z
+  .object({
+    role: z.enum(["user", "assistant"]),
+    content: z.string().trim().max(80_000).default(""),
+    status: z.enum(["complete", "streaming", "error"]).default("complete"),
+    attachments: z.array(attachmentSchema).max(6).default([]),
+  })
+  .refine(
+    (value) => value.content.length > 0 || value.attachments.length > 0,
+    { message: "Message must include text or an attachment." }
+  )
 
 type RouteContext = {
   params: Promise<{ sessionId: string }>

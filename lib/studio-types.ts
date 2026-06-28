@@ -6,6 +6,13 @@ export type StudioMessageRole = "user" | "assistant"
 
 export type StudioMessageStatus = "complete" | "streaming" | "error"
 
+export type StudioAttachment = {
+  type: "image"
+  name: string
+  mimeType: string
+  dataUrl: string
+}
+
 export type StudioSession = {
   id: string
   mode: StudioMode
@@ -20,6 +27,7 @@ export type StudioMessage = {
   role: StudioMessageRole
   content: string
   status: StudioMessageStatus
+  attachments: StudioAttachment[]
   createdAt: string
 }
 

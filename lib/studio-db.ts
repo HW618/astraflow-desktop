@@ -4,6 +4,7 @@ import { dirname, join } from "node:path"
 import { randomUUID } from "node:crypto"
 
 import type {
+  StudioAttachment,
   StudioMessage,
   StudioMessageRole,
   StudioMessageStatus,
@@ -28,6 +29,7 @@ type DbMessageRow = {
   role: StudioMessageRole
   content: string
   status: StudioMessageStatus
+  attachments: string | null
   created_at: string
 }
 
@@ -47,6 +49,7 @@ type CreateMessageInput = {
   role: StudioMessageRole
   content: string
   status?: StudioMessageStatus
+  attachments?: StudioAttachment[]
 }
 
 const DEFAULT_SESSION_TITLE = "New chat"
@@ -73,6 +76,7 @@ function getDb() {
   db.pragma("journal_mode = WAL")
   db.pragma("foreign_keys = ON")
   initializeSchema(db)
+  migrateSchema(db)
 
   return db
 }
@@ -93,6 +97,7 @@ function initializeSchema(database: Database.Database) {
       role TEXT NOT NULL,
       content TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'complete',
+      attachments TEXT,
       created_at TEXT NOT NULL,
       FOREIGN KEY (session_id) REFERENCES studio_sessions(id) ON DELETE CASCADE
     );
@@ -109,6 +114,16 @@ function initializeSchema(database: Database.Database) {
       updated_at TEXT NOT NULL
     );
   `)
+}
+
+function migrateSchema(database: Database.Database) {
+  const columns = database
+    .prepare(`PRAGMA table_info(studio_messages)`)
+    .all() as Array<{ name: string }>
+
+  if (!columns.some((column) => column.name === "attachments")) {
+    database.exec(`ALTER TABLE studio_messages ADD COLUMN attachments TEXT`)
+  }
 }
 
 function nowIso() {
@@ -135,6 +150,30 @@ function mapSession(row: DbSessionRow): StudioSession {
   }
 }
 
+function parseAttachments(raw: string | null): StudioAttachment[] {
+  if (!raw) {
+    return []
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown
+
+    if (!Array.isArray(parsed)) {
+      return []
+    }
+
+    return parsed.filter(
+      (item): item is StudioAttachment =>
+        typeof item === "object" &&
+        item !== null &&
+        (item as StudioAttachment).type === "image" &&
+        typeof (item as StudioAttachment).dataUrl === "string"
+    )
+  } catch {
+    return []
+  }
+}
+
 function mapMessage(row: DbMessageRow): StudioMessage {
   return {
     id: row.id,
@@ -142,6 +181,7 @@ function mapMessage(row: DbMessageRow): StudioMessage {
     role: row.role,
     content: row.content,
     status: row.status,
+    attachments: parseAttachments(row.attachments),
     createdAt: row.created_at,
   }
 }
@@ -234,11 +274,27 @@ export function createStudioSession({ mode, title }: CreateSessionInput) {
   return session
 }
 
+export function updateStudioSessionTitle(sessionId: string, title: string) {
+  const normalized = normalizeTitle(title)
+
+  getDb()
+    .prepare(
+      `
+        UPDATE studio_sessions
+        SET title = ?
+        WHERE id = ?
+      `
+    )
+    .run(normalized, sessionId)
+
+  return getStudioSession(sessionId)
+}
+
 export function listStudioMessages(sessionId: string) {
   const rows = getDb()
     .prepare(
       `
-        SELECT id, session_id, role, content, status, created_at
+        SELECT id, session_id, role, content, status, attachments, created_at
         FROM studio_messages
         WHERE session_id = ?
         ORDER BY created_at ASC
@@ -254,6 +310,7 @@ export function createStudioMessage({
   role,
   content,
   status = "complete",
+  attachments = [],
 }: CreateMessageInput) {
   const database = getDb()
   const createdAt = nowIso()
@@ -263,6 +320,7 @@ export function createStudioMessage({
     role,
     content,
     status,
+    attachments,
     createdAt,
   }
 
@@ -271,12 +329,22 @@ export function createStudioMessage({
       .prepare(
         `
           INSERT INTO studio_messages
-            (id, session_id, role, content, status, created_at)
+            (id, session_id, role, content, status, attachments, created_at)
           VALUES
-            (@id, @sessionId, @role, @content, @status, @createdAt)
+            (@id, @sessionId, @role, @content, @status, @attachments, @createdAt)
         `
       )
-      .run(message)
+      .run({
+        id: message.id,
+        sessionId: message.sessionId,
+        role: message.role,
+        content: message.content,
+        status: message.status,
+        attachments: attachments.length
+          ? JSON.stringify(attachments)
+          : null,
+        createdAt: message.createdAt,
+      })
 
     database
       .prepare(
