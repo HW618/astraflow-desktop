@@ -28,6 +28,7 @@ import {
 import { Slider } from "@/components/ui/slider"
 import { Textarea } from "@/components/ui/textarea"
 import { Toggle } from "@/components/ui/toggle"
+import { VideoPlayer } from "@/components/ui/video-player"
 import { cn } from "@/lib/utils"
 import type { StudioSession } from "@/lib/studio-types"
 import type {
@@ -1059,24 +1060,6 @@ function ReferenceImagesField({
   )
 }
 
-function getOutputGridConfig(count: number) {
-  if (count <= 1) {
-    return { cols: 1, rows: 1, aspect: "16 / 9" }
-  }
-  if (count === 2) {
-    return { cols: 2, rows: 1, aspect: "32 / 9" }
-  }
-  if (count === 3) {
-    return { cols: 3, rows: 1, aspect: "16 / 3" }
-  }
-  if (count === 4) {
-    return { cols: 2, rows: 2, aspect: "16 / 9" }
-  }
-  const cols = Math.ceil(Math.sqrt(count))
-  const rows = Math.ceil(count / cols)
-  return { cols, rows, aspect: `${cols} / ${rows}` }
-}
-
 type CanvasTile =
   | {
       kind: "output"
@@ -1116,6 +1099,18 @@ function buildCanvasTiles(generations: StudioVideoGeneration[]): CanvasTile[] {
   return tiles
 }
 
+function getOutputGridClassName(count: number) {
+  if (count <= 1) {
+    return "max-w-5xl grid-cols-1"
+  }
+
+  if (count === 2) {
+    return "max-w-6xl grid-cols-1 xl:grid-cols-2"
+  }
+
+  return "max-w-7xl grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3"
+}
+
 type OutputCanvasProps = {
   generations: StudioVideoGeneration[]
   savingOutputId: string | null
@@ -1143,17 +1138,13 @@ function OutputCanvas({
     )
   }
 
-  const grid = getOutputGridConfig(tiles.length)
-
   return (
-    <div className="flex min-h-0 flex-1 items-center justify-center">
+    <div className="min-h-0 flex-1 overflow-y-auto">
       <div
-        className="grid h-auto w-auto max-h-full max-w-full gap-3"
-        style={{
-          aspectRatio: grid.aspect,
-          gridTemplateColumns: `repeat(${grid.cols}, minmax(0, 1fr))`,
-          gridTemplateRows: `repeat(${grid.rows}, minmax(0, 1fr))`,
-        }}
+        className={cn(
+          "mx-auto grid w-full gap-4 pb-4",
+          getOutputGridClassName(tiles.length)
+        )}
       >
         {tiles.map((tile) =>
           tile.kind === "output" ? (
@@ -1200,19 +1191,20 @@ function CanvasOutputTile({
   const src = output.src
 
   return (
-    <div className="group relative flex min-h-0 flex-col overflow-hidden rounded-2xl border bg-muted">
+    <div className="group relative flex min-h-0 flex-col overflow-hidden rounded-2xl border bg-muted shadow-sm">
       <div
         onDoubleClick={onSelect}
-        className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-black"
+        className="aspect-video min-h-64 overflow-hidden bg-black"
       >
         {src ? (
-          <video
+          <VideoPlayer
             src={src}
             aria-label={generation.prompt}
-            className="size-full object-contain"
-            controls
+            autoHide={false}
+            className="size-full rounded-none"
             playsInline
             preload="metadata"
+            size="full"
           />
         ) : null}
       </div>
@@ -1229,7 +1221,7 @@ function CanvasOutputTile({
         <StatusBadge generation={generation} />
       </div>
 
-      <div className="absolute right-2 bottom-2 flex items-center gap-1.5 rounded-full bg-black/60 px-1 py-0.5 opacity-0 transition group-hover:opacity-100">
+      <div className="absolute top-12 right-2 flex items-center gap-1.5 rounded-full bg-black/60 px-1 py-0.5 opacity-0 transition group-hover:opacity-100">
         <Button
           type="button"
           variant="ghost"
@@ -1275,7 +1267,7 @@ function CanvasPendingTile({
   const copy = getVideoCopy(locale)
 
   return (
-    <div className="relative flex min-h-0 flex-col overflow-hidden rounded-2xl border border-primary/20 bg-card text-foreground shadow-sm">
+    <div className="relative flex aspect-video min-h-64 flex-col overflow-hidden rounded-2xl border border-primary/20 bg-card text-foreground shadow-sm">
       <div className="absolute inset-0 animate-pulse bg-muted/50" />
       <div className="relative z-10 flex flex-1 items-center justify-center p-6">
         <div className="flex max-w-sm flex-col items-center gap-4 text-center">
