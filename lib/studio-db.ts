@@ -290,6 +290,19 @@ export function updateStudioSessionTitle(sessionId: string, title: string) {
   return getStudioSession(sessionId)
 }
 
+export function deleteStudioSession(sessionId: string) {
+  const result = getDb()
+    .prepare(
+      `
+        DELETE FROM studio_sessions
+        WHERE id = ?
+      `
+    )
+    .run(sessionId)
+
+  return result.changes > 0
+}
+
 export function listStudioMessages(sessionId: string) {
   const rows = getDb()
     .prepare(

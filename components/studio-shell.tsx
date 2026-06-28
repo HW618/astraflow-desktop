@@ -5,11 +5,14 @@ import {
   RiAddLine,
   RiChat3Line,
   RiCheckLine,
+  RiDeleteBinLine,
   RiExternalLinkLine,
   RiImageLine,
   RiKey2Line,
   RiLoader4Line,
   RiMicLine,
+  RiMore2Line,
+  RiPencilLine,
   RiVideoLine,
 } from "@remixicon/react"
 import type { RemixiconComponentType } from "@remixicon/react"
@@ -25,6 +28,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
 import {
   Select,
   SelectContent,
@@ -144,6 +153,28 @@ async function fetchStudioSessions() {
   return payload.data
 }
 
+async function renameStudioSession(sessionId: string, title: string) {
+  const response = await fetch(`/api/studio/sessions/${sessionId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  })
+
+  if (!response.ok) {
+    throw new Error("Failed to rename session")
+  }
+}
+
+async function deleteStudioSessionRequest(sessionId: string) {
+  const response = await fetch(`/api/studio/sessions/${sessionId}`, {
+    method: "DELETE",
+  })
+
+  if (!response.ok) {
+    throw new Error("Failed to delete session")
+  }
+}
+
 async function fetchStudioOAuthStatus(state?: string) {
   const search = state ? `?state=${encodeURIComponent(state)}` : ""
   const response = await fetch(`/api/studio/oauth/status${search}`)
@@ -227,6 +258,14 @@ function StudioShell() {
   const [selectedSessionId, setSelectedSessionId] = React.useState("")
   const [sessions, setSessions] = React.useState<StudioSession[]>([])
   const [loadFailed, setLoadFailed] = React.useState(false)
+  const [menuSessionId, setMenuSessionId] = React.useState<string | null>(null)
+  const [renameTarget, setRenameTarget] =
+    React.useState<StudioSession | null>(null)
+  const [renameValue, setRenameValue] = React.useState("")
+  const [renameSaving, setRenameSaving] = React.useState(false)
+  const [deleteTarget, setDeleteTarget] =
+    React.useState<StudioSession | null>(null)
+  const [deleteSaving, setDeleteSaving] = React.useState(false)
   const [oauthStatus, setOauthStatus] = React.useState<StudioOAuthStatus>({
     configured: false,
     email: null,
@@ -412,6 +451,51 @@ function StudioShell() {
     }
   }
 
+  async function handleRenameSubmit() {
+    const target = renameTarget
+    const nextTitle = renameValue.trim()
+
+    if (!target || !nextTitle) {
+      return
+    }
+
+    try {
+      setRenameSaving(true)
+      await renameStudioSession(target.id, nextTitle)
+      setRenameTarget(null)
+      setRenameValue("")
+      await reloadSessions()
+    } catch {
+      // Keep the dialog open so the user can retry.
+    } finally {
+      setRenameSaving(false)
+    }
+  }
+
+  async function handleDeleteConfirm() {
+    const target = deleteTarget
+
+    if (!target) {
+      return
+    }
+
+    try {
+      setDeleteSaving(true)
+      await deleteStudioSessionRequest(target.id)
+
+      if (selectedSessionId === target.id) {
+        setSelectedSessionId("")
+      }
+
+      setDeleteTarget(null)
+      await reloadSessions()
+    } catch {
+      // Keep the dialog open so the user can retry.
+    } finally {
+      setDeleteSaving(false)
+    }
+  }
+
   function getModeLabel(mode: StudioMode) {
     switch (mode) {
       case "chat":
@@ -478,23 +562,80 @@ function StudioShell() {
                   const isActive = session.id === selectedSessionId
 
                   return (
-                    <button
+                    <div
                       key={session.id}
-                      type="button"
                       className={cn(
-                        "flex h-8 w-full items-center overflow-hidden rounded-md px-2 text-left text-sm transition-colors outline-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring",
-                        isActive &&
-                          "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+                        "group/session relative flex items-center rounded-md transition-colors hover:bg-sidebar-accent",
+                        isActive && "bg-sidebar-accent"
                       )}
-                      onClick={() => {
-                        setSelectedSessionId(session.id)
-                        setSelectedMode(session.mode)
-                      }}
                     >
-                      <span className="min-w-0 flex-1 truncate">
-                        {session.title}
-                      </span>
-                    </button>
+                      <button
+                        type="button"
+                        className={cn(
+                          "flex h-8 min-w-0 flex-1 items-center overflow-hidden rounded-md px-2 text-left text-sm outline-none hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+                          isActive &&
+                            "font-medium text-sidebar-accent-foreground"
+                        )}
+                        onClick={() => {
+                          setSelectedSessionId(session.id)
+                          setSelectedMode(session.mode)
+                        }}
+                      >
+                        <span className="min-w-0 flex-1 truncate pr-5">
+                          {session.title}
+                        </span>
+                      </button>
+
+                      <Popover
+                        open={menuSessionId === session.id}
+                        onOpenChange={(open) =>
+                          setMenuSessionId(open ? session.id : null)
+                        }
+                      >
+                        <PopoverTrigger asChild>
+                          <button
+                            type="button"
+                            aria-label={t.studioSessionActions}
+                            className={cn(
+                              "absolute top-1/2 right-1 flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-sidebar-foreground/70 opacity-0 transition hover:bg-sidebar-foreground/10 hover:text-sidebar-foreground focus-visible:opacity-100 group-hover/session:opacity-100 [&_svg]:size-4",
+                              menuSessionId === session.id && "opacity-100"
+                            )}
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <RiMore2Line aria-hidden />
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent
+                          align="start"
+                          side="right"
+                          className="w-40 gap-0.5 rounded-2xl p-1.5"
+                        >
+                          <button
+                            type="button"
+                            className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-sm hover:bg-accent hover:text-accent-foreground [&_svg]:size-4"
+                            onClick={() => {
+                              setMenuSessionId(null)
+                              setRenameValue(session.title)
+                              setRenameTarget(session)
+                            }}
+                          >
+                            <RiPencilLine aria-hidden />
+                            {t.studioRename}
+                          </button>
+                          <button
+                            type="button"
+                            className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-sm text-destructive hover:bg-destructive/10 [&_svg]:size-4"
+                            onClick={() => {
+                              setMenuSessionId(null)
+                              setDeleteTarget(session)
+                            }}
+                          >
+                            <RiDeleteBinLine aria-hidden />
+                            {t.studioDelete}
+                          </button>
+                        </PopoverContent>
+                      </Popover>
+                    </div>
                   )
                 })}
               </div>
@@ -724,6 +865,102 @@ function StudioShell() {
                 </span>
               </Button>
             )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={renameTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRenameTarget(null)
+            setRenameValue("")
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t.studioRenameTitle}</DialogTitle>
+          </DialogHeader>
+          <Input
+            autoFocus
+            value={renameValue}
+            placeholder={t.studioRenamePlaceholder}
+            maxLength={120}
+            onChange={(event) => setRenameValue(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault()
+                void handleRenameSubmit()
+              }
+            }}
+          />
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setRenameTarget(null)
+                setRenameValue("")
+              }}
+            >
+              {t.studioCancel}
+            </Button>
+            <Button
+              type="button"
+              onClick={handleRenameSubmit}
+              disabled={renameSaving || renameValue.trim().length === 0}
+            >
+              {renameSaving ? (
+                <RiLoader4Line className="animate-spin" aria-hidden />
+              ) : (
+                <RiCheckLine aria-hidden />
+              )}
+              <span>{t.studioSave}</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteTarget(null)
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t.studioDeleteTitle}</DialogTitle>
+            <DialogDescription>{t.studioDeleteConfirm}</DialogDescription>
+          </DialogHeader>
+          {deleteTarget ? (
+            <p className="truncate text-sm font-medium text-foreground">
+              {deleteTarget.title}
+            </p>
+          ) : null}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setDeleteTarget(null)}
+            >
+              {t.studioCancel}
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={handleDeleteConfirm}
+              disabled={deleteSaving}
+            >
+              {deleteSaving ? (
+                <RiLoader4Line className="animate-spin" aria-hidden />
+              ) : (
+                <RiDeleteBinLine aria-hidden />
+              )}
+              <span>{t.studioDelete}</span>
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

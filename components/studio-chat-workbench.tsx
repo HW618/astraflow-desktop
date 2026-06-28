@@ -84,6 +84,50 @@ type ChatPhase = "idle" | "thinking" | "streaming"
 
 const CHAT_MODEL_STORAGE_KEY = "astraflow:chat-model"
 
+const chatModelListeners = new Set<() => void>()
+
+function getStoredChatModel(): SupportedChatModel {
+  if (typeof window === "undefined") {
+    return DEFAULT_CHAT_MODEL
+  }
+
+  const stored = window.localStorage.getItem(CHAT_MODEL_STORAGE_KEY)
+
+  if (stored && CHAT_MODEL_OPTIONS.some((option) => option.value === stored)) {
+    return stored as SupportedChatModel
+  }
+
+  return DEFAULT_CHAT_MODEL
+}
+
+function setStoredChatModel(model: SupportedChatModel) {
+  window.localStorage.setItem(CHAT_MODEL_STORAGE_KEY, model)
+  chatModelListeners.forEach((listener) => listener())
+}
+
+function subscribeChatModel(listener: () => void) {
+  chatModelListeners.add(listener)
+  window.addEventListener("storage", listener)
+
+  return () => {
+    chatModelListeners.delete(listener)
+    window.removeEventListener("storage", listener)
+  }
+}
+
+// Read the persisted model through an external store so SSR and the first
+// client render agree (DEFAULT), then sync to localStorage after hydration
+// without a mismatch warning.
+function useChatModel() {
+  const model = React.useSyncExternalStore(
+    subscribeChatModel,
+    getStoredChatModel,
+    () => DEFAULT_CHAT_MODEL
+  )
+
+  return [model, setStoredChatModel] as const
+}
+
 function getChatModelLabel(model: SupportedChatModel) {
   return (
     CHAT_MODEL_OPTIONS.find((option) => option.value === model)?.label ?? model
@@ -229,24 +273,7 @@ function StudioChatWorkbench({
 }: StudioChatWorkbenchProps) {
   const { t } = useI18n()
   const [input, setInput] = React.useState("")
-  const [selectedModel, setSelectedModel] = React.useState<SupportedChatModel>(
-    () => {
-      if (typeof window === "undefined") {
-        return DEFAULT_CHAT_MODEL
-      }
-
-      const stored = window.localStorage.getItem(CHAT_MODEL_STORAGE_KEY)
-
-      if (
-        stored &&
-        CHAT_MODEL_OPTIONS.some((option) => option.value === stored)
-      ) {
-        return stored as SupportedChatModel
-      }
-
-      return DEFAULT_CHAT_MODEL
-    }
-  )
+  const [selectedModel, setSelectedModel] = useChatModel()
   const [messages, setMessages] = React.useState<StudioMessage[]>([])
   const [pendingAttachments, setPendingAttachments] = React.useState<
     PendingAttachment[]
@@ -296,10 +323,6 @@ function StudioChatWorkbench({
       current.filter((attachment) => attachment.id !== id)
     )
   }, [])
-
-  React.useEffect(() => {
-    window.localStorage.setItem(CHAT_MODEL_STORAGE_KEY, selectedModel)
-  }, [selectedModel])
 
   React.useEffect(() => {
     let cancelled = false
@@ -753,8 +776,26 @@ function ChatMessageBubble({ message }: { message: StudioMessage }) {
 const markdownClassName =
   "max-w-none text-base leading-8 text-foreground [&_a]:text-primary [&_code]:rounded-sm [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_h1]:font-heading [&_h1]:text-2xl [&_h1]:font-semibold [&_h2]:mt-5 [&_h2]:font-heading [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mt-4 [&_h3]:font-medium [&_li]:my-1 [&_ol]:ml-5 [&_ol]:list-decimal [&_p]:my-3 [&_pre]:my-3 [&_ul]:ml-5 [&_ul]:list-disc"
 
+const streamingPulseDotClassName =
+  "[&>*:last-child]:after:ml-1.5 [&>*:last-child]:after:inline-block [&>*:last-child]:after:size-2.5 [&>*:last-child]:after:translate-y-[1px] [&>*:last-child]:after:rounded-full [&>*:last-child]:after:bg-foreground [&>*:last-child]:after:align-middle [&>*:last-child]:after:content-[''] [&>*:last-child]:after:animate-[studio-pulse-dot_1.1s_ease-in-out_infinite]"
+
 function StreamingAssistantMessage({ content }: { content: string }) {
-  return <AssistantMessage content={content} />
+  return (
+    <Message className="justify-start">
+      <div className="flex w-full flex-col gap-2">
+        <MessageContent
+          markdown
+          className={cn(
+            "bg-transparent p-0",
+            markdownClassName,
+            streamingPulseDotClassName
+          )}
+        >
+          {content}
+        </MessageContent>
+      </div>
+    </Message>
+  )
 }
 
 function AssistantMessage({ content }: { content: string }) {
