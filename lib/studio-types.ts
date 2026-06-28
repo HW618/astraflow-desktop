@@ -194,28 +194,16 @@ export type StudioLibraryImageFile = StudioSavedImageOutput & {
   downloadUrl: string
 }
 
-export type StudioLibraryVideoFile = {
-  kind: "video"
-  src: string
-  downloadUrl: string
-  id: string
-  generationId: string
-  sessionId: string
-  index: number
-  prompt: string
-  modelName: string
-  manufacturer: string | null
-  mimeType: string | null
-  width: number | null
-  height: number | null
-  durationSeconds: number | null
-  savedAt: string
-  createdAt: string
-}
+export type StudioImageLibraryFile = StudioLibraryImageFile
+export type StudioLibraryVideoFile =
+  import("@/lib/studio-video-types").StudioVideoLibraryFile
+export type StudioLibraryAudioFile =
+  import("@/lib/studio-audio-types").StudioAudioLibraryFile
 
 export type StudioLibraryFile =
   | StudioLibraryImageFile
   | StudioLibraryVideoFile
+  | StudioLibraryAudioFile
 
 export type StudioImageGeneration = {
   id: string

@@ -123,6 +123,7 @@ const en = {
   fileLibraryImages: "Images",
   fileLibraryImage: "Image",
   fileLibraryVideo: "Video",
+  fileLibraryAudio: "Audio",
   fileLibrarySearch: "Search files",
   fileLibrarySummary: (visibleCount: number, totalCount: number) =>
     `${visibleCount} shown · ${totalCount} total`,
@@ -282,6 +283,7 @@ const zh: Dictionary = {
   fileLibraryImages: "图像",
   fileLibraryImage: "图像",
   fileLibraryVideo: "视频",
+  fileLibraryAudio: "音频",
   fileLibrarySearch: "搜索文件",
   fileLibrarySummary: (visibleCount: number, totalCount: number) =>
     `已显示 ${visibleCount} 个 · 共 ${totalCount} 个`,
