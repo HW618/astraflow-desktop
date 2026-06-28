@@ -7,6 +7,7 @@
     "dev": "next dev",
     "build": "next build",
     "codegen:image-openapi": "bun scripts/generate-image-openapi.mjs",
+    "codegen:video-openapi": "bun scripts/generate-video-openapi.mjs",
     "start": "next start",
     "lint": "eslint",
     "format": "prettier --write \"**/*.{ts,tsx}\"",

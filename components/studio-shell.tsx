@@ -20,6 +20,7 @@ import type { RemixiconComponentType } from "@remixicon/react"
 import { useI18n } from "@/components/i18n-provider"
 import { StudioChatWorkbench } from "@/components/studio-chat-workbench"
 import { StudioImageWorkbench } from "@/components/studio-image-workbench"
+import { StudioVideoWorkbench } from "@/components/studio-video-workbench"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -752,6 +753,15 @@ function StudioShell() {
             sessionId={selectedSessionId}
             onSessionChange={(nextSessionId) => {
               setSelectedMode("image")
+              setSelectedSessionId(nextSessionId)
+            }}
+            onSessionsChange={reloadSessions}
+          />
+        ) : activeMode === "video" ? (
+          <StudioVideoWorkbench
+            sessionId={selectedSessionId}
+            onSessionChange={(nextSessionId) => {
+              setSelectedMode("video")
               setSelectedSessionId(nextSessionId)
             }}
             onSessionsChange={reloadSessions}
