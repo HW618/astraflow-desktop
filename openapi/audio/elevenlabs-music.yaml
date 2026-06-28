@@ -1,0 +1,784 @@
+openapi: 3.1.0
+x-language: en-US
+info:
+  title: ModelVerse ElevenLabs Music API
+  version: "1.0.0"
+  description: |
+    Self-contained OpenAPI 3.1 schema for the ModelVerse ElevenLabs
+    `music-v1` music generation endpoints.
+
+    This file is pinned to the request and response fields documented in that
+    source only.
+
+servers:
+  - url: https://api.modelverse.cn
+    description: ModelVerse API endpoint shown in the source document.
+
+tags:
+  - name: ElevenLabs Music
+    description: ElevenLabs `music-v1` music generation and composition-plan APIs.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/audio/music/generate:
+    post:
+      tags:
+        - ElevenLabs Music
+      operationId: createElevenLabsMusicGeneration
+      summary: Generate music synchronously
+      description: |
+        Generate a complete music file and return the audio bytes directly.
+        The response format is controlled by `output_format` and defaults to
+        MP3 according to the source document.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ElevenLabsMusicGenerationRequest"
+            examples:
+              promptMusic:
+                $ref: "#/components/examples/ElevenLabsMusicGeneratePromptRequest"
+              compositionPlanMusic:
+                $ref: "#/components/examples/ElevenLabsMusicGeneratePlanRequest"
+      responses:
+        "200":
+          description: Generated audio binary stream.
+          headers:
+            song-id:
+              description: Unique identifier for the generated song.
+              schema:
+                type: string
+          content:
+            audio/mpeg:
+              schema:
+                $ref: "#/components/schemas/ElevenLabsMusicAudioBinary"
+              examples:
+                generatedMp3:
+                  summary: Generated MP3 bytes
+                  value: "<binary MP3 audio bytes>"
+            application/octet-stream:
+              schema:
+                $ref: "#/components/schemas/ElevenLabsMusicAudioBinary"
+              examples:
+                generatedAudio:
+                  summary: Generated audio bytes
+                  value: "<binary audio bytes>"
+        "400":
+          $ref: "#/components/responses/ElevenLabsMusicInvalidRequest"
+        default:
+          $ref: "#/components/responses/ElevenLabsMusicError"
+
+  /v1/audio/music/stream:
+    post:
+      tags:
+        - ElevenLabs Music
+      operationId: streamElevenLabsMusicGeneration
+      summary: Stream generated music
+      description: |
+        Generate music with the same request fields as the synchronous
+        generation endpoint, but stream audio bytes as they become available.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ElevenLabsMusicGenerationRequest"
+            examples:
+              promptMusic:
+                $ref: "#/components/examples/ElevenLabsMusicStreamRequest"
+              compositionPlanMusic:
+                $ref: "#/components/examples/ElevenLabsMusicGeneratePlanRequest"
+      responses:
+        "200":
+          description: Streamed audio binary data.
+          content:
+            audio/mpeg:
+              schema:
+                $ref: "#/components/schemas/ElevenLabsMusicAudioBinary"
+              examples:
+                streamedMp3:
+                  summary: Streamed MP3 bytes
+                  value: "<streamed binary MP3 audio bytes>"
+            application/octet-stream:
+              schema:
+                $ref: "#/components/schemas/ElevenLabsMusicAudioBinary"
+              examples:
+                streamedAudio:
+                  summary: Streamed audio bytes
+                  value: "<streamed binary audio bytes>"
+        "400":
+          $ref: "#/components/responses/ElevenLabsMusicInvalidRequest"
+        default:
+          $ref: "#/components/responses/ElevenLabsMusicError"
+
+  /v1/audio/music/detailed:
+    post:
+      tags:
+        - ElevenLabs Music
+      operationId: createElevenLabsMusicDetailedGeneration
+      summary: Generate music with metadata
+      description: |
+        Generate music and return a `multipart/mixed` response containing a
+        JSON metadata part and a binary audio part. The metadata part contains
+        the generated composition plan and song metadata.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ElevenLabsMusicDetailedRequest"
+            examples:
+              promptMusic:
+                $ref: "#/components/examples/ElevenLabsMusicDetailedRequest"
+              compositionPlanMusic:
+                $ref: "#/components/examples/ElevenLabsMusicDetailedPlanRequest"
+      responses:
+        "200":
+          description: Multipart response containing metadata JSON and audio bytes.
+          content:
+            multipart/mixed:
+              schema:
+                $ref: "#/components/schemas/ElevenLabsMusicDetailedMultipartResponse"
+              examples:
+                detailedMultipart:
+                  $ref: "#/components/examples/ElevenLabsMusicDetailedMultipartResponse"
+        "400":
+          $ref: "#/components/responses/ElevenLabsMusicInvalidRequest"
+        default:
+          $ref: "#/components/responses/ElevenLabsMusicError"
+
+  /v1/audio/music/plan:
+    post:
+      tags:
+        - ElevenLabs Music
+      operationId: createElevenLabsMusicCompositionPlan
+      summary: Create a composition plan
+      description: |
+        Generate a structured composition plan from a text prompt. The source
+        document notes that this endpoint does not consume quota.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ElevenLabsMusicPlanRequest"
+            examples:
+              lullabyPlan:
+                $ref: "#/components/examples/ElevenLabsMusicPlanRequest"
+              basedOnExistingPlan:
+                $ref: "#/components/examples/ElevenLabsMusicPlanFromSourceRequest"
+      responses:
+        "200":
+          description: Generated composition plan.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ElevenLabsMusicCompositionPlan"
+              examples:
+                lullabyPlan:
+                  $ref: "#/components/examples/ElevenLabsMusicPlanResponse"
+        "400":
+          $ref: "#/components/responses/ElevenLabsMusicInvalidRequest"
+        default:
+          $ref: "#/components/responses/ElevenLabsMusicError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: |
+        ModelVerse API key sent as `Authorization: Bearer <YOUR_API_KEY>`.
+
+  responses:
+    ElevenLabsMusicInvalidRequest:
+      description: Invalid request parameters.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ElevenLabsMusicErrorResponse"
+          examples:
+            invalidMusicLength:
+              $ref: "#/components/examples/ElevenLabsMusicInvalidRequestError"
+
+    ElevenLabsMusicError:
+      description: Error response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ElevenLabsMusicErrorResponse"
+          examples:
+            error:
+              $ref: "#/components/examples/ElevenLabsMusicInvalidRequestError"
+
+  schemas:
+    ElevenLabsMusicModel:
+      type: string
+      const: music-v1
+      description: Model name. This source fixes the value to `music-v1`.
+
+    ElevenLabsMusicInput:
+      type: string
+      maxLength: 4100
+      description: Music description prompt. Mutually exclusive with `composition_plan`.
+      examples:
+        - A happy piano melody with soft jazz undertones
+
+    ElevenLabsMusicPrompt:
+      type: string
+      maxLength: 4100
+      description: Composition-plan description prompt.
+      examples:
+        - A soft lullaby with gentle piano and female vocals
+
+    ElevenLabsMusicLengthMs:
+      type: integer
+      minimum: 1
+      maximum: 600000
+      description: Music duration in milliseconds.
+      examples:
+        - 30000
+
+    ElevenLabsMusicPlanLengthMs:
+      type: integer
+      minimum: 3000
+      maximum: 600000
+      description: Optional total composition-plan duration in milliseconds.
+      examples:
+        - 30000
+
+    ElevenLabsMusicSeed:
+      type: integer
+      minimum: 0
+      maximum: 2147483647
+      description: Random seed used with `composition_plan` for more consistent results.
+      examples:
+        - 12345
+
+    ElevenLabsMusicOutputFormat:
+      type: string
+      description: Output audio format. The source example uses `mp3_22050_32`.
+      examples:
+        - mp3_22050_32
+
+    ElevenLabsMusicGenerationRequest:
+      description: |
+        Request body for `/v1/audio/music/generate` and
+        `/v1/audio/music/stream`. The source requires exactly one of `input`
+        or `composition_plan`.
+      oneOf:
+        - $ref: "#/components/schemas/ElevenLabsMusicPromptGenerationRequest"
+        - $ref: "#/components/schemas/ElevenLabsMusicPlanGenerationRequest"
+
+    ElevenLabsMusicPromptGenerationRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - input
+        - music_length_ms
+      properties:
+        model:
+          $ref: "#/components/schemas/ElevenLabsMusicModel"
+        input:
+          $ref: "#/components/schemas/ElevenLabsMusicInput"
+        music_length_ms:
+          $ref: "#/components/schemas/ElevenLabsMusicLengthMs"
+        force_instrumental:
+          type: boolean
+          default: false
+          description: Whether to force instrumental output. Used with `input`.
+        output_format:
+          $ref: "#/components/schemas/ElevenLabsMusicOutputFormat"
+
+    ElevenLabsMusicPlanGenerationRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - composition_plan
+        - music_length_ms
+      properties:
+        model:
+          $ref: "#/components/schemas/ElevenLabsMusicModel"
+        composition_plan:
+          $ref: "#/components/schemas/ElevenLabsMusicCompositionPlan"
+        music_length_ms:
+          $ref: "#/components/schemas/ElevenLabsMusicLengthMs"
+        seed:
+          $ref: "#/components/schemas/ElevenLabsMusicSeed"
+        output_format:
+          $ref: "#/components/schemas/ElevenLabsMusicOutputFormat"
+
+    ElevenLabsMusicDetailedRequest:
+      description: |
+        Request body for `/v1/audio/music/detailed`. The source requires
+        exactly one of `input` or `composition_plan`.
+      oneOf:
+        - $ref: "#/components/schemas/ElevenLabsMusicPromptDetailedRequest"
+        - $ref: "#/components/schemas/ElevenLabsMusicPlanDetailedRequest"
+
+    ElevenLabsMusicPromptDetailedRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - input
+        - music_length_ms
+      properties:
+        model:
+          $ref: "#/components/schemas/ElevenLabsMusicModel"
+        input:
+          $ref: "#/components/schemas/ElevenLabsMusicInput"
+        music_length_ms:
+          $ref: "#/components/schemas/ElevenLabsMusicLengthMs"
+        force_instrumental:
+          type: boolean
+          default: false
+          description: Whether to force instrumental output. Used with `input`.
+        with_timestamps:
+          type: boolean
+          default: false
+          description: Whether to return lyric timestamps.
+        output_format:
+          $ref: "#/components/schemas/ElevenLabsMusicOutputFormat"
+
+    ElevenLabsMusicPlanDetailedRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - composition_plan
+      properties:
+        model:
+          $ref: "#/components/schemas/ElevenLabsMusicModel"
+        composition_plan:
+          $ref: "#/components/schemas/ElevenLabsMusicCompositionPlan"
+        seed:
+          $ref: "#/components/schemas/ElevenLabsMusicSeed"
+        respect_sections_durations:
+          type: boolean
+          default: true
+          description: Whether to strictly follow section durations. Used with `composition_plan`.
+        with_timestamps:
+          type: boolean
+          default: false
+          description: Whether to return lyric timestamps.
+        output_format:
+          $ref: "#/components/schemas/ElevenLabsMusicOutputFormat"
+
+    ElevenLabsMusicPlanRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - prompt
+      properties:
+        model:
+          $ref: "#/components/schemas/ElevenLabsMusicModel"
+        prompt:
+          $ref: "#/components/schemas/ElevenLabsMusicPrompt"
+        music_length_ms:
+          $ref: "#/components/schemas/ElevenLabsMusicPlanLengthMs"
+        source_composition_plan:
+          $ref: "#/components/schemas/ElevenLabsMusicCompositionPlan"
+
+    ElevenLabsMusicCompositionPlan:
+      type: object
+      additionalProperties: false
+      properties:
+        positive_global_styles:
+          type: array
+          description: Global positive style tags.
+          items:
+            type: string
+          examples:
+            - - jazz
+              - upbeat
+        negative_global_styles:
+          type: array
+          description: Global negative style tags to avoid.
+          items:
+            type: string
+          examples:
+            - - heavy metal
+              - aggressive
+        sections:
+          type: array
+          description: Composition sections.
+          items:
+            $ref: "#/components/schemas/ElevenLabsMusicCompositionSection"
+
+    ElevenLabsMusicCompositionSection:
+      type: object
+      additionalProperties: false
+      properties:
+        section_name:
+          type: string
+          description: Section name.
+          examples:
+            - Intro
+        positive_local_styles:
+          type: array
+          description: Section-level positive style tags.
+          items:
+            type: string
+          examples:
+            - - piano
+              - light percussion
+        negative_local_styles:
+          type: array
+          description: Section-level negative style tags.
+          items:
+            type: string
+          examples:
+            - - vocals
+              - distortion
+        duration_ms:
+          type: integer
+          description: Section duration in milliseconds.
+          examples:
+            - 3000
+        lines:
+          type: array
+          description: Lyric lines for the section.
+          items:
+            type: string
+          examples:
+            - []
+
+    ElevenLabsMusicDetailedMetadata:
+      type: object
+      additionalProperties: false
+      required:
+        - composition_plan
+        - song_metadata
+      properties:
+        composition_plan:
+          $ref: "#/components/schemas/ElevenLabsMusicCompositionPlan"
+        song_metadata:
+          $ref: "#/components/schemas/ElevenLabsMusicSongMetadata"
+
+    ElevenLabsMusicSongMetadata:
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          description: Song title.
+          examples:
+            - Jazz Evening
+        description:
+          type: string
+          description: Song description.
+          examples:
+            - An upbeat jazz composition
+        genres:
+          type: array
+          description: Music genres.
+          items:
+            type: string
+          examples:
+            - - jazz
+        languages:
+          type: array
+          description: Languages used in lyrics.
+          items:
+            type: string
+          examples:
+            - - en
+        is_explicit:
+          type: boolean
+          description: Whether the song contains explicit content.
+
+    ElevenLabsMusicAudioBinary:
+      type: string
+      format: binary
+      description: Audio bytes. The documented default output is MP3.
+
+    ElevenLabsMusicDetailedMultipartResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - metadata
+        - audio
+      properties:
+        metadata:
+          $ref: "#/components/schemas/ElevenLabsMusicDetailedMetadata"
+        audio:
+          $ref: "#/components/schemas/ElevenLabsMusicAudioBinary"
+      description: |
+        Logical schema for the documented `multipart/mixed` response. One part
+        contains JSON metadata; another part contains the generated audio bytes.
+
+    ElevenLabsMusicErrorResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/ElevenLabsMusicErrorObject"
+
+    ElevenLabsMusicErrorObject:
+      type: object
+      additionalProperties: true
+      required:
+        - message
+        - type
+      properties:
+        message:
+          type: string
+          description: Error description.
+          examples:
+            - Invalid param
+        type:
+          type: string
+          description: Error type.
+          examples:
+            - invalid_request_error
+        code:
+          type:
+            - string
+            - "null"
+          description: Machine-readable error code.
+          examples:
+            - param_error
+        param:
+          type:
+            - string
+            - "null"
+          description: Request parameter related to the error.
+          examples:
+            - music_length_ms
+
+  examples:
+    ElevenLabsMusicGeneratePromptRequest:
+      summary: Generate music from a text prompt
+      value:
+        model: music-v1
+        input: A happy piano melody with soft jazz undertones
+        music_length_ms: 30000
+        output_format: mp3_22050_32
+
+    ElevenLabsMusicGeneratePlanRequest:
+      summary: Generate music from a composition plan
+      value:
+        model: music-v1
+        composition_plan:
+          positive_global_styles:
+            - jazz
+            - upbeat
+          negative_global_styles:
+            - heavy metal
+            - aggressive
+          sections:
+            - section_name: Intro
+              positive_local_styles:
+                - piano
+                - light percussion
+              negative_local_styles:
+                - vocals
+                - distortion
+              duration_ms: 3000
+              lines: []
+            - section_name: Verse
+              positive_local_styles:
+                - saxophone
+                - swing rhythm
+              negative_local_styles:
+                - harsh drums
+              duration_ms: 7000
+              lines:
+                - Swinging through the night...
+        music_length_ms: 10000
+        seed: 12345
+        output_format: mp3_22050_32
+
+    ElevenLabsMusicStreamRequest:
+      summary: Stream music from a text prompt
+      value:
+        model: music-v1
+        input: A calm guitar piece with nature sounds
+        music_length_ms: 30000
+        output_format: mp3_22050_32
+
+    ElevenLabsMusicDetailedRequest:
+      summary: Generate music with detailed metadata
+      value:
+        model: music-v1
+        input: An upbeat jazz tune
+        music_length_ms: 10000
+
+    ElevenLabsMusicDetailedPlanRequest:
+      summary: Generate detailed music from a composition plan
+      value:
+        model: music-v1
+        composition_plan:
+          positive_global_styles:
+            - jazz
+            - upbeat
+          negative_global_styles:
+            - heavy metal
+            - aggressive
+          sections:
+            - section_name: Intro
+              positive_local_styles:
+                - piano
+                - light percussion
+              negative_local_styles:
+                - vocals
+                - distortion
+              duration_ms: 3000
+              lines: []
+            - section_name: Verse
+              positive_local_styles:
+                - saxophone
+                - swing rhythm
+              negative_local_styles:
+                - harsh drums
+              duration_ms: 7000
+              lines:
+                - Swinging through the night...
+        respect_sections_durations: true
+        with_timestamps: false
+
+    ElevenLabsMusicDetailedMultipartResponse:
+      summary: Multipart metadata and audio response
+      value:
+        metadata:
+          composition_plan:
+            positive_global_styles:
+              - jazz
+              - upbeat
+            negative_global_styles:
+              - heavy metal
+              - aggressive
+            sections:
+              - section_name: Intro
+                positive_local_styles:
+                  - piano
+                  - light percussion
+                negative_local_styles:
+                  - vocals
+                  - distortion
+                duration_ms: 3000
+                lines: []
+              - section_name: Verse
+                positive_local_styles:
+                  - saxophone
+                  - swing rhythm
+                negative_local_styles:
+                  - harsh drums
+                duration_ms: 7000
+                lines:
+                  - Swinging through the night...
+          song_metadata:
+            title: Jazz Evening
+            description: An upbeat jazz composition
+            genres:
+              - jazz
+            languages:
+              - en
+            is_explicit: false
+        audio: "<binary MP3 audio bytes>"
+
+    ElevenLabsMusicPlanRequest:
+      summary: Create a composition plan
+      value:
+        model: music-v1
+        prompt: A soft lullaby with gentle piano and female vocals
+        music_length_ms: 30000
+
+    ElevenLabsMusicPlanFromSourceRequest:
+      summary: Create a composition plan from an existing plan
+      value:
+        model: music-v1
+        prompt: A longer version with gentle piano and soft female vocals
+        music_length_ms: 60000
+        source_composition_plan:
+          positive_global_styles:
+            - lullaby
+            - soft
+            - gentle
+            - calming
+            - acoustic
+          negative_global_styles:
+            - loud
+            - heavy drums
+            - fast tempo
+            - aggressive
+          sections:
+            - section_name: Verse 1
+              positive_local_styles:
+                - soft female vocal
+                - gentle acoustic guitar
+                - slow tempo
+              negative_local_styles:
+                - percussion
+                - bass guitar
+              duration_ms: 15000
+              lines:
+                - Close your eyes and drift away,
+                - Safe and sound until the day.
+
+    ElevenLabsMusicPlanResponse:
+      summary: Generated composition plan
+      value:
+        positive_global_styles:
+          - lullaby
+          - soft
+          - gentle
+          - calming
+          - acoustic
+        negative_global_styles:
+          - loud
+          - heavy drums
+          - fast tempo
+          - aggressive
+        sections:
+          - section_name: Verse 1
+            positive_local_styles:
+              - soft female vocal
+              - gentle acoustic guitar
+              - slow tempo
+            negative_local_styles:
+              - percussion
+              - bass guitar
+            duration_ms: 15000
+            lines:
+              - Close your eyes and drift away,
+              - Safe and sound until the day.
+          - section_name: Verse 2
+            positive_local_styles:
+              - soft female vocal
+              - hushed delivery
+              - dreamy atmosphere
+            negative_local_styles:
+              - strong vocals
+              - drums
+            duration_ms: 15000
+            lines:
+              - Stars above are shining bright,
+              - Sleep now, darling, sleep so deep.
+
+    ElevenLabsMusicInvalidRequestError:
+      summary: Invalid documented parameter
+      value:
+        error:
+          message: music_length_ms must be between 1 and 600000.
+          type: invalid_request_error
+          code: param_error
+          param: music_length_ms

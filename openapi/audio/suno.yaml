@@ -1,0 +1,374 @@
+openapi: 3.1.0
+x-language: en-US
+info:
+  title: ModelVerse Suno Music Task API
+  version: "1.0.0"
+  description: |
+    Self-contained OpenAPI 3.1 schema for the ModelVerse Suno asynchronous
+    music generation task API.
+
+
+servers:
+  - url: https://api.modelverse.cn
+    description: ModelVerse API endpoint documented for Suno.
+
+tags:
+  - name: Suno
+    description: Suno asynchronous music generation task operations.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/tasks/submit:
+    post:
+      tags:
+        - Suno
+      operationId: submitSunoMusicTask
+      summary: Submit a Suno music generation task
+      description: |
+        Submit an asynchronous Suno music generation task. The source document
+        shows inspiration mode, instrumental inspiration mode, custom lyrics
+        with title, and custom instrumental mode through this route.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SunoSubmitRequest"
+            examples:
+              inspirationMode:
+                summary: Inspiration mode
+                value:
+                  model: suno/chirp-bluejay
+                  input:
+                    gpt_description_prompt: 一首关于乡愁的歌
+              instrumentalInspirationMode:
+                summary: Instrumental inspiration mode
+                value:
+                  model: suno/chirp-bluejay
+                  input:
+                    gpt_description_prompt: 一首关于乡愁的歌
+                  parameters:
+                    make_instrumental: true
+              customLyricsAndTitle:
+                summary: Custom lyrics and title
+                value:
+                  model: suno/chirp-bluejay
+                  input:
+                    prompt: |-
+                      [Verse]
+                      连续的日子一直忙碌
+                      文件成堆无尽头
+                      把梦想藏在抽屉深处
+                      咖啡杯已经冷透
+
+                      [Verse 2]
+                      早上八点打卡上班
+                      疲惫的眼睛没神采
+                      同事间的闲聊都没意思
+                      只盼着时间快快跑起来
+
+                      [Chorus]
+                      工作工作老板的呼喊
+                      做完做完这才算平安
+                      加班加班才有些钱赚
+                      梦想梦想何时能实现
+                  parameters:
+                    tags: pop, ballad
+                    title: 归乡
+              customInstrumentalMode:
+                summary: Custom instrumental mode
+                value:
+                  model: suno/chirp-bluejay
+                  input:
+                    prompt: ""
+                  parameters:
+                    tags: pop, ballad
+                    title: 归乡
+      responses:
+        "200":
+          description: Task submitted successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SunoSubmitResponse"
+              examples:
+                submitted:
+                  summary: Submitted task
+                  value:
+                    output:
+                      task_id: task_id
+                    request_id: request_id
+        "400":
+          description: Invalid request parameters or task submission error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SunoHttpErrorResponse"
+              examples:
+                invalidRequest:
+                  $ref: "#/components/examples/SunoHttpError"
+        default:
+          description: Error response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SunoHttpErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/SunoHttpError"
+
+  /v1/tasks/status:
+    get:
+      tags:
+        - Suno
+      operationId: getSunoMusicTaskStatus
+      summary: Query a Suno task status
+      description: |
+        Poll an asynchronous Suno task until `task_status` is `Success` or
+        `Failure`. Successful tasks return result URLs, with the source example
+        showing an MP3 URL.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: task_id
+          in: query
+          required: true
+          description: Unique identifier of the asynchronous task returned by `/v1/tasks/submit`.
+          schema:
+            type: string
+          example: task_id
+      responses:
+        "200":
+          description: Task status response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SunoStatusResponse"
+              examples:
+                success:
+                  summary: Successful task
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Success
+                      urls:
+                        - https://xxxxx/xxxx.mp3
+                      submit_time: 1756959000
+                      finish_time: 1756959050
+                    usage: {}
+                    request_id: ""
+                failure:
+                  summary: Failed task
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Failure
+                      submit_time: 1756959000
+                      finish_time: 1756959019
+                      error_message: error_message
+                    request_id: ""
+        "400":
+          description: Invalid task identifier or request parameters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SunoHttpErrorResponse"
+              examples:
+                invalidRequest:
+                  $ref: "#/components/examples/SunoHttpError"
+        default:
+          description: Error response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SunoHttpErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/SunoHttpError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: "ModelVerse API key sent in the `Authorization: Bearer <API_KEY>` header."
+
+  schemas:
+    SunoSubmitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+      properties:
+        model:
+          $ref: "#/components/schemas/SunoModel"
+        input:
+          $ref: "#/components/schemas/SunoInput"
+        parameters:
+          $ref: "#/components/schemas/SunoParameters"
+
+    SunoModel:
+      type: string
+      description: |
+        Suno model name. The source parameter table lists the `suno-v*` model
+        versions, and the source request examples use `suno/chirp-bluejay`.
+      enum:
+        - suno-v4
+        - suno-v4.5
+        - suno-v4.5+
+        - suno-v4.5-all
+        - suno-v5
+        - suno-v5.5
+        - suno/chirp-bluejay
+
+    SunoInput:
+      type: object
+      additionalProperties: false
+      properties:
+        prompt:
+          type: string
+          description: Lyrics for custom mode.
+        gpt_description_prompt:
+          type: string
+          description: Inspiration prompt for inspiration mode.
+
+    SunoParameters:
+      type: object
+      additionalProperties: false
+      properties:
+        tags:
+          type: string
+          description: Style tags for custom mode.
+        title:
+          type: string
+          description: Title for custom mode.
+        make_instrumental:
+          type: boolean
+          description: Whether to generate instrumental music. `true` generates instrumental music.
+
+    SunoSubmitResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/SunoSubmitOutput"
+        request_id:
+          type: string
+          description: Unique request identifier.
+
+    SunoSubmitOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+      properties:
+        task_id:
+          type: string
+          description: Unique identifier of the asynchronous task.
+
+    SunoStatusResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/SunoStatusOutput"
+        usage:
+          type: object
+          additionalProperties: true
+          description: Usage object shown in the successful status response example.
+        request_id:
+          type: string
+          description: Unique request identifier.
+
+    SunoStatusOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+        - task_status
+      properties:
+        task_id:
+          type: string
+          description: Unique identifier of the asynchronous task.
+        task_status:
+          $ref: "#/components/schemas/SunoTaskStatus"
+        urls:
+          type: array
+          description: Result URL list. The source example shows an MP3 URL.
+          items:
+            type: string
+            format: uri
+        submit_time:
+          type: integer
+          format: int64
+          description: Task submission timestamp.
+        finish_time:
+          type: integer
+          format: int64
+          description: Task completion timestamp.
+        error_message:
+          type: string
+          description: Error message returned when the task fails.
+
+    SunoTaskStatus:
+      type: string
+      enum:
+        - Pending
+        - Running
+        - Success
+        - Failure
+      description: Task status.
+
+    SunoHttpErrorResponse:
+      type: object
+      additionalProperties: true
+      description: |
+        Non-200 error body. The Suno source document does not define a fixed
+        HTTP error envelope, so this schema permits provider-specific fields.
+      properties:
+        error:
+          $ref: "#/components/schemas/SunoHttpErrorObject"
+        request_id:
+          type: string
+
+    SunoHttpErrorObject:
+      type: object
+      additionalProperties: true
+      properties:
+        message:
+          type: string
+          description: Error message.
+        type:
+          type: string
+          description: Error type.
+        code:
+          type:
+            - string
+            - "null"
+          description: Error code.
+        param:
+          type:
+            - string
+            - "null"
+          description: Related request parameter, if any.
+
+  examples:
+    SunoHttpError:
+      summary: HTTP error response
+      value:
+        error:
+          message: Invalid param
+          type: invalid_request_error
+          code: param_error
+          param: model

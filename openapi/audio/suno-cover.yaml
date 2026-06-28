@@ -1,0 +1,378 @@
+openapi: 3.1.0
+x-language: en-US
+info:
+  title: ModelVerse Suno Cover Task API
+  version: "1.0.0"
+  description: |
+    Self-contained OpenAPI 3.1 schema for the ModelVerse Suno cover
+    asynchronous music task API.
+
+
+servers:
+  - url: https://api.modelverse.cn
+    description: ModelVerse API endpoint documented for Suno cover.
+
+tags:
+  - name: Suno Cover
+    description: Suno cover asynchronous music task operations.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/tasks/submit:
+    post:
+      tags:
+        - Suno Cover
+      operationId: submitSunoCoverTask
+      summary: Submit a Suno cover task
+      description: |
+        Submit an asynchronous Suno cover task. The source describes cover
+        generation for uploaded music and Suno-generated music. The documented
+        task type for this source is `cover`.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SunoCoverSubmitRequest"
+            examples:
+              cover:
+                $ref: "#/components/examples/SunoCoverSubmitRequestExample"
+      responses:
+        "200":
+          description: Task submitted successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SunoCoverSubmitResponse"
+              examples:
+                submitted:
+                  $ref: "#/components/examples/SunoCoverSubmitResponseExample"
+        "400":
+          description: Invalid request parameters or task submission error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SunoCoverHttpErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/SunoCoverHttpErrorResponseExample"
+        default:
+          description: Error response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SunoCoverHttpErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/SunoCoverHttpErrorResponseExample"
+
+  /v1/tasks/status:
+    get:
+      tags:
+        - Suno Cover
+      operationId: getSunoCoverTaskStatus
+      summary: Query a Suno cover task status
+      description: |
+        Poll an asynchronous Suno cover task until `task_status` is `Success`
+        or `Failure`. Successful tasks return result URLs, with the source
+        example showing an MP3 URL.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: task_id
+          in: query
+          required: true
+          description: Unique identifier of the asynchronous task returned by `/v1/tasks/submit`.
+          schema:
+            type: string
+          example: task_id
+      responses:
+        "200":
+          description: Task status response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SunoCoverStatusResponse"
+              examples:
+                success:
+                  $ref: "#/components/examples/SunoCoverStatusSuccessResponseExample"
+                failure:
+                  $ref: "#/components/examples/SunoCoverStatusFailureResponseExample"
+        "400":
+          description: Invalid task identifier or request parameters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SunoCoverHttpErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/SunoCoverHttpErrorResponseExample"
+        default:
+          description: Error response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SunoCoverHttpErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/SunoCoverHttpErrorResponseExample"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: "ModelVerse API key sent in the `Authorization: Bearer <API_KEY>` header."
+
+  schemas:
+    SunoCoverSubmitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - parameters
+      properties:
+        model:
+          $ref: "#/components/schemas/SunoCoverModel"
+        input:
+          $ref: "#/components/schemas/SunoCoverInput"
+        parameters:
+          $ref: "#/components/schemas/SunoCoverParameters"
+
+    SunoCoverModel:
+      type: string
+      description: Suno model version documented for this cover source.
+      enum:
+        - suno-v4
+        - suno-v4.5
+        - suno-v4.5+
+        - suno-v4.5-all
+        - suno-v5
+        - suno-v5.5
+
+    SunoCoverInput:
+      type: object
+      additionalProperties: false
+      properties:
+        prompt:
+          type: string
+          description: Lyrics. If empty, the task generates instrumental music.
+
+    SunoCoverParameters:
+      type: object
+      additionalProperties: false
+      required:
+        - upload_url
+        - task
+      properties:
+        upload_url:
+          type: string
+          format: uri
+          description: Accessible music URL to upload.
+        tags:
+          type: string
+          description: Music style tags. Required by the source when lyrics are supplied.
+        negative_tags:
+          type: string
+          description: Tags to avoid.
+        title:
+          type: string
+          description: Music submission title. Required by the source when lyrics are supplied.
+        task:
+          type: string
+          const: cover
+          description: Task type. For this source, use `cover`.
+
+    SunoCoverSubmitResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/SunoCoverSubmitOutput"
+        request_id:
+          type: string
+          description: Unique request identifier.
+
+    SunoCoverSubmitOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+      properties:
+        task_id:
+          type: string
+          description: Unique identifier of the asynchronous task.
+
+    SunoCoverStatusResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/SunoCoverStatusOutput"
+        usage:
+          type: object
+          additionalProperties: true
+          description: Usage object shown in the successful status response example.
+        request_id:
+          type: string
+          description: Unique request identifier.
+
+    SunoCoverStatusOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+        - task_status
+      properties:
+        task_id:
+          type: string
+          description: Unique identifier of the asynchronous task.
+        task_status:
+          $ref: "#/components/schemas/SunoCoverTaskStatus"
+        urls:
+          type: array
+          description: Result URL list. The source example shows an MP3 URL.
+          items:
+            type: string
+            format: uri
+        submit_time:
+          type: integer
+          format: int64
+          description: Task submission timestamp.
+        finish_time:
+          type: integer
+          format: int64
+          description: Task completion timestamp.
+        error_message:
+          type: string
+          description: Error message returned when the task fails.
+
+    SunoCoverTaskStatus:
+      type: string
+      description: Task status.
+      enum:
+        - Pending
+        - Running
+        - Success
+        - Failure
+
+    SunoCoverHttpErrorResponse:
+      type: object
+      additionalProperties: true
+      description: |
+        Non-200 error body. The Suno cover source document does not define a
+        fixed HTTP error envelope, so this schema permits provider-specific
+        fields.
+
+  examples:
+    SunoCoverSubmitRequestExample:
+      summary: Submit a Suno cover task
+      value:
+        model: suno-v4.5+
+        input:
+          prompt: |-
+            [Verse 1]
+            台阶上数着蚂蚁搬家
+            凉席上画着歪扭的图画
+            电风扇对着西瓜吹了一下午
+            外公的摇椅吱呀呀
+
+            [Pre-Chorus]
+            那时候以为每个问题都有回答
+            北斗星下面许的愿会开花
+            午睡醒来总有好吃的绿豆沙
+            时间慢得像永远长不大
+
+            [Chorus]
+            那年的蝉 叫了一整个暑假
+            我的秘密 藏在枕头底下
+            攒了很久的贴纸 贴在铅笔盒上
+            以为这样就能留住 那一片晚霞
+
+            [Verse 2]
+            院子里的石榴树发芽
+            水龙头冲走脚丫上的泥巴
+            电视剧主题曲学着哼唱
+            邻居家小狗叫小花
+
+            [Pre-Chorus]
+            那时候摔倒了哭一下就好啦
+            一颗糖就能换回笑脸啊
+            屋顶上看飞机拉出的白线
+            猜着它要飞去哪
+
+            [Chorus]
+            那年的蝉 叫了一整个暑假
+            我的愿望 折进星星罐里啦
+            攒了很久的硬币 买一根冰棒
+            甜了整个夏天 融化了也没怕
+
+            [Bridge]
+            后来院子拆了 石榴树没啦
+            外公不在了 摇椅也搬走啦
+            我打开那个星星罐
+            纸条上的字 已经看不清啦
+
+            [Chorus]
+            那年的蝉 后来去了哪
+            我的童年 停在那个暑假
+            攒了很久的回忆 放在心里最底下
+            偶尔拿出来 晒一晒太阳
+
+            [Outro]
+            蝉声停了
+            绿豆沙也凉了
+        parameters:
+          upload_url: https://xxx.xxx.xxx/xxx.mp3
+          negative_tags: 柔和、静谧
+          tags: rock, punk
+          title: 歌曲名(Cover)
+          task: cover
+
+    SunoCoverSubmitResponseExample:
+      summary: Submitted task
+      value:
+        output:
+          task_id: task_id
+        request_id: request_id
+
+    SunoCoverStatusSuccessResponseExample:
+      summary: Successful task
+      value:
+        output:
+          task_id: task_id
+          task_status: Success
+          urls:
+            - https://xxxxx/xxxx.mp3
+          submit_time: 1756959000
+          finish_time: 1756959050
+        usage: {}
+        request_id: ""
+
+    SunoCoverStatusFailureResponseExample:
+      summary: Failed task
+      value:
+        output:
+          task_id: task_id
+          task_status: Failure
+          submit_time: 1756959000
+          finish_time: 1756959019
+          error_message: error_message
+        request_id: ""
+
+    SunoCoverHttpErrorResponseExample:
+      summary: Error response
+      value:
+        error_message: error_message
+        request_id: request_id

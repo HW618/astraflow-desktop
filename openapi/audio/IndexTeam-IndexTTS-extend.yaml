@@ -1,0 +1,325 @@
+openapi: 3.1.0
+x-language: en-US
+info:
+  title: ModelVerse IndexTeam IndexTTS Extension Speech API
+  version: "1.0.0"
+  description: |
+    Self-contained OpenAPI 3.1 schema for the UModelverse
+    `/v1/audio/speech` request fields documented for IndexTeam/IndexTTS
+    series models, including the platform-specific extension fields.
+
+    This source describes extension parameters layered onto the
+    OpenAI-compatible TTS request shape. Extension fields are only meaningful
+    when calling IndexTeam/IndexTTS series models on UModelverse.
+
+servers:
+  - url: https://api.modelverse.cn
+    description: ModelVerse API endpoint shown in the source examples.
+
+tags:
+  - name: IndexTeam IndexTTS Extend
+    description: IndexTeam/IndexTTS speech synthesis with UModelverse extension fields.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/audio/speech:
+    post:
+      tags:
+        - IndexTeam IndexTTS Extend
+      operationId: createIndexTeamIndexTTSExtendSpeech
+      summary: Create speech with IndexTTS extension parameters
+      description: |
+        Creates speech through the OpenAI-compatible `/v1/audio/speech`
+        endpoint while accepting the IndexTTS-specific extension fields
+        documented by UModelverse.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IndexTeamIndexTTSExtendSpeechRequest"
+            examples:
+              happyBuiltinVoice:
+                summary: Built-in voice with emotion text
+                value:
+                  model: IndexTeam/IndexTTS-2
+                  input: "你好，这是一段带有愉快情绪的语音示例。"
+                  voice: jack_cheng
+                  sample_rate: 24000
+                  gain: 1.0
+                  emo_control_method: 1
+                  emo_weight: 0.8
+                  emo_text: "愉快"
+                  interval_silence: 200
+                  max_text_tokens_per_sentence: 120
+              customVoiceWithRandomEmotion:
+                summary: Custom voice with emotion-vector control
+                value:
+                  model: IndexTeam/IndexTTS-2
+                  input: "你好，我是带情绪的自定义音色示例。"
+                  voice: uspeech:xxxx-xxxx-xxxx-xxxx
+                  emo_control_method: 2
+                  emo_weight: 0.6
+                  emo_random: true
+                  interval_silence: 200
+                  max_text_tokens_per_sentence: 120
+      responses:
+        "200":
+          description: Synthesized speech audio.
+          content:
+            audio/wav:
+              schema:
+                $ref: "#/components/schemas/IndexTeamIndexTTSExtendAudioResponse"
+              examples:
+                builtinVoiceSpeech:
+                  summary: WAV audio for a built-in voice request
+                  value: "{binary WAV audio bytes}"
+                customVoiceSpeech:
+                  summary: WAV audio for a custom voice request
+                  value: "{binary WAV audio bytes}"
+            application/octet-stream:
+              schema:
+                $ref: "#/components/schemas/IndexTeamIndexTTSExtendAudioResponse"
+              examples:
+                speechFile:
+                  summary: Synthesized audio file bytes
+                  value: "{binary audio bytes}"
+        "400":
+          description: Invalid request parameters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexTeamIndexTTSExtendErrorResponse"
+              examples:
+                invalidExtensionParameter:
+                  $ref: "#/components/examples/IndexTeamIndexTTSExtendError"
+        default:
+          description: Error response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexTeamIndexTTSExtendErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/IndexTeamIndexTTSExtendError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: "ModelVerse API key sent as `Authorization: Bearer <MODELVERSE_API_KEY>`."
+
+  schemas:
+    IndexTeamIndexTTSExtendSpeechRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - input
+        - voice
+      properties:
+        model:
+          $ref: "#/components/schemas/IndexTeamIndexTTSExtendModel"
+        input:
+          type: string
+          minLength: 1
+          description: Text to synthesize.
+          examples:
+            - "你好，欢迎使用 Modelverse TTS。"
+        voice:
+          type: string
+          minLength: 1
+          description: |
+            Voice to use for synthesis. The source examples show the built-in
+            `jack_cheng` voice and custom voice IDs shaped like `uspeech:xxxx`.
+          examples:
+            - jack_cheng
+            - uspeech:xxxx-xxxx-xxxx-xxxx
+        response_format:
+          type: string
+          minLength: 1
+          description: |
+            OpenAI-compatible base TTS field mentioned by the source document.
+            Concrete response-format values are not enumerated in this source.
+        speed:
+          type: number
+          format: double
+          minimum: 0.25
+          maximum: 4
+          default: 1
+          description: Speech playback speed. The documented range is 0.25 to 4.
+        instructions:
+          type: string
+          description: |
+            OpenAI-compatible base TTS field mentioned by the source document.
+            This source does not define additional IndexTTS-specific semantics.
+        sample_rate:
+          type: integer
+          default: 22050
+          description: |
+            Target audio sample rate. Supported concrete values are defined by
+            the provider; the source lists examples such as 16000, 22050, and
+            24000.
+          examples:
+            - 16000
+            - 22050
+            - 24000
+        gain:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 10
+          default: 1
+          description: |
+            Output volume gain coefficient. The source recommends the range
+            `(0, 10]` and notes that `0` mutes output.
+        emo_control_method:
+          type: integer
+          enum:
+            - 0
+            - 1
+            - 2
+            - 3
+          default: 0
+          description: |
+            Emotion-control method identifier. `0` disables emotion control,
+            `1` uses emotion audio, `2` uses an emotion vector, and `3` uses
+            emotion text.
+        emo_weight:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          default: 1.0
+          description: |
+            Weight applied to the emotion reference audio, vector, or text.
+            The documented valid range is 0.0 to 1.0. The source recommends
+            about 0.6 or lower for text emotion mode to produce more natural
+            speech.
+        emo_vec:
+          type: array
+          minItems: 8
+          maxItems: 8
+          default:
+            - 0
+            - 0
+            - 0
+            - 0
+            - 0
+            - 0
+            - 0
+            - 0
+          description: |
+            Emotion vector ordered as happiness, anger, sadness, fear,
+            disgust, melancholy, surprise, and calm. Each dimension is
+            documented as 0 to 1.2, and the sum of all dimensions must not
+            exceed 1.5.
+          items:
+            type: number
+            format: double
+            minimum: 0
+            maximum: 1.2
+          examples:
+            - [0.8, 0, 0, 0, 0, 0, 0.1, 0]
+        emo_text:
+          type: string
+          default: ""
+          description: Natural-language emotion prompt, such as happy, calm, or excited.
+          examples:
+            - "愉快"
+            - "平静"
+            - "激动"
+        emo_random:
+          type: boolean
+          default: false
+          description: |
+            Whether to introduce randomness into emotion control for more
+            variety or to avoid identical emotion expression between sentences.
+        interval_silence:
+          type: integer
+          minimum: 0
+          default: 200
+          description: |
+            Controls interval silence between sentences. The field table and
+            curl examples use a millisecond integer with a recommended value
+            of 200.
+          examples:
+            - 200
+        max_text_tokens_per_sentence:
+          type: integer
+          minimum: 1
+          default: 120
+          description: |
+            Maximum token count or length threshold for internal sentence
+            splitting in long-text synthesis. The source recommends 120.
+
+    IndexTeamIndexTTSExtendModel:
+      type: string
+      pattern: "^IndexTeam/IndexTTS(?:-.+)?$"
+      description: |
+        IndexTeam/IndexTTS series model name. The source examples use
+        `IndexTeam/IndexTTS-2`.
+      examples:
+        - IndexTeam/IndexTTS-2
+
+    IndexTeamIndexTTSExtendAudioResponse:
+      type: string
+      format: binary
+      description: Synthesized speech audio bytes written by the source examples to `.wav` files.
+
+    IndexTeamIndexTTSExtendErrorResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/IndexTeamIndexTTSExtendError"
+        request_id:
+          type: string
+          description: Request identifier, if available.
+
+    IndexTeamIndexTTSExtendError:
+      type: object
+      additionalProperties: true
+      required:
+        - message
+        - type
+      properties:
+        message:
+          type: string
+          description: Error message.
+        type:
+          type: string
+          description: Error type.
+          examples:
+            - invalid_request_error
+        code:
+          type:
+            - string
+            - "null"
+          description: Error code.
+          examples:
+            - param_error
+        param:
+          type:
+            - string
+            - "null"
+          description: Request parameter related to the error.
+          examples:
+            - emo_weight
+
+  examples:
+    IndexTeamIndexTTSExtendError:
+      summary: Invalid extension parameter
+      value:
+        error:
+          message: Invalid param
+          type: invalid_request_error
+          code: param_error
+          param: emo_weight
+        request_id: request_id

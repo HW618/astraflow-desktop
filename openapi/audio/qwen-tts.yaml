@@ -1,0 +1,303 @@
+openapi: 3.1.0
+x-language: en-US
+info:
+  title: ModelVerse Qwen TTS Speech API
+  version: "1.0.0"
+  description: |
+    Self-contained OpenAPI 3.1 schema for the ModelVerse Qwen-TTS
+    synchronous speech synthesis API.
+
+    This endpoint is compatible with the OpenAI `/v1/audio/speech` path, but
+    the documented response body is Alibaba Cloud DashScope JSON containing an
+    audio URL at `output.audio.url`, not a binary audio stream.
+
+servers:
+  - url: https://api.modelverse.cn
+    description: ModelVerse API endpoint shown in the source document.
+
+tags:
+  - name: Qwen TTS
+    description: Speech synthesis operations for `qwen3-tts-flash`.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/audio/speech:
+    post:
+      tags:
+        - Qwen TTS
+      operationId: createQwenTtsSpeech
+      summary: Synthesize speech with Qwen TTS
+      description: |
+        Synchronously synthesize speech with `qwen3-tts-flash`.
+        The response is `application/json`; clients must read
+        `output.audio.url` and download the audio file separately. The audio
+        URL is documented as valid for 24 hours.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QwenTtsSpeechRequest"
+            examples:
+              defaultLanguage:
+                summary: Auto-detected language
+                value:
+                  model: qwen3-tts-flash
+                  input: 那我来给大家推荐一款T恤，这款呢真的是超级好看，这个颜色呢很显气质。
+                  voice: Cherry
+              specifiedChinese:
+                summary: Explicit Chinese language
+                value:
+                  model: qwen3-tts-flash
+                  input: 今天天气真好，我们去公园散步吧。
+                  voice: Cherry
+                  metadata:
+                    language_type: Chinese
+      responses:
+        "200":
+          description: JSON response containing the synthesized audio URL.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QwenTtsSpeechResponse"
+              examples:
+                synthesizedSpeech:
+                  summary: Synthesized speech URL
+                  value:
+                    request_id: 5c63c65c-cad8-4bf4-959d-xxxxxxxxxxxx
+                    code: ""
+                    message: ""
+                    output:
+                      finish_reason: stop
+                      audio:
+                        data: ""
+                        url: https://dashscope-result-bj.oss-cn-beijing.aliyuncs.com/xx/xxxxxxxx.wav?Expires=1766113409&OSSAccessKeyId=LTAI5xxxxxx&Signature=xxxxxx
+                        id: audio_5c63c65c-cad8-4bf4-959d-xxxxxxxxxxxx
+                        expires_at: 1766113409
+                    usage:
+                      input_tokens: 0
+                      output_tokens: 0
+                      characters: 195
+        "400":
+          description: Invalid request parameters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QwenTtsErrorResponse"
+              examples:
+                invalidRequest:
+                  $ref: "#/components/examples/QwenTtsError"
+        default:
+          description: Error response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QwenTtsErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/QwenTtsError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: "ModelVerse API key sent as `Authorization: Bearer <MODELVERSE_API_KEY>`."
+
+  schemas:
+    QwenTtsSpeechRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - input
+        - voice
+      properties:
+        model:
+          type: string
+          const: qwen3-tts-flash
+          description: TTS model name. This schema is pinned to `qwen3-tts-flash`.
+        input:
+          type: string
+          maxLength: 600
+          description: Text to synthesize. The source document limits input to 600 characters.
+        voice:
+          type: string
+          description: |
+            System voice name used for synthesis. The source examples mention
+            voices such as `Cherry`, `Ethan`, `Serena`, and `Chelsie`; the full
+            provider voice list is not enumerated in this source.
+          examples:
+            - Cherry
+            - Ethan
+            - Serena
+            - Chelsie
+        metadata:
+          $ref: "#/components/schemas/QwenTtsMetadata"
+
+    QwenTtsMetadata:
+      type: object
+      additionalProperties: false
+      properties:
+        language_type:
+          $ref: "#/components/schemas/QwenTtsLanguageType"
+
+    QwenTtsLanguageType:
+      type: string
+      default: Auto
+      x-enum-case-insensitive: true
+      enum:
+        - Chinese
+        - English
+        - German
+        - Italian
+        - Portuguese
+        - Spanish
+        - Japanese
+        - Korean
+        - French
+        - Russian
+        - Auto
+      description: |
+        Optional target language for synthesis. When omitted, the documented
+        default is `Auto`. The source states these values are accepted
+        case-insensitively and that invalid values return HTTP 400 with a
+        supported-language list in `message`.
+
+    QwenTtsSpeechResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - request_id
+        - code
+        - message
+        - output
+        - usage
+      properties:
+        request_id:
+          type: string
+          description: Unique request identifier for troubleshooting.
+        code:
+          type: string
+          description: Business error code. The successful response uses an empty string.
+        message:
+          type: string
+          description: Business error message. The successful response uses an empty string.
+        output:
+          $ref: "#/components/schemas/QwenTtsOutput"
+        usage:
+          $ref: "#/components/schemas/QwenTtsUsage"
+
+    QwenTtsOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - finish_reason
+        - audio
+      properties:
+        finish_reason:
+          type:
+            - string
+            - "null"
+          enum:
+            - stop
+            - null
+          description: Finish reason. The source documents `null` while generating and `stop` when complete.
+        audio:
+          $ref: "#/components/schemas/QwenTtsAudio"
+
+    QwenTtsAudio:
+      type: object
+      additionalProperties: false
+      required:
+        - url
+        - data
+        - id
+        - expires_at
+      properties:
+        url:
+          type: string
+          format: uri
+          description: Complete synthesized audio file URL. The source states it is valid for 24 hours.
+        data:
+          type: string
+          const: ""
+          description: Base64 audio data for streaming output. In the documented synchronous mode this is always an empty string.
+        id:
+          type: string
+          description: Audio information identifier.
+        expires_at:
+          type: integer
+          format: int64
+          description: Expiration timestamp for the audio URL.
+
+    QwenTtsUsage:
+      type: object
+      additionalProperties: false
+      required:
+        - characters
+        - input_tokens
+        - output_tokens
+      properties:
+        characters:
+          type: integer
+          minimum: 0
+          description: Input character count used for billing.
+        input_tokens:
+          type: integer
+          const: 0
+          description: Fixed to `0` in the source document.
+        output_tokens:
+          type: integer
+          const: 0
+          description: Fixed to `0` in the source document.
+
+    QwenTtsErrorResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/QwenTtsError"
+
+    QwenTtsError:
+      type: object
+      additionalProperties: false
+      required:
+        - message
+        - type
+        - code
+        - param
+      properties:
+        message:
+          type: string
+          description: Error description.
+        type:
+          type: string
+          description: Error type.
+          examples:
+            - invalid_request_error
+        code:
+          type: string
+          description: Machine-readable error code.
+          examples:
+            - error_code
+        param:
+          type: string
+          description: Request ID used for feedback or troubleshooting.
+
+  examples:
+    QwenTtsError:
+      summary: Standard JSON error response
+      value:
+        error:
+          message: 错误描述信息
+          type: invalid_request_error
+          code: error_code
+          param: <请求 ID，用于反馈或排查错误原因>

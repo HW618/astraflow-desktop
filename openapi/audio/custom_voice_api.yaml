@@ -1,0 +1,523 @@
+openapi: 3.1.0
+x-language: en-US
+info:
+  title: ModelVerse Custom Voice Management API
+  version: "1.0.0"
+  description: |
+    Self-contained OpenAPI 3.1 schema for ModelVerse custom voice lifecycle
+    management APIs: upload, list, and delete.
+
+
+servers:
+  - url: https://api.modelverse.cn
+    description: ModelVerse API endpoint documented for custom voice management.
+
+tags:
+  - name: Custom Voice
+    description: Upload, list, and delete organization-scoped custom voices.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/audio/voice/upload:
+    post:
+      tags:
+        - Custom Voice
+      operationId: uploadCustomVoice
+      summary: Upload a custom voice
+      description: |
+        Create a custom voice by providing a display `name`, the target TTS
+        `model`, and at least one speaker audio source.
+
+        Speaker audio is required through one of `speaker_file`,
+        `speaker_file_base64`, or `speaker_url`. If multiple speaker sources
+        are supplied, the documented priority is `speaker_file`,
+        then `speaker_file_base64`, then `speaker_url`.
+
+        Emotion sample audio is optional through one of `emotion_file`,
+        `emotion_file_base64`, or `emotion_url`. If multiple emotion sources
+        are supplied, the documented priority is `emotion_file`,
+        then `emotion_file_base64`, then `emotion_url`.
+
+        Uploaded audio constraints apply to both speaker and emotion samples:
+        MP3 or WAV only, each file at most 20 MB, duration from 5 to 30 seconds,
+        and sample rate 16 kHz or higher.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/CustomVoiceUploadMultipartRequest"
+            encoding:
+              speaker_file:
+                contentType: audio/wav, audio/mpeg
+              emotion_file:
+                contentType: audio/wav, audio/mpeg
+            examples:
+              multipartFileUpload:
+                $ref: "#/components/examples/CustomVoiceUploadMultipartExample"
+              multipartBase64Upload:
+                $ref: "#/components/examples/CustomVoiceUploadBase64Example"
+              multipartUrlUpload:
+                $ref: "#/components/examples/CustomVoiceUploadUrlExample"
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/CustomVoiceUploadFormRequest"
+            examples:
+              base64Upload:
+                $ref: "#/components/examples/CustomVoiceUploadBase64Example"
+              urlUpload:
+                $ref: "#/components/examples/CustomVoiceUploadUrlExample"
+      responses:
+        "200":
+          description: Custom voice created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomVoiceUploadResponse"
+              examples:
+                uploaded:
+                  $ref: "#/components/examples/CustomVoiceUploadResponseExample"
+        "400":
+          description: Invalid upload request or audio constraint violation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomVoiceErrorResponse"
+              examples:
+                missingSpeaker:
+                  $ref: "#/components/examples/CustomVoiceMissingSpeakerErrorExample"
+        "401":
+          description: Invalid or missing bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomVoiceErrorResponse"
+              examples:
+                authError:
+                  $ref: "#/components/examples/CustomVoiceAuthErrorExample"
+        default:
+          description: Error response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomVoiceErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/CustomVoiceErrorExample"
+
+  /v1/audio/voice/list:
+    get:
+      tags:
+        - Custom Voice
+      operationId: listCustomVoices
+      summary: List custom voices
+      description: |
+        Return the custom voices for the organization associated with the
+        current API key. Custom voices are isolated by organization and shared
+        by sub-accounts within the same organization.
+
+        A single request returns at most 1000 records. Custom voices are kept
+        for 7 days by default and may be cleaned up after expiration.
+      responses:
+        "200":
+          description: Custom voice list for the current organization.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomVoiceListResponse"
+              examples:
+                listed:
+                  $ref: "#/components/examples/CustomVoiceListResponseExample"
+        "401":
+          description: Invalid or missing bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomVoiceErrorResponse"
+              examples:
+                authError:
+                  $ref: "#/components/examples/CustomVoiceAuthErrorExample"
+        default:
+          description: Error response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomVoiceErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/CustomVoiceErrorExample"
+
+  /v1/audio/voice/delete:
+    post:
+      tags:
+        - Custom Voice
+      operationId: deleteCustomVoice
+      summary: Delete a custom voice
+      description: |
+        Delete an existing custom voice by ID. After deletion, the voice ID can
+        no longer be used in the `/v1/audio/speech` `voice` field.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomVoiceDeleteRequest"
+            examples:
+              deleteVoice:
+                $ref: "#/components/examples/CustomVoiceDeleteRequestExample"
+      responses:
+        "200":
+          description: Custom voice deleted successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomVoiceDeleteResponse"
+              examples:
+                deleted:
+                  $ref: "#/components/examples/CustomVoiceDeleteResponseExample"
+        "400":
+          description: Missing or invalid custom voice ID.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomVoiceErrorResponse"
+              examples:
+                invalidVoiceId:
+                  $ref: "#/components/examples/CustomVoiceInvalidVoiceIdErrorExample"
+        "401":
+          description: Invalid or missing bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomVoiceErrorResponse"
+              examples:
+                authError:
+                  $ref: "#/components/examples/CustomVoiceAuthErrorExample"
+        default:
+          description: Error response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomVoiceErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/CustomVoiceErrorExample"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+
+  schemas:
+    CustomVoiceName:
+      type: string
+      minLength: 1
+      description: Custom voice display name used in list responses.
+      examples:
+        - 温柔女声
+        - 客服音色A
+
+    CustomVoiceModel:
+      type: string
+      minLength: 1
+      description: |
+        TTS model used with this custom voice. Use the same model value later
+        in `/v1/audio/speech` requests.
+      examples:
+        - IndexTeam/IndexTTS-2
+
+    CustomVoiceId:
+      type: string
+      minLength: 1
+      pattern: "^uspeech:.+"
+      description: Custom voice ID returned by the upload API.
+      examples:
+        - uspeech:xxxx-xxxx-xxxx-xxxx
+
+    CustomVoiceAudioFile:
+      type: string
+      format: binary
+      maxLength: 20971520
+      description: |
+        Local speaker or emotion audio file uploaded as multipart form data.
+        Only MP3 and WAV are supported. Each audio file must be at most 20 MB,
+        5 to 30 seconds long, and sampled at 16 kHz or higher.
+
+    CustomVoiceAudioBase64:
+      type: string
+      contentEncoding: base64
+      minLength: 1
+      description: |
+        Base64-encoded MP3 or WAV audio. The decoded audio must be at most
+        20 MB, 5 to 30 seconds long, and sampled at 16 kHz or higher.
+      examples:
+        - UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=
+
+    CustomVoiceAudioUrl:
+      type: string
+      format: uri
+      minLength: 1
+      description: |
+        Publicly accessible URL pointing to an MP3 or WAV audio file. The audio
+        must be at most 20 MB, 5 to 30 seconds long, and sampled at 16 kHz or
+        higher.
+      examples:
+        - https://example.com/audio/speaker.wav
+
+    CustomVoiceUploadMultipartRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - model
+      properties:
+        name:
+          $ref: "#/components/schemas/CustomVoiceName"
+        model:
+          $ref: "#/components/schemas/CustomVoiceModel"
+        speaker_file:
+          $ref: "#/components/schemas/CustomVoiceAudioFile"
+        speaker_file_base64:
+          $ref: "#/components/schemas/CustomVoiceAudioBase64"
+        speaker_url:
+          $ref: "#/components/schemas/CustomVoiceAudioUrl"
+        emotion_file:
+          $ref: "#/components/schemas/CustomVoiceAudioFile"
+        emotion_file_base64:
+          $ref: "#/components/schemas/CustomVoiceAudioBase64"
+        emotion_url:
+          $ref: "#/components/schemas/CustomVoiceAudioUrl"
+      anyOf:
+        - required:
+            - speaker_file
+        - required:
+            - speaker_file_base64
+        - required:
+            - speaker_url
+      description: |
+        Multipart upload request. At least one `speaker_*` source is required.
+        `emotion_*` sources are optional.
+
+    CustomVoiceUploadFormRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - model
+      properties:
+        name:
+          $ref: "#/components/schemas/CustomVoiceName"
+        model:
+          $ref: "#/components/schemas/CustomVoiceModel"
+        speaker_file_base64:
+          $ref: "#/components/schemas/CustomVoiceAudioBase64"
+        speaker_url:
+          $ref: "#/components/schemas/CustomVoiceAudioUrl"
+        emotion_file_base64:
+          $ref: "#/components/schemas/CustomVoiceAudioBase64"
+        emotion_url:
+          $ref: "#/components/schemas/CustomVoiceAudioUrl"
+      anyOf:
+        - required:
+            - speaker_file_base64
+        - required:
+            - speaker_url
+      description: |
+        Non-file form upload request using Base64 strings or public URLs.
+        At least one speaker source is required.
+
+    CustomVoiceUploadResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+      properties:
+        id:
+          $ref: "#/components/schemas/CustomVoiceId"
+
+    CustomVoiceListItem:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+      properties:
+        id:
+          $ref: "#/components/schemas/CustomVoiceId"
+        name:
+          $ref: "#/components/schemas/CustomVoiceName"
+
+    CustomVoiceListResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - list
+      properties:
+        list:
+          type: array
+          maxItems: 1000
+          description: Custom voices available to the current organization.
+          items:
+            $ref: "#/components/schemas/CustomVoiceListItem"
+
+    CustomVoiceDeleteRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+      properties:
+        id:
+          $ref: "#/components/schemas/CustomVoiceId"
+
+    CustomVoiceDeleteResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - success
+      properties:
+        success:
+          type: boolean
+          const: true
+          description: Indicates that the custom voice was deleted.
+
+    CustomVoiceErrorObject:
+      type: object
+      additionalProperties: true
+      required:
+        - message
+        - type
+        - code
+        - param
+      properties:
+        message:
+          type: string
+          description: Human-readable error description.
+          examples:
+            - 错误描述信息
+        type:
+          type: string
+          description: Error category.
+          examples:
+            - invalid_request_error
+        code:
+          type: string
+          description: Machine-readable error code.
+          enum:
+            - missing_name
+            - missing_speaker
+            - invalid_speaker_base64
+            - unsupported_audio_format
+            - file_too_large
+            - duration_out_of_range
+            - sample_rate_too_low
+            - missing_id
+            - invalid_voice_id
+            - server_error
+            - auth_error
+          examples:
+            - missing_speaker
+        param:
+          type:
+            - string
+            - "null"
+          description: Request ID or parameter name associated with the error.
+          examples:
+            - speaker_file
+
+    CustomVoiceErrorResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/CustomVoiceErrorObject"
+
+  examples:
+    CustomVoiceUploadMultipartExample:
+      summary: Multipart file upload with speaker and emotion files
+      value:
+        name: 温柔女声
+        model: IndexTeam/IndexTTS-2
+        speaker_file: /path/to/speaker.wav
+        emotion_file: /path/to/emotion.wav
+
+    CustomVoiceUploadBase64Example:
+      summary: Form upload with Base64 speaker audio
+      value:
+        name: 温柔女声
+        model: IndexTeam/IndexTTS-2
+        speaker_file_base64: UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=
+        emotion_file_base64: UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=
+
+    CustomVoiceUploadUrlExample:
+      summary: Form upload with public audio URLs
+      value:
+        name: 客服音色A
+        model: IndexTeam/IndexTTS-2
+        speaker_url: https://example.com/audio/speaker.wav
+        emotion_url: https://example.com/audio/emotion.wav
+
+    CustomVoiceUploadResponseExample:
+      summary: Upload response
+      value:
+        id: uspeech:xxxx-xxxx-xxxx-xxxx
+
+    CustomVoiceListResponseExample:
+      summary: List response
+      value:
+        list:
+          - id: uspeech:xxxx
+            name: 温柔女声
+          - id: uspeech:yyyy
+            name: 沉稳男声
+
+    CustomVoiceDeleteRequestExample:
+      summary: Delete request
+      value:
+        id: uspeech:xxxx
+
+    CustomVoiceDeleteResponseExample:
+      summary: Delete response
+      value:
+        success: true
+
+    CustomVoiceErrorExample:
+      summary: Documented error response format
+      value:
+        error:
+          message: 错误描述信息
+          type: invalid_request_error
+          code: missing_speaker
+          param: <请求 ID 或参数名>
+
+    CustomVoiceMissingSpeakerErrorExample:
+      summary: Missing speaker audio source
+      value:
+        error:
+          message: No speaker audio source was provided.
+          type: invalid_request_error
+          code: missing_speaker
+          param: speaker_file
+
+    CustomVoiceInvalidVoiceIdErrorExample:
+      summary: Voice ID does not exist or was deleted
+      value:
+        error:
+          message: The specified custom voice ID does not exist in the current organization or has been deleted.
+          type: invalid_request_error
+          code: invalid_voice_id
+          param: id
+
+    CustomVoiceAuthErrorExample:
+      summary: Invalid bearer token
+      value:
+        error:
+          message: Validate Certification failed.
+          type: invalid_request_error
+          code: auth_error
+          param: null

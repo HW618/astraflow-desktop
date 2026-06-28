@@ -18,6 +18,7 @@ import {
 import type { RemixiconComponentType } from "@remixicon/react"
 
 import { useI18n } from "@/components/i18n-provider"
+import { StudioAudioWorkbench } from "@/components/studio-audio-workbench"
 import { StudioChatWorkbench } from "@/components/studio-chat-workbench"
 import { StudioImageWorkbench } from "@/components/studio-image-workbench"
 import { StudioVideoWorkbench } from "@/components/studio-video-workbench"
@@ -762,6 +763,15 @@ function StudioShell() {
             sessionId={selectedSessionId}
             onSessionChange={(nextSessionId) => {
               setSelectedMode("video")
+              setSelectedSessionId(nextSessionId)
+            }}
+            onSessionsChange={reloadSessions}
+          />
+        ) : activeMode === "audio" ? (
+          <StudioAudioWorkbench
+            sessionId={selectedSessionId}
+            onSessionChange={(nextSessionId) => {
+              setSelectedMode("audio")
               setSelectedSessionId(nextSessionId)
             }}
             onSessionsChange={reloadSessions}

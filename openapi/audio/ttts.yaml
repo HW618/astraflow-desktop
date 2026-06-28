@@ -1,0 +1,369 @@
+openapi: 3.1.0
+x-language: en-US
+info:
+  title: ModelVerse IndexTeam/IndexTTS-2 Audio TTS API
+  version: "1.0.0"
+  description: |
+    Self-contained OpenAPI 3.1 schema for the ModelVerse
+    `IndexTeam/IndexTTS-2` audio synthesis APIs.
+
+servers:
+  - url: https://api.modelverse.cn
+    description: ModelVerse API endpoint shown in the source document.
+
+tags:
+  - name: Ttts Audio
+    description: Speech synthesis operations for `IndexTeam/IndexTTS-2`.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/audio/infer:
+    post:
+      tags:
+        - Ttts Audio
+      operationId: createTttsInferAudio
+      summary: Synthesize speech from reference audio
+      description: |
+        Generate WAV speech with a speaker reference audio file and optional
+        emotion reference controls. The source document requires
+        `multipart/form-data` for this endpoint.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/TttsInferMultipartRequest"
+            encoding:
+              spk_audio_file:
+                contentType: audio/wav, audio/mpeg
+              emo_audio_file:
+                contentType: audio/wav, audio/mpeg
+              payload:
+                contentType: application/json
+            examples:
+              emotionAudioReference:
+                summary: Generate speech with speaker and emotion audio references
+                value:
+                  model: IndexTeam/IndexTTS-2
+                  spk_audio_file: audio/klee.wav
+                  emo_audio_file: audio/emo_sad.wav
+                  payload: '{"input":"酒楼丧尽天良，开始借机竞拍房间，哎，一群蠢货。","emo_alpha":0.8,"emo_control_method":1}'
+              emotionVectorReference:
+                summary: Generate speech with an emotion vector
+                value:
+                  model: IndexTeam/IndexTTS-2
+                  spk_audio_file: audio/klee.wav
+                  payload: '{"input":"你好！欢迎使用 Modelverse 语音合成服务。","sample_rate":22050,"speed":1,"gain":1,"emo_control_method":2,"emo_vec":[0.1,0.2,0,0.3,0.1,0,0.2,0.4],"interval_silence":200}'
+      responses:
+        "200":
+          description: Binary WAV audio stream.
+          content:
+            audio/wav:
+              schema:
+                $ref: "#/components/schemas/TttsWavAudioBinary"
+              examples:
+                generatedWav:
+                  summary: Generated WAV file
+                  value: "<binary WAV audio stream>"
+        "400":
+          $ref: "#/components/responses/TttsInvalidRequest"
+        default:
+          $ref: "#/components/responses/TttsError"
+
+  /v1/audio/speech:
+    post:
+      tags:
+        - Ttts Audio
+      operationId: createTttsSpeechAudio
+      summary: Synthesize speech with a built-in or custom voice
+      description: |
+        OpenAI-compatible speech synthesis endpoint for `IndexTeam/IndexTTS-2`.
+        The response is a binary WAV audio stream. The `voice` field can use a
+        built-in voice name or a custom voice ID in the form `uspeech:xxxx`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TttsSpeechRequest"
+            examples:
+              builtInVoice:
+                summary: Generate speech with a built-in voice
+                value:
+                  model: IndexTeam/IndexTTS-2
+                  input: 你好！欢迎使用 Modelverse 语音合成服务。
+                  voice: jack_cheng
+              customVoice:
+                summary: Generate speech with a custom voice ID
+                value:
+                  model: IndexTeam/IndexTTS-2
+                  input: 你好，我是自定义的温柔女声。
+                  voice: uspeech:xxxx-xxxx-xxxx-xxxx
+      responses:
+        "200":
+          description: Binary WAV audio stream.
+          content:
+            audio/wav:
+              schema:
+                $ref: "#/components/schemas/TttsWavAudioBinary"
+              examples:
+                generatedWav:
+                  summary: Generated WAV file
+                  value: "<binary WAV audio stream>"
+        "400":
+          $ref: "#/components/responses/TttsInvalidRequest"
+        default:
+          $ref: "#/components/responses/TttsError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: |
+        ModelVerse API key sent as `Authorization: Bearer <MODELVERSE_API_KEY>`.
+
+  responses:
+    TttsInvalidRequest:
+      description: Invalid request.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/TttsErrorResponse"
+          examples:
+            invalidRequest:
+              $ref: "#/components/examples/TttsInvalidRequestError"
+
+    TttsError:
+      description: Error response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/TttsErrorResponse"
+          examples:
+            error:
+              $ref: "#/components/examples/TttsInvalidRequestError"
+
+  schemas:
+    TttsInferMultipartRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - spk_audio_file
+        - payload
+      properties:
+        model:
+          type: string
+          const: IndexTeam/IndexTTS-2
+          description: TTS model name. This schema is pinned to `IndexTeam/IndexTTS-2`.
+        spk_audio_file:
+          type: string
+          format: binary
+          description: |
+            Speaker reference audio file used to extract timbre features.
+            The source document allows MP3 and WAV files smaller than 20 MB.
+        emo_audio_file:
+          type: string
+          format: binary
+          description: |
+            Optional emotion reference audio file used to extract emotional
+            speech features. The source document allows MP3 and WAV files
+            smaller than 20 MB.
+        payload:
+          $ref: "#/components/schemas/TttsInferPayloadString"
+
+    TttsInferPayloadString:
+      type: string
+      contentMediaType: application/json
+      description: |
+        JSON-formatted configuration string. The decoded JSON object follows
+        the `TttsInferPayload` schema in this file.
+      contentSchema:
+        $ref: "#/components/schemas/TttsInferPayload"
+      examples:
+        - '{"input":"你好！欢迎使用 Modelverse 语音合成服务。","sample_rate":22050,"speed":1,"gain":1,"emo_control_method":0,"interval_silence":200}'
+
+    TttsInferPayload:
+      type: object
+      additionalProperties: false
+      required:
+        - input
+      properties:
+        input:
+          type: string
+          maxLength: 600
+          description: Text to synthesize. The source document limits input to 600 characters.
+        sample_rate:
+          type: integer
+          default: 22050
+          examples:
+            - 22050
+            - 44100
+            - 48000
+          description: Output audio sample rate in Hz. Common values are 22050, 44100, and 48000.
+        speed:
+          type: number
+          format: double
+          minimum: 0.25
+          maximum: 4.0
+          default: 1
+          description: Speech speed adjustment factor.
+        gain:
+          type: number
+          format: double
+          default: 1
+          description: Audio gain factor. `1` keeps the original volume.
+        emo_control_method:
+          type: integer
+          enum:
+            - 0
+            - 1
+            - 2
+            - 3
+          default: 0
+          description: |
+            Emotion control method. `0` means no emotion reference, `1` uses
+            `emo_audio_file`, `2` uses `emo_vec`, and `3` uses `emo_text`.
+        emo_alpha:
+          type: number
+          format: double
+          default: 1
+          description: Emotion fusion weight.
+        emo_vec:
+          type: array
+          minItems: 8
+          maxItems: 8
+          default:
+            - 0
+            - 0
+            - 0
+            - 0
+            - 0
+            - 0
+            - 0
+            - 0
+          items:
+            type: number
+            format: double
+          description: |
+            Eight-dimensional emotion vector used when `emo_control_method` is
+            `2`. The source document states that the sum of all elements must
+            not exceed 1.5.
+          examples:
+            - - 0.1
+              - 0.2
+              - 0.0
+              - 0.3
+              - 0.1
+              - 0.0
+              - 0.2
+              - 0.4
+        emo_text:
+          type: string
+          default: ""
+          description: Emotion text description used when `emo_control_method` is `3`.
+          examples:
+            - 今天股票涨停了，好激动
+        use_random:
+          type: boolean
+          default: false
+          description: Whether to introduce random emotion variation.
+        interval_silence:
+          type: integer
+          default: 200
+          description: Silence interval between synthesized text chunks, in milliseconds.
+
+    TttsSpeechRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - input
+        - voice
+      properties:
+        model:
+          type: string
+          const: IndexTeam/IndexTTS-2
+          description: TTS model name. This schema is pinned to `IndexTeam/IndexTTS-2`.
+        input:
+          type: string
+          maxLength: 600
+          description: Text to convert to speech. The source document limits input to 600 characters.
+        voice:
+          description: |
+            Built-in voice name, a custom voice ID in the form `uspeech:xxxx`,
+            or an empty string to use the default voice behavior documented in
+            the source.
+          anyOf:
+            - type: string
+              enum:
+                - jack_cheng
+                - sales_voice
+                - crystla_liu
+                - stephen_chow
+                - xiaoyueyue
+                - mkas
+                - entertain
+                - novel
+                - movie
+            - type: string
+              pattern: "^uspeech:.+"
+            - type: string
+              const: ""
+          examples:
+            - jack_cheng
+            - uspeech:xxxx-xxxx-xxxx-xxxx
+
+    TttsWavAudioBinary:
+      type: string
+      format: binary
+      description: WAV audio file stream. The source document states that only WAV output is currently supported.
+
+    TttsErrorResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/TttsErrorObject"
+
+    TttsErrorObject:
+      type: object
+      additionalProperties: false
+      required:
+        - message
+        - type
+        - code
+        - param
+      properties:
+        message:
+          type: string
+          description: Error description.
+        type:
+          type: string
+          description: Error type.
+          examples:
+            - invalid_request_error
+        code:
+          type: string
+          description: Machine-readable error code.
+          examples:
+            - error_code
+        param:
+          type: string
+          description: Request ID used for feedback or troubleshooting.
+
+  examples:
+    TttsInvalidRequestError:
+      summary: Standard JSON error response
+      value:
+        error:
+          message: 错误描述信息
+          type: invalid_request_error
+          code: error_code
+          param: "<请求 ID，用于反馈或排查错误原因>"

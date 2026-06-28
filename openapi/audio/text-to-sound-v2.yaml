@@ -1,0 +1,173 @@
+openapi: 3.1.0
+x-language: en-US
+info:
+  title: ModelVerse ElevenLabs Text to Sound v2 API
+  version: "1.0.0"
+  description: |
+    Self-contained OpenAPI 3.1 schema for the ModelVerse ElevenLabs
+    Text to Sound v2 synchronous sound generation API.
+
+    The endpoint returns an audio binary stream directly. The audio format is
+    determined by `output_format`; the documented default is MP3.
+
+servers:
+  - url: https://api.modelverse.cn
+    description: ModelVerse API endpoint shown in the source document.
+
+tags:
+  - name: Text To Sound V2
+    description: Sound effect generation for `text-to-sound-v2`.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/audio/sound-generation:
+    post:
+      tags:
+        - Text To Sound V2
+      operationId: createTextToSoundV2SoundGeneration
+      summary: Generate a sound effect from text
+      description: |
+        Synchronously convert a text sound description into a generated sound
+        effect audio stream for use in videos, dubbing, games, and related
+        media workflows.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TextToSoundV2SoundGenerationRequest"
+            examples:
+              movieTrailerBraam:
+                summary: Generate a short MP3 trailer sound effect
+                value:
+                  model: text-to-sound-v2
+                  text: Spacious braam suitable for high-impact movie trailer moments
+                  duration_seconds: 5.0
+                  output_format: mp3_22050_32
+              loopableGameAmbience:
+                summary: Generate a loopable game ambience sound effect
+                value:
+                  model: text-to-sound-v2
+                  text: Soft magical forest ambience with distant shimmering chimes
+                  loop: true
+                  duration_seconds: 8.0
+                  prompt_influence: 0.45
+                  output_format: mp3_22050_32
+      responses:
+        "200":
+          description: Binary audio stream containing the generated sound effect.
+          headers:
+            character-cost:
+              description: Character count consumed by this generation request.
+              schema:
+                type: string
+          content:
+            audio/mpeg:
+              schema:
+                $ref: "#/components/schemas/TextToSoundV2AudioBinary"
+              examples:
+                generatedMp3:
+                  summary: Generated MP3 sound effect
+                  value: "<binary MP3 audio stream>"
+            application/octet-stream:
+              schema:
+                $ref: "#/components/schemas/TextToSoundV2AudioBinary"
+              examples:
+                generatedAudio:
+                  summary: Generated audio in the requested output format
+                  value: "<binary audio stream>"
+        "400":
+          description: Invalid sound generation request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TextToSoundV2ErrorResponse"
+              examples:
+                invalidDuration:
+                  $ref: "#/components/examples/TextToSoundV2InvalidDurationError"
+        default:
+          description: Error response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TextToSoundV2ErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/TextToSoundV2InvalidDurationError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: "ModelVerse API key sent as `Authorization: Bearer <YOUR_API_KEY>`."
+
+  schemas:
+    TextToSoundV2SoundGenerationRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - text
+        - duration_seconds
+      properties:
+        model:
+          type: string
+          const: text-to-sound-v2
+          description: Sound generation model name. This schema is pinned to `text-to-sound-v2`.
+        text:
+          type: string
+          description: Text description of the sound effect to generate.
+        loop:
+          type: boolean
+          default: false
+          description: Whether to generate a loopable sound effect. Defaults to `false`.
+        duration_seconds:
+          type: number
+          format: double
+          minimum: 0.5
+          maximum: 30
+          description: Sound effect duration in seconds. The documented range is 0.5 to 30.
+        prompt_influence:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          default: 0.3
+          description: |
+            Prompt influence strength. Higher values make the generated result
+            closer to the text description while reducing variety. Defaults to
+            `0.3`.
+        output_format:
+          type: string
+          description: |
+            Output audio format. The source document gives `mp3_22050_32` as an
+            example, meaning MP3 at 22.05 kHz and 32 kbps. When omitted, the
+            endpoint defaults to MP3.
+          examples:
+            - mp3_22050_32
+
+    TextToSoundV2AudioBinary:
+      type: string
+      format: binary
+      description: Generated sound effect audio binary stream.
+
+    TextToSoundV2ErrorResponse:
+      type: object
+      additionalProperties: true
+      description: |
+        Error response body for failed sound generation requests. The source
+        document does not define the error payload shape, so this schema remains
+        open while the example demonstrates a violation of the documented
+        `duration_seconds` range.
+
+  examples:
+    TextToSoundV2InvalidDurationError:
+      summary: Invalid duration
+      value:
+        error: duration_seconds must be between 0.5 and 30

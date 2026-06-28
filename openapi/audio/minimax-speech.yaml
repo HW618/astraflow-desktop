@@ -1,0 +1,672 @@
+openapi: 3.1.0
+x-language: en-US
+info:
+  title: ModelVerse MiniMax Speech Audio API
+  version: "1.0.0"
+  description: |
+    Self-contained OpenAPI 3.1 schema for the ModelVerse MiniMax Speech
+    synchronous text-to-audio API.
+
+
+servers:
+  - url: https://api.modelverse.cn
+    description: ModelVerse API endpoint shown in the source document.
+
+tags:
+  - name: MiniMax Speech
+    description: MiniMax Speech `hd` and `turbo` text-to-audio synthesis.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/t2a_v2:
+    post:
+      tags:
+        - MiniMax Speech
+      operationId: createMiniMaxSpeechSynthesis
+      summary: Synthesize speech with MiniMax Speech
+      description: |
+        Synchronously synthesize speech from text. The endpoint can return
+        non-streaming JSON audio data or streaming JSON chunks controlled by
+        the `stream` field. Non-streaming requests can return audio as `hex`
+        or a URL through `output_format`; URL results are valid for 24 hours.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MiniMaxSpeechRequest"
+            examples:
+              documentedHappyVoice:
+                summary: Non-streaming MP3 synthesis
+                value:
+                  model: speech-2.8-hd
+                  text: 今天是不是很开心呀(laughs)，当然了！
+                  stream: false
+                  voice_setting:
+                    voice_id: male-qn-qingse
+                    speed: 1
+                    vol: 1
+                    pitch: 0
+                    emotion: happy
+                  audio_setting:
+                    sample_rate: 32000
+                    bitrate: 128000
+                    format: mp3
+                    channel: 1
+                  pronunciation_dict:
+                    tone:
+                      - 处理/(chu3)(li3)
+                      - 危险/dangerous
+                  subtitle_enable: false
+              streamingMp3:
+                summary: Streaming MP3 synthesis without final aggregated audio
+                value:
+                  model: speech-2.8-turbo
+                  text: |-
+                    第一段文本。
+                    第二段<#0.5#>继续播放。
+                  stream: true
+                  stream_options:
+                    exclude_aggregated_audio: true
+                  voice_setting:
+                    voice_id: male-qn-qingse
+                    speed: 1
+                    vol: 1
+                    pitch: 0
+                  audio_setting:
+                    sample_rate: 32000
+                    bitrate: 128000
+                    format: mp3
+                    channel: 1
+              urlOutputWithSubtitle:
+                summary: Non-streaming URL output with subtitles enabled
+                value:
+                  model: speech-2.6-hd
+                  text: 欢迎使用 ModelVerse 语音合成服务。
+                  stream: false
+                  voice_setting:
+                    voice_id: male-qn-qingse
+                    speed: 1
+                    vol: 1
+                    pitch: 0
+                    text_normalization: true
+                  audio_setting:
+                    sample_rate: 32000
+                    bitrate: 128000
+                    format: mp3
+                    channel: 1
+                  subtitle_enable: true
+                  output_format: url
+      responses:
+        "200":
+          description: MiniMax Speech synthesis response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniMaxSpeechResponse"
+              examples:
+                finalHexAudio:
+                  summary: Final non-streaming hex audio
+                  value:
+                    data:
+                      audio: <hex编码的audio>
+                      status: 2
+                    extra_info:
+                      audio_length: 9900
+                      audio_sample_rate: 32000
+                      audio_size: 160323
+                      bitrate: 128000
+                      word_count: 52
+                      invisible_character_ratio: 0
+                      usage_characters: 26
+                      audio_format: mp3
+                      audio_channel: 1
+                    trace_id: 01b8bf9bb7433cc75c18eee6cfa8fe21
+                    base_resp:
+                      status_code: 0
+                      status_msg: success
+                finalUrlAudioWithSubtitle:
+                  summary: Final URL audio with subtitle link
+                  value:
+                    data:
+                      audio: https://example.com/audio.mp3
+                      subtitle_file: https://example.com/subtitle.json
+                      status: 2
+                    extra_info:
+                      audio_length: 9900
+                      audio_sample_rate: 32000
+                      audio_size: 160323
+                      bitrate: 128000
+                      word_count: 52
+                      invisible_character_ratio: 0
+                      usage_characters: 26
+                      audio_format: mp3
+                      audio_channel: 1
+                    trace_id: 01b8bf9bb7433cc75c18eee6cfa8fe21
+                    base_resp:
+                      status_code: 0
+                      status_msg: success
+        "400":
+          description: Request failed with a documented MiniMax Speech base response status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniMaxSpeechErrorResponse"
+              examples:
+                invalidParameters:
+                  $ref: "#/components/examples/MiniMaxSpeechInvalidParameters"
+        default:
+          description: Error response with a documented MiniMax Speech base response status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniMaxSpeechErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/MiniMaxSpeechInvalidParameters"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: "ModelVerse API key sent as `Authorization: Bearer <YOUR_API_KEY>`."
+
+  schemas:
+    MiniMaxSpeechRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - text
+      properties:
+        model:
+          $ref: "#/components/schemas/MiniMaxSpeechModel"
+        text:
+          type: string
+          maxLength: 9999
+          description: |
+            Text to synthesize. The source document limits text length to less
+            than 10000 characters. Paragraph switches can use newlines. Pause
+            markers use `<#x#>`, where `x` is seconds in `[0.01, 99.99]` with
+            at most two decimals, and must appear between pronounceable text.
+            `speech-2.8-hd` and `speech-2.8-turbo` support the documented
+            interjection tags such as `(laughs)`, `(chuckle)`, `(coughs)`,
+            `(clear-throat)`, `(groans)`, `(breath)`, `(pant)`, `(inhale)`,
+            `(exhale)`, `(gasps)`, `(sniffs)`, `(sighs)`, `(snorts)`,
+            `(burps)`, `(lip-smacking)`, `(humming)`, `(hissing)`, `(emm)`,
+            and `(sneezes)`.
+        stream:
+          type: boolean
+          default: false
+          description: Whether to stream output. Defaults to `false`.
+        stream_options:
+          $ref: "#/components/schemas/MiniMaxSpeechStreamOptions"
+        voice_setting:
+          $ref: "#/components/schemas/MiniMaxSpeechVoiceSetting"
+        audio_setting:
+          $ref: "#/components/schemas/MiniMaxSpeechAudioSetting"
+        pronunciation_dict:
+          $ref: "#/components/schemas/MiniMaxSpeechPronunciationDict"
+        timber_weights:
+          type: array
+          maxItems: 4
+          description: |
+            Voice weights for mixed timbre synthesis. When this field is used,
+            the source document says to leave `voice_setting.voice_id` empty.
+          items:
+            $ref: "#/components/schemas/MiniMaxSpeechTimberWeight"
+        language_boost:
+          $ref: "#/components/schemas/MiniMaxSpeechLanguageBoost"
+        voice_modify:
+          $ref: "#/components/schemas/MiniMaxSpeechVoiceModify"
+        subtitle_enable:
+          type: boolean
+          default: false
+          description: Whether to enable subtitle service. Valid only for non-streaming output.
+        output_format:
+          type: string
+          enum:
+            - url
+            - hex
+          default: hex
+          description: |
+            Non-streaming output form. Streaming output only supports `hex`.
+            URL output is valid for 24 hours.
+        aigc_watermark:
+          type: boolean
+          default: false
+          description: |
+            Whether to add an audio rhythm identifier at the end of synthesized
+            audio. Valid only for non-streaming synthesis.
+
+    MiniMaxSpeechModel:
+      type: string
+      description: Documented MiniMax Speech model version.
+      enum:
+        - speech-2.8-hd
+        - speech-2.6-hd
+        - speech-02-hd
+        - speech-2.8-turbo
+        - speech-2.6-turbo
+        - speech-02-turbo
+
+    MiniMaxSpeechStreamOptions:
+      type: object
+      additionalProperties: false
+      properties:
+        exclude_aggregated_audio:
+          type: boolean
+          default: false
+          description: |
+            Whether the final chunk excludes the concatenated audio `hex` data.
+            Defaults to `false`, meaning the final chunk includes the complete
+            concatenated audio `hex` data.
+
+    MiniMaxSpeechVoiceSetting:
+      type: object
+      additionalProperties: false
+      properties:
+        voice_id:
+          type: string
+          description: |
+            Voice ID for synthesized audio. The source document supports system
+            voices, cloned voices, and text-generated voices.
+        speed:
+          type: number
+          format: double
+          minimum: 0.5
+          maximum: 2
+          default: 1.0
+          description: Speech speed. Larger values produce faster speech.
+        vol:
+          type: number
+          format: double
+          exclusiveMinimum: 0
+          maximum: 10
+          default: 1.0
+          description: Speech volume.
+        pitch:
+          type: integer
+          minimum: -12
+          maximum: 12
+          default: 0
+          description: Speech pitch. `0` uses the original voice pitch.
+        emotion:
+          $ref: "#/components/schemas/MiniMaxSpeechEmotion"
+        text_normalization:
+          type: boolean
+          default: false
+          description: |
+            Whether to enable Chinese and English text normalization. Enabling
+            it can improve numeric reading performance and may slightly
+            increase latency.
+        latex_read:
+          type: boolean
+          default: false
+          description: |
+            Whether to read LaTeX formulas. Only Chinese is supported; enabling
+            this sets `language_boost` to `Chinese`. Formulas must be wrapped
+            with `$$`, and backslashes must be escaped.
+
+    MiniMaxSpeechEmotion:
+      type: string
+      enum:
+        - happy
+        - sad
+        - angry
+        - fearful
+        - disgusted
+        - surprised
+        - calm
+        - fluent
+        - whisper
+      description: |
+        Speech emotion. `fluent` and `whisper` only apply to
+        `speech-2.6-hd` and `speech-2.6-turbo`; `speech-2.8-hd` and
+        `speech-2.8-turbo` do not support `whisper`.
+
+    MiniMaxSpeechAudioSetting:
+      type: object
+      additionalProperties: false
+      properties:
+        sample_rate:
+          type: integer
+          enum:
+            - 8000
+            - 16000
+            - 22050
+            - 24000
+            - 32000
+            - 44100
+          default: 32000
+          description: Output audio sample rate.
+        bitrate:
+          type: integer
+          enum:
+            - 32000
+            - 64000
+            - 128000
+            - 256000
+          default: 128000
+          description: Output audio bitrate. This parameter only applies to MP3 audio.
+        format:
+          type: string
+          enum:
+            - mp3
+            - pcm
+            - flac
+            - wav
+          default: mp3
+          description: |
+            Output audio format. `wav` is only supported for non-streaming
+            output.
+        channel:
+          type: integer
+          enum:
+            - 1
+            - 2
+          default: 1
+          description: Output audio channels. `1` is mono and `2` is stereo.
+        force_cbr:
+          type: boolean
+          description: |
+            Constant bitrate encoding control. This field only applies when
+            streaming output is enabled and the audio format is `mp3`.
+
+    MiniMaxSpeechPronunciationDict:
+      type: object
+      additionalProperties: false
+      properties:
+        tone:
+          type: array
+          description: |
+            Pronunciation replacement rules. Chinese tones use digits:
+            first tone `1`, second tone `2`, third tone `3`, fourth tone `4`,
+            and neutral tone `5`.
+          items:
+            type: string
+          examples:
+            - - 燕少飞/(yan4)(shao3)(fei1)
+              - omg/oh my god
+
+    MiniMaxSpeechTimberWeight:
+      type: object
+      additionalProperties: false
+      required:
+        - voice_id
+        - weight
+      properties:
+        voice_id:
+          type: string
+          description: Voice ID for mixed timbre synthesis.
+        weight:
+          type: integer
+          minimum: 1
+          maximum: 100
+          description: |
+            Weight for this voice in mixed timbre synthesis. Up to 4 voices are
+            supported; a larger value makes the result more similar to this
+            voice.
+
+    MiniMaxSpeechLanguageBoost:
+      description: |
+        Language or dialect recognition boost. Defaults to `null`; `auto`
+        lets the model decide.
+      default: null
+      oneOf:
+        - type: "null"
+        - type: string
+          enum:
+            - Chinese
+            - Chinese,Yue
+            - English
+            - Arabic
+            - Russian
+            - Spanish
+            - French
+            - Portuguese
+            - German
+            - Turkish
+            - Dutch
+            - Ukrainian
+            - Vietnamese
+            - Indonesian
+            - Japanese
+            - Italian
+            - Korean
+            - Thai
+            - Polish
+            - Romanian
+            - Greek
+            - Czech
+            - Finnish
+            - Hindi
+            - Bulgarian
+            - Danish
+            - Hebrew
+            - Malay
+            - Persian
+            - Slovak
+            - Swedish
+            - Croatian
+            - Filipino
+            - Hungarian
+            - Norwegian
+            - Slovenian
+            - Catalan
+            - Nynorsk
+            - Tamil
+            - Afrikaans
+            - auto
+
+    MiniMaxSpeechVoiceModify:
+      type: object
+      additionalProperties: false
+      description: |
+        Voice effect settings. Supported audio formats are non-streaming
+        `mp3`, `wav`, and `flac`, and streaming `mp3`.
+      properties:
+        pitch:
+          type: integer
+          minimum: -100
+          maximum: 100
+          description: Pitch adjustment. Values near `-100` sound lower; values near `100` sound brighter.
+        intensity:
+          type: integer
+          minimum: -100
+          maximum: 100
+          description: Intensity adjustment. Values near `-100` sound stronger; values near `100` sound softer.
+        timbre:
+          type: integer
+          minimum: -100
+          maximum: 100
+          description: Timbre adjustment. Values near `-100` sound fuller; values near `100` sound clearer.
+        sound_effects:
+          type: string
+          enum:
+            - spacious_echo
+            - auditorium_echo
+            - lofi_telephone
+            - robotic
+          description: Sound effect. Only one effect can be selected per request.
+
+    MiniMaxSpeechResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - data
+        - trace_id
+        - base_resp
+      properties:
+        data:
+          $ref: "#/components/schemas/MiniMaxSpeechData"
+        trace_id:
+          type: string
+          description: Session ID used for consultation or feedback.
+        extra_info:
+          $ref: "#/components/schemas/MiniMaxSpeechExtraInfo"
+        base_resp:
+          $ref: "#/components/schemas/MiniMaxSpeechBaseResp"
+
+    MiniMaxSpeechErrorResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - data
+        - trace_id
+        - base_resp
+      properties:
+        data:
+          type: "null"
+          description: The source document says `data` may be null and should be checked before use.
+        trace_id:
+          type: string
+          description: Session ID used for consultation or feedback.
+        base_resp:
+          $ref: "#/components/schemas/MiniMaxSpeechErrorBaseResp"
+
+    MiniMaxSpeechData:
+      description: Returned synthesis data object. The source document says this may be null.
+      oneOf:
+        - type: "null"
+        - type: object
+          additionalProperties: false
+          properties:
+            audio:
+              type: string
+              description: |
+                Synthesized audio data. The response table documents hex audio;
+                non-streaming `output_format: url` requests return the result
+                in URL form.
+            subtitle_file:
+              type: string
+              description: |
+                Subtitle download link. The audio subtitle is sentence-level,
+                no more than 50 characters, in milliseconds, and JSON format.
+            status:
+              type: integer
+              enum:
+                - 1
+                - 2
+              description: Audio stream status. `1` means synthesizing and `2` means synthesis finished.
+
+    MiniMaxSpeechExtraInfo:
+      type: object
+      additionalProperties: false
+      description: Audio metadata.
+      properties:
+        audio_length:
+          type: integer
+          description: Audio duration in milliseconds.
+        audio_sample_rate:
+          type: integer
+          description: Audio sample rate.
+        audio_size:
+          type: integer
+          description: Audio file size in bytes.
+        bitrate:
+          type: integer
+          description: Audio bitrate.
+        audio_format:
+          type: string
+          enum:
+            - mp3
+            - pcm
+            - flac
+          description: Generated audio file format.
+        audio_channel:
+          type: integer
+          enum:
+            - 1
+            - 2
+          description: Generated audio channel count. `1` is mono and `2` is stereo.
+        invisible_character_ratio:
+          type: number
+          format: double
+          maximum: 0.1
+          description: |
+            Invalid character ratio. Audio is generated when invalid characters
+            do not exceed 10%, including 10%; above 10% returns an error.
+        usage_characters:
+          type: integer
+          description: Billable character count.
+        word_count:
+          type: integer
+          description: |
+            Pronounced word count, including Chinese characters, digits, and
+            letters, but excluding punctuation.
+
+    MiniMaxSpeechBaseResp:
+      type: object
+      additionalProperties: false
+      required:
+        - status_code
+        - status_msg
+      properties:
+        status_code:
+          $ref: "#/components/schemas/MiniMaxSpeechBaseRespStatusCode"
+        status_msg:
+          type: string
+          description: Status detail.
+
+    MiniMaxSpeechErrorBaseResp:
+      type: object
+      additionalProperties: false
+      required:
+        - status_code
+        - status_msg
+      properties:
+        status_code:
+          $ref: "#/components/schemas/MiniMaxSpeechErrorStatusCode"
+        status_msg:
+          type: string
+          description: Status detail.
+
+    MiniMaxSpeechBaseRespStatusCode:
+      type: integer
+      description: |
+        Documented MiniMax Speech base response status code. `0` means success,
+        `1000` unknown error, `1001` timeout, `1002` rate limit, `1004`
+        authentication failure, `1039` TPM rate limit, `1042` invalid
+        characters over 10%, and `2013` abnormal input parameter information.
+      enum:
+        - 0
+        - 1000
+        - 1001
+        - 1002
+        - 1004
+        - 1039
+        - 1042
+        - 2013
+
+    MiniMaxSpeechErrorStatusCode:
+      type: integer
+      description: |
+        Documented non-success MiniMax Speech base response status code.
+        `1000` unknown error, `1001` timeout, `1002` rate limit, `1004`
+        authentication failure, `1039` TPM rate limit, `1042` invalid
+        characters over 10%, and `2013` abnormal input parameter information.
+      enum:
+        - 1000
+        - 1001
+        - 1002
+        - 1004
+        - 1039
+        - 1042
+        - 2013
+
+  examples:
+    MiniMaxSpeechInvalidParameters:
+      summary: Invalid input parameter information
+      value:
+        data: null
+        trace_id: 01b8bf9bb7433cc75c18eee6cfa8fe21
+        base_resp:
+          status_code: 2013
+          status_msg: 输入参数信息不正常

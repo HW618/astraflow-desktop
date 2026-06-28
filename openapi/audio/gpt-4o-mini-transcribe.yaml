@@ -1,0 +1,382 @@
+openapi: 3.1.0
+x-language: en-US
+info:
+  title: ModelVerse GPT-4o Mini Transcribe Audio API
+  version: "1.0.0"
+  description: |
+    Self-contained OpenAPI 3.1 schema for the ModelVerse OpenAI-compatible
+    `gpt-4o-mini-transcribe` audio transcription API.
+
+
+servers:
+  - url: https://api.modelverse.cn
+    description: ModelVerse API endpoint shown in the source document.
+
+tags:
+  - name: GPT-4o Mini Transcribe
+    description: Audio transcription with `gpt-4o-mini-transcribe`.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/audio/transcriptions:
+    post:
+      tags:
+        - GPT-4o Mini Transcribe
+      operationId: createGpt4oMiniTranscribeTranscription
+      summary: Transcribe audio with GPT-4o mini Transcribe
+      description: |
+        Transcribe an uploaded audio file with `gpt-4o-mini-transcribe`.
+        The endpoint accepts `multipart/form-data` and is compatible with the
+        OpenAI `/v1/audio/transcriptions` path. The model supports JSON,
+        plain-text, and SSE streaming responses. It does not support
+        `verbose_json`, `vtt`, or `srt` response formats.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/Gpt4oMiniTranscribeRequest"
+            encoding:
+              file:
+                contentType: application/octet-stream
+              "include[]":
+                style: form
+                explode: true
+            examples:
+              minimal:
+                summary: Minimal audio transcription
+                value:
+                  model: gpt-4o-mini-transcribe
+                  file: /path/to/audio.mp3
+              specifiedLanguage:
+                summary: Transcribe with an explicit ISO-639-1 language
+                value:
+                  model: gpt-4o-mini-transcribe
+                  file: /path/to/audio.mp3
+                  language: zh
+              streaming:
+                summary: Stream transcription deltas over SSE
+                value:
+                  model: gpt-4o-mini-transcribe
+                  file: /path/to/audio.mp3
+                  stream: true
+              logprobs:
+                summary: Return token log probabilities
+                value:
+                  model: gpt-4o-mini-transcribe
+                  file: /path/to/audio.mp3
+                  response_format: json
+                  "include[]":
+                    - logprobs
+      responses:
+        "200":
+          description: |
+            Transcription response. The media type depends on `stream` and
+            `response_format`: JSON by default, plain text for
+            `response_format=text`, and SSE for `stream=true`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Gpt4oMiniTranscribeJsonResponse"
+              examples:
+                defaultJson:
+                  summary: Default JSON transcription
+                  value:
+                    text: 今天天气真好，我们去公园散步吧。
+                    usage:
+                      type: tokens
+                      total_tokens: 56
+                      input_tokens: 50
+                      input_token_details:
+                        text_tokens: 0
+                        audio_tokens: 50
+                      output_tokens: 6
+                withLogprobs:
+                  summary: JSON transcription with logprobs
+                  value:
+                    text: Is this a test?
+                    logprobs:
+                      - token: Is
+                        logprob: -0.81
+                        bytes:
+                          - 73
+                          - 115
+                      - token: " this"
+                        logprob: -0.91
+                        bytes:
+                          - 32
+                          - 116
+                          - 104
+                          - 105
+                          - 115
+                    usage:
+                      type: tokens
+                      total_tokens: 56
+                      input_tokens: 50
+                      input_token_details:
+                        text_tokens: 0
+                        audio_tokens: 50
+                      output_tokens: 6
+            text/plain:
+              schema:
+                type: string
+                description: Raw transcription text when `response_format=text`.
+              examples:
+                plainText:
+                  summary: Plain text transcription
+                  value: 今天天气真好，我们去公园散步吧。
+            text/event-stream:
+              schema:
+                type: string
+                description: |
+                  Server-sent event stream. Each event is sent as a `data:`
+                  line. The stream ends with `data: [DONE]`.
+              examples:
+                transcriptionStream:
+                  summary: Streaming transcription events
+                  value: |
+                    data: {"type":"transcript.text.delta","delta":"今天"}
+
+                    data: {"type":"transcript.text.delta","delta":"天气"}
+
+                    data: {"type":"transcript.text.done","text":"今天天气真好。","usage":{"type":"tokens","total_tokens":56,"input_tokens":50,"output_tokens":6}}
+
+                    data: [DONE]
+        "400":
+          description: Invalid request parameters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Gpt4oMiniTranscribeErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/Gpt4oMiniTranscribeError"
+        default:
+          description: Error response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Gpt4oMiniTranscribeErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/Gpt4oMiniTranscribeError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: |
+        ModelVerse API key sent as
+        `Authorization: Bearer <MODELVERSE_API_KEY>`.
+
+  schemas:
+    Gpt4oMiniTranscribeRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - file
+      properties:
+        model:
+          type: string
+          const: gpt-4o-mini-transcribe
+          description: Transcription model name. This schema is pinned to `gpt-4o-mini-transcribe`.
+        file:
+          type: string
+          format: binary
+          description: |
+            Audio file to transcribe. The source document lists supported
+            formats `flac`, `m4a`, `mp3`, `mp4`, `mpga`, `ogg`, `wav`, and
+            `webm`; `.oga` is not supported and should be sent as `.ogg`.
+            The documented file size limit is 25 MB.
+        language:
+          type: string
+          pattern: "^[a-z]{2}$"
+          description: |
+            Optional audio language in ISO-639-1 format. The source examples
+            include `zh`, `en`, and `ja`; explicitly specifying language can
+            improve accuracy and latency.
+          examples:
+            - zh
+            - en
+            - ja
+        prompt:
+          type: string
+          description: |
+            Optional prompt guiding transcription style. It should use the
+            same language as the audio and can help continue prior audio or
+            normalize terminology.
+        response_format:
+          type: string
+          enum:
+            - json
+            - text
+          default: json
+          description: |
+            Output format. `gpt-4o-mini-transcribe` supports only `json` and
+            `text`; `verbose_json`, `vtt`, and `srt` are documented as
+            unsupported for this model.
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 0
+          description: |
+            Sampling temperature from 0 to 1. At 0 the model adjusts
+            automatically; higher values can produce more varied output.
+        stream:
+          type: boolean
+          default: false
+          description: |
+            Whether to return `text/event-stream` server-sent events. When
+            true, the service emits `transcript.text.delta` events, then a
+            `transcript.text.done` event with the complete text and usage, and
+            finally `data: [DONE]`.
+        "include[]":
+          type: array
+          description: |
+            Extra information to include. The only documented value is
+            `logprobs`, which returns token log probabilities. It applies only
+            when `response_format=json` and can be combined with `stream=true`.
+            Send as repeated multipart fields, for example
+            `include[]=logprobs`.
+          items:
+            type: string
+            enum:
+              - logprobs
+          uniqueItems: true
+
+    Gpt4oMiniTranscribeJsonResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - text
+        - usage
+      properties:
+        text:
+          type: string
+          description: Transcribed text.
+        logprobs:
+          type: array
+          description: Token log probabilities returned when `include[]=logprobs` is requested.
+          items:
+            $ref: "#/components/schemas/Gpt4oMiniTranscribeLogprob"
+        usage:
+          $ref: "#/components/schemas/Gpt4oMiniTranscribeUsage"
+
+    Gpt4oMiniTranscribeUsage:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - total_tokens
+        - input_tokens
+        - output_tokens
+      properties:
+        type:
+          type: string
+          const: tokens
+          description: Usage accounting type.
+        total_tokens:
+          type: integer
+          minimum: 0
+          description: Total token count.
+        input_tokens:
+          type: integer
+          minimum: 0
+          description: Input token count, including audio.
+        input_token_details:
+          $ref: "#/components/schemas/Gpt4oMiniTranscribeInputTokenDetails"
+        output_tokens:
+          type: integer
+          minimum: 0
+          description: Output token count.
+
+    Gpt4oMiniTranscribeInputTokenDetails:
+      type: object
+      additionalProperties: false
+      required:
+        - text_tokens
+        - audio_tokens
+      properties:
+        text_tokens:
+          type: integer
+          minimum: 0
+          description: Text input token count.
+        audio_tokens:
+          type: integer
+          minimum: 0
+          description: Audio input token count.
+
+    Gpt4oMiniTranscribeLogprob:
+      type: object
+      additionalProperties: false
+      required:
+        - token
+        - logprob
+        - bytes
+      properties:
+        token:
+          type: string
+          description: Output token.
+        logprob:
+          type: number
+          description: Log probability for the token.
+        bytes:
+          type: array
+          description: UTF-8 byte values for the token.
+          items:
+            type: integer
+            minimum: 0
+            maximum: 255
+
+    Gpt4oMiniTranscribeErrorResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/Gpt4oMiniTranscribeError"
+
+    Gpt4oMiniTranscribeError:
+      type: object
+      additionalProperties: false
+      required:
+        - message
+        - type
+        - code
+        - param
+      properties:
+        message:
+          type: string
+          description: Error description.
+        type:
+          type: string
+          description: Error type.
+          examples:
+            - invalid_request_error
+        code:
+          type: string
+          description: Machine-readable error code.
+          examples:
+            - error_code
+        param:
+          type: string
+          description: Request ID used for feedback or troubleshooting.
+
+  examples:
+    Gpt4oMiniTranscribeError:
+      summary: Standard JSON error response
+      value:
+        error:
+          message: 错误描述信息
+          type: invalid_request_error
+          code: error_code
+          param: <请求 ID，用于反馈或排查错误原因>

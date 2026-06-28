@@ -188,11 +188,16 @@ export type StudioSavedImageOutput = {
   createdAt: string
 }
 
-export type StudioLibraryFile = StudioSavedImageOutput & {
+export type StudioImageLibraryFile = StudioSavedImageOutput & {
   kind: "image"
   src: string
   downloadUrl: string
 }
+
+export type StudioLibraryFile =
+  | StudioImageLibraryFile
+  | import("@/lib/studio-video-types").StudioVideoLibraryFile
+  | import("@/lib/studio-audio-types").StudioAudioLibraryFile
 
 export type StudioImageGeneration = {
   id: string
