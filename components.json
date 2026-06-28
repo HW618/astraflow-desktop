@@ -20,6 +20,6 @@
     "hooks": "@/hooks"
   },
   "menuColor": "inverted",
-  "menuAccent": "subtle",
+  "menuAccent": "solid",
   "registries": {}
 }
