@@ -26,10 +26,10 @@ function Navbar() {
 
         <nav className="flex items-center gap-1 sm:gap-2">
           <Button variant="ghost" size="sm" asChild>
-            <a href="/explore">{t("nav.explore")}</a>
+            <a href="/explore">{t.explore}</a>
           </Button>
           <Button variant="ghost" size="sm" asChild>
-            <a href="/studio">{t("nav.studio")}</a>
+            <a href="/studio">{t.studio}</a>
           </Button>
 
           <span className="mx-1 h-5 w-px bg-border" aria-hidden="true" />
@@ -43,4 +43,3 @@ function Navbar() {
 }
 
 export { Navbar }
-

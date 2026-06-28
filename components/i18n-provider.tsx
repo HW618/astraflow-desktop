@@ -2,13 +2,7 @@
 
 import * as React from "react"
 
-import {
-  defaultLocale,
-  locales,
-  translations,
-  type Locale,
-  type TranslationKey,
-} from "@/lib/i18n"
+import { defaultLocale, dictionaries, locales, type Locale } from "@/lib/i18n"
 
 const STORAGE_KEY = "astraflow-locale"
 
@@ -24,9 +18,8 @@ function readStored(): Locale {
   if (typeof window === "undefined") {
     return defaultLocale
   }
-  return isLocale(window.localStorage.getItem(STORAGE_KEY))
-    ? (window.localStorage.getItem(STORAGE_KEY) as Locale)
-    : defaultLocale
+  const stored = window.localStorage.getItem(STORAGE_KEY)
+  return isLocale(stored) ? stored : defaultLocale
 }
 
 function subscribe(listener: () => void) {
@@ -69,8 +62,7 @@ function useI18n() {
     () => ({
       locale,
       setLocale,
-      t: (key: TranslationKey) =>
-        translations[locale][key] ?? translations[defaultLocale][key],
+      t: dictionaries[locale],
     }),
     [locale]
   )

@@ -23,8 +23,8 @@ function ThemeToggle() {
     <Button
       variant="ghost"
       size="icon"
-      aria-label={t("nav.toggleTheme")}
-      title={t("nav.toggleTheme")}
+      aria-label={t.toggleTheme}
+      title={t.toggleTheme}
       onClick={() => setTheme(isDark ? "light" : "dark")}
     >
       {mounted && isDark ? <RiSunLine /> : <RiMoonLine />}

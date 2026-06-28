@@ -14,8 +14,8 @@ function LanguageToggle() {
     <Button
       variant="ghost"
       size="sm"
-      aria-label={t("nav.toggleLanguage")}
-      title={t("nav.toggleLanguage")}
+      aria-label={t.toggleLanguage}
+      title={t.toggleLanguage}
       onClick={() => setLocale(next)}
     >
       <RiTranslate2 data-icon="inline-start" />
