@@ -17,10 +17,29 @@ export type ImageOpenapiRegistryEntry = {
 export type ImageModelRegistryEntry = {
   supported: boolean
   openapi?: ImageOpenapiRegistryEntry
+  editOpenapi?: ImageOpenapiRegistryEntry
   disabledReason?: StudioImageDisabledReason
 }
 
 const MODELVERSE_BASE_URL = "https://api.modelverse.cn"
+
+const IMAGE_MODEL_DISPLAY_NAMES: Record<string, string> = {
+  "doubao-seedream-4.5": "Doubao Seeadream 4.5",
+  "doubao-seedream-5-0-260128": "Doubao Seeadream 5.0",
+  "flux-2-pro": "FLUX 2 Pro",
+  "gemini-2.5-flash-image": "Gemini 2.5 Flash Image (Nano Banana)",
+  "gemini-3.1-flash-image": "Gemini 3.1 Flash Image (Nano Banana 2)",
+  "gemini-3.1-flash-image-preview": "Gemini 3.1 Flash Image Preview (Nano Banana 2)",
+  "gemini-3-pro-image": "Gemini 3 Pro Image (Nano Banana Pro)",
+  "gemini-3-pro-image-preview": "Gemini 3 Pro Image Preview(Nano Banana Pro)",
+  "gpt-image-2": "GPT Image 2",
+  "midjourney-fast-imagine": "Midjourney Fast Imagine",
+  "Qwen/Qwen-Image": "Qwen Image",
+  "Qwen/Qwen-Image-Edit": "Qwen Image Edit",
+  "stepfun-ai/step1x-edit": "Stepfun Step1X Edit",
+  "wan2.7-image": "WAN 2.7 Image",
+  "wan2.7-image-pro": "WAN 2.7 Image Pro",
+}
 
 const doubaoSeedream: ImageOpenapiRegistryEntry = {
   file: "openapi/image/doubao-seedream.yaml",
@@ -119,6 +138,16 @@ const gptImage2: ImageOpenapiRegistryEntry = {
   modelConstant: "gpt-image-2",
 }
 
+const gptImage2Edit: ImageOpenapiRegistryEntry = {
+  file: "openapi/image/gpt-image-2.yaml",
+  operationId: "createGptImage2ImageEdit",
+  method: "POST",
+  path: "/v1/images/edits",
+  contentType: "multipart/form-data",
+  adapter: "openai-images-edit",
+  modelConstant: "gpt-image-2",
+}
+
 const midjourneyImagine: ImageOpenapiRegistryEntry = {
   file: "openapi/image/midjourney.yaml",
   operationId: "submitMidjourneyTask",
@@ -155,7 +184,11 @@ export const IMAGE_MODEL_REGISTRY: Record<string, ImageModelRegistryEntry> = {
   "gpt-image-1": { supported: false, disabledReason: "missing-openapi" },
   "gpt-image-1-mini": { supported: false, disabledReason: "missing-openapi" },
   "gpt-image-1.5": { supported: false, disabledReason: "missing-openapi" },
-  "gpt-image-2": { supported: true, openapi: gptImage2 },
+  "gpt-image-2": {
+    supported: true,
+    openapi: gptImage2,
+    editOpenapi: gptImage2Edit,
+  },
   "midjourney-fast-imagine": { supported: true, openapi: midjourneyImagine },
   "midjourney-fast-reroll": {
     supported: false,
@@ -186,6 +219,18 @@ export function getImageModelRegistryEntry(modelId: string) {
   const fallback = normalized.replace(/^publishers\/google\/models\//, "")
 
   return IMAGE_MODEL_REGISTRY[fallback]
+}
+
+export function getImageModelDisplayName(modelId: string, fallback = modelId) {
+  const normalized = normalizeImageModelKey(modelId)
+  const publisherFallback = normalized.replace(/^publishers\/google\/models\//, "")
+
+  return (
+    IMAGE_MODEL_DISPLAY_NAMES[normalized] ??
+    IMAGE_MODEL_DISPLAY_NAMES[publisherFallback] ??
+    fallback.trim() ??
+    modelId
+  )
 }
 
 export function getImageModelEndpoint(

@@ -28,6 +28,7 @@ import {
 import { Slider } from "@/components/ui/slider"
 import { Textarea } from "@/components/ui/textarea"
 import { Toggle } from "@/components/ui/toggle"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { cn } from "@/lib/utils"
 import type {
   StudioImageGeneration,
@@ -112,6 +113,7 @@ async function submitImageGeneration({
   sessionId,
   modelId,
   modelName,
+  operationId,
   prompt,
   params,
   attachments,
@@ -119,6 +121,7 @@ async function submitImageGeneration({
   sessionId: string
   modelId: string
   modelName: string
+  operationId?: string
   prompt: string
   params: Record<string, unknown>
   attachments: PendingReferenceImage[]
@@ -131,6 +134,7 @@ async function submitImageGeneration({
       body: JSON.stringify({
         modelId,
         modelName,
+        operationId,
         prompt,
         params,
         attachments: attachments.map((attachment) => ({
@@ -170,6 +174,30 @@ function readFileAsDataUrl(file: File) {
   })
 }
 
+function isSupportedReferenceImage(file: File) {
+  return file.type.startsWith("image/") && file.size <= MAX_REFERENCE_BYTES
+}
+
+function getClipboardImageFiles(clipboardData: DataTransfer | null) {
+  if (!clipboardData) {
+    return []
+  }
+
+  const directFiles = Array.from(clipboardData.files).filter(
+    isSupportedReferenceImage
+  )
+
+  if (directFiles.length > 0) {
+    return directFiles
+  }
+
+  return Array.from(clipboardData.items)
+    .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => file !== null)
+    .filter(isSupportedReferenceImage)
+}
+
 function getInitialParamsForFields(fields: StudioImageParameterField[]) {
   const initial: Record<string, unknown> = {}
 
@@ -204,6 +232,7 @@ function StudioImageWorkbench({
   const [modelsLoading, setModelsLoading] = React.useState(true)
   const [modelsError, setModelsError] = React.useState("")
   const [selectedModelId, setSelectedModelId] = React.useState("")
+  const [selectedOperationId, setSelectedOperationId] = React.useState("")
   const [prompt, setPrompt] = React.useState("")
   const [paramValues, setParamValues] = React.useState<Record<string, unknown>>(
     {}
@@ -226,12 +255,41 @@ function StudioImageWorkbench({
     [models.supported, selectedModelId]
   )
 
-  const fields = selectedModel?.fields ?? []
+  const operationOptions = React.useMemo(() => {
+    if (!selectedModel) {
+      return []
+    }
+
+    if (selectedModel.operations?.length) {
+      return selectedModel.operations
+    }
+
+    return selectedModel.openapi
+      ? [
+          {
+            id: "generation" as const,
+            openapi: selectedModel.openapi,
+            fields: selectedModel.fields,
+            requiresReferenceImages: false,
+          },
+        ]
+      : []
+  }, [selectedModel])
+  const selectedOperation = React.useMemo(
+    () =>
+      operationOptions.find((operation) => operation.id === selectedOperationId) ??
+      operationOptions[0],
+    [operationOptions, selectedOperationId]
+  )
+  const fields = selectedOperation?.fields ?? []
   const promptField = fields.find((field) => field.name === "prompt")
   const imageField = fields.find(
     (field) => field.kind === "image" && !field.hidden
   )
   const hasImageField = Boolean(imageField)
+  const operationRequiresReferenceImages = Boolean(
+    selectedOperation?.requiresReferenceImages
+  )
 
   React.useEffect(() => {
     let cancelled = false
@@ -267,18 +325,29 @@ function StudioImageWorkbench({
   }, [t.studioImageModelsFailed])
 
   React.useEffect(() => {
-    if (!selectedModel) {
+    if (!selectedOperation) {
       queueMicrotask(() => setParamValues({}))
       return
     }
-    const next = getInitialParamsForFields(selectedModel.fields)
+    const next = getInitialParamsForFields(selectedOperation.fields)
     queueMicrotask(() => setParamValues(next))
-  }, [selectedModel])
+  }, [selectedOperation])
 
   React.useEffect(() => {
     if (typeof window === "undefined" || !selectedModelId) return
     window.localStorage.setItem(PARAM_STORAGE_KEY, selectedModelId)
   }, [selectedModelId])
+
+  React.useEffect(() => {
+    queueMicrotask(() => {
+      setSelectedOperationId((current) =>
+        current &&
+        operationOptions.some((operation) => operation.id === current)
+          ? current
+          : operationOptions[0]?.id ?? ""
+      )
+    })
+  }, [operationOptions])
 
   const reloadGenerations = React.useCallback(
     async (activeSessionId: string) => {
@@ -306,28 +375,75 @@ function StudioImageWorkbench({
     setParamValues((current) => ({ ...current, [name]: value }))
   }
 
-  async function addLocalFiles(files: FileList | null) {
-    if (!files || files.length === 0) return
-    const imageFiles = Array.from(files).filter(
-      (file) =>
-        file.type.startsWith("image/") && file.size <= MAX_REFERENCE_BYTES
-    )
+  const addImageFiles = React.useCallback((files: File[]) => {
+    const imageFiles = files.filter(isSupportedReferenceImage)
 
     if (imageFiles.length === 0) return
 
-    const next: PendingReferenceImage[] = await Promise.all(
+    void Promise.all(
       imageFiles.map(async (file) => ({
         id: crypto.randomUUID(),
-        name: file.name,
+        name: file.name || "pasted-image.png",
         mimeType: file.type,
         dataUrl: await readFileAsDataUrl(file),
       }))
     )
+      .then((next: PendingReferenceImage[]) => {
+        setAttachments((current) => {
+          const remaining = MAX_REFERENCE_IMAGES - current.length
 
-    setAttachments((current) =>
-      [...current, ...next].slice(0, MAX_REFERENCE_IMAGES)
-    )
+          if (remaining <= 0) {
+            return current
+          }
+
+          return [...current, ...next.slice(0, remaining)]
+        })
+      })
+      .catch(() => {
+        // Ignore unreadable clipboard/file entries.
+      })
+  }, [])
+
+  function addLocalFiles(files: FileList | null) {
+    if (!files || files.length === 0) return
+    addImageFiles(Array.from(files))
   }
+
+  const handlePasteReferenceImage = React.useCallback(
+    (clipboardData: DataTransfer | null) => {
+      if (!hasImageField || attachments.length >= MAX_REFERENCE_IMAGES) {
+        return false
+      }
+
+      const imageFiles = getClipboardImageFiles(clipboardData)
+
+      if (imageFiles.length === 0) {
+        return false
+      }
+
+      addImageFiles(imageFiles)
+      return true
+    },
+    [addImageFiles, attachments.length, hasImageField]
+  )
+
+  React.useEffect(() => {
+    if (!hasImageField) {
+      return
+    }
+
+    function handleWindowPaste(event: ClipboardEvent) {
+      if (handlePasteReferenceImage(event.clipboardData)) {
+        event.preventDefault()
+      }
+    }
+
+    window.addEventListener("paste", handleWindowPaste)
+
+    return () => {
+      window.removeEventListener("paste", handleWindowPaste)
+    }
+  }, [handlePasteReferenceImage, hasImageField])
 
   function addUrlAttachment() {
     const trimmed = referenceUrl.trim()
@@ -353,15 +469,23 @@ function StudioImageWorkbench({
   }
 
   async function handleSubmit() {
-    if (!selectedModel || !prompt.trim()) return
+    if (
+      !selectedModel ||
+      !selectedOperation ||
+      !prompt.trim() ||
+      (operationRequiresReferenceImages && attachments.length === 0)
+    ) {
+      return
+    }
 
     setSubmitError("")
 
     const optimisticId = `pending-${crypto.randomUUID()}`
     const promptText = prompt.trim()
     const promptModel = selectedModel
+    const promptOperation = selectedOperation
     const promptParams = paramValues
-    const promptAttachments = attachments
+    const promptAttachments = hasImageField ? attachments : []
     const isNewSession = !sessionId
 
     const optimistic: StudioImageGeneration = {
@@ -370,8 +494,8 @@ function StudioImageWorkbench({
       modelSquareId: promptModel.id,
       modelName: promptModel.name,
       manufacturer: promptModel.manufacturer,
-      openapiFile: promptModel.openapi?.file ?? null,
-      operationId: promptModel.openapi?.operationId ?? null,
+      openapiFile: promptOperation.openapi.file,
+      operationId: promptOperation.openapi.operationId,
       prompt: promptText,
       params: promptParams,
       status: "running",
@@ -408,6 +532,7 @@ function StudioImageWorkbench({
           sessionId: activeSessionId,
           modelId: promptModel.id,
           modelName: promptModel.name,
+          operationId: promptOperation.openapi.operationId,
           prompt: promptText,
           params: promptParams,
           attachments: promptAttachments,
@@ -435,10 +560,22 @@ function StudioImageWorkbench({
   }
 
   function loadOutputIntoForm(generation: StudioImageGeneration) {
-    if (!models.supported.some((option) => option.id === generation.modelSquareId)) {
+    const model = models.supported.find(
+      (option) => option.id === generation.modelSquareId
+    )
+
+    if (!model) {
       return
     }
+
+    const operation = model.operations?.find(
+      (item) => item.openapi.operationId === generation.operationId
+    )
+
     setSelectedModelId(generation.modelSquareId)
+    if (operation) {
+      setSelectedOperationId(operation.id)
+    }
     setPrompt(generation.prompt)
     setParamValues(generation.params ?? {})
   }
@@ -507,6 +644,44 @@ function StudioImageWorkbench({
             <p className="text-xs text-destructive">{modelsError}</p>
           ) : null}
         </div>
+
+        {operationOptions.length > 1 ? (
+          <div className="mt-4 flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-muted-foreground">
+              {t.studioImageOperation}
+            </label>
+            <ToggleGroup
+              type="single"
+              value={selectedOperation?.id}
+              onValueChange={(value) => {
+                if (value) {
+                  setSelectedOperationId(value)
+                }
+              }}
+              variant="outline"
+              size="sm"
+              spacing={0}
+              className="w-full"
+            >
+              {operationOptions.map((operation) => (
+                <ToggleGroupItem
+                  key={operation.id}
+                  value={operation.id}
+                  className="flex-1"
+                  aria-label={
+                    operation.id === "edit"
+                      ? t.studioImageOperationEdit
+                      : t.studioImageOperationGeneration
+                  }
+                >
+                  {operation.id === "edit"
+                    ? t.studioImageOperationEdit
+                    : t.studioImageOperationGeneration}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+          </div>
+        ) : null}
 
         <div className="mt-4 flex flex-col gap-1.5">
           {promptField ? (
@@ -590,11 +765,17 @@ function StudioImageWorkbench({
           onClick={handleSubmit}
           disabled={
             !selectedModel ||
+            !selectedOperation ||
             !prompt.trim() ||
+            (operationRequiresReferenceImages && attachments.length === 0) ||
             models.supported.length === 0
           }
         >
-          <span>{t.studioImageGenerate}</span>
+          <span>
+            {selectedOperation?.id === "edit"
+              ? t.studioImageOperationEdit
+              : t.studioImageGenerate}
+          </span>
         </Button>
       </aside>
 
@@ -822,13 +1003,18 @@ function ReferenceImagesField({
 
   return (
     <div className="mt-4 flex flex-col gap-2">
-      {field ? (
-        <ParameterLabel field={field} label={t.studioImageReferences} />
-      ) : (
-        <span className="text-xs font-medium text-muted-foreground">
-          {t.studioImageReferences}
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        {field ? (
+          <ParameterLabel field={field} label={t.studioImageReferences} />
+        ) : (
+          <span className="text-xs font-medium text-muted-foreground">
+            {t.studioImageReferences}
+          </span>
+        )}
+        <span className="text-xs text-muted-foreground/80">
+          {t.studioImagePasteHint}
         </span>
-      )}
+      </div>
       <div className="flex flex-wrap gap-2">
         {attachments.map((attachment) => (
           <div

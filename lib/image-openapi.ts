@@ -1,10 +1,12 @@
 import { IMAGE_OPENAPI_FIELDS } from "@/lib/generated/image-openapi-fields"
 import {
+  getImageModelDisplayName,
   getImageModelRegistryEntry,
   type ImageOpenapiRegistryEntry,
 } from "@/lib/image-model-openapi"
 import type {
   StudioImageModelOption,
+  StudioImageModelOperation,
   StudioImageParameterField,
 } from "@/lib/studio-types"
 
@@ -16,7 +18,13 @@ const generatedFields = IMAGE_OPENAPI_FIELDS as Record<
 function cloneFields(fields: StudioImageParameterField[]) {
   return fields.map((field) => ({
     ...field,
-    options: field.options?.map((option) => ({ ...option })),
+    options: field.options?.map((option) => ({
+      ...option,
+      label:
+        field.name === "model"
+          ? getImageModelDisplayName(option.value, option.label)
+          : option.label,
+    })),
     suggestedValues: field.suggestedValues?.map((option) => ({ ...option })),
   }))
 }
@@ -165,8 +173,52 @@ function getGeneratedFieldsKey(
   return variantKeys.find((key) => generatedFields[key]) ?? baseKey
 }
 
-export function loadImageModelFields(
+function fieldsForOpenapiEntry(
+  entry: ImageOpenapiRegistryEntry,
   modelKey: string
+) {
+  if (entry.adapter === "gemini-generate-content") {
+    return buildFieldsForGemini(entry)
+  }
+
+  const key = getGeneratedFieldsKey(entry, modelKey)
+  return cloneFields(generatedFields[key] ?? [])
+}
+
+function fieldsForGptImage2Edit(entry: ImageOpenapiRegistryEntry) {
+  const fields = fieldsForOpenapiEntry(entry, "gpt-image-2")
+  const singleImage = fields.find((field) => field.name === "image")
+  const multipleImages = fields.find((field) => field.name === "image[]")
+
+  return fields.map((field) => {
+    if (field.name === "image[]") {
+      return {
+        ...field,
+        description: [singleImage?.description, multipleImages?.description]
+          .filter(Boolean)
+          .join("\n"),
+        required: true,
+        advanced: false,
+        hidden: false,
+        acceptMultiple: true,
+        acceptUrl: true,
+      }
+    }
+
+    if (field.name === "image" || field.name === "mask") {
+      return {
+        ...field,
+        hidden: true,
+      }
+    }
+
+    return field
+  })
+}
+
+export function loadImageModelOperationFields(
+  modelKey: string,
+  operationId?: string
 ): StudioImageParameterField[] {
   const entry = getImageModelRegistryEntry(modelKey)
 
@@ -174,13 +226,50 @@ export function loadImageModelFields(
     return []
   }
 
-  if (entry.openapi.adapter === "gemini-generate-content") {
-    return buildFieldsForGemini(entry.openapi)
+  const openapi =
+    [entry.openapi, entry.editOpenapi].find(
+      (operation) => operation?.operationId === operationId
+    ) ?? entry.openapi
+
+  if (modelKey === "gpt-image-2" && openapi.adapter === "openai-images-edit") {
+    return fieldsForGptImage2Edit(openapi)
   }
 
-  const key = getGeneratedFieldsKey(entry.openapi, modelKey)
+  return fieldsForOpenapiEntry(openapi, modelKey)
+}
 
-  return cloneFields(generatedFields[key] ?? [])
+export function loadImageModelFields(modelKey: string) {
+  return loadImageModelOperationFields(modelKey)
+}
+
+function studioOpenapi(entry: ImageOpenapiRegistryEntry) {
+  return {
+    file: entry.file,
+    operationId: entry.operationId,
+    method: entry.method,
+    path: entry.path,
+    contentType: entry.contentType,
+    adapter: entry.adapter,
+  }
+}
+
+function imageOperation({
+  id,
+  entry,
+  modelKey,
+  requiresReferenceImages,
+}: {
+  id: StudioImageModelOperation["id"]
+  entry: ImageOpenapiRegistryEntry
+  modelKey: string
+  requiresReferenceImages: boolean
+}): StudioImageModelOperation {
+  return {
+    id,
+    openapi: studioOpenapi(entry),
+    fields: loadImageModelOperationFields(modelKey, entry.operationId),
+    requiresReferenceImages,
+  }
 }
 
 export function buildImageModelOption({
@@ -201,12 +290,16 @@ export function buildImageModelOption({
   coverUrl: string | null
 }): StudioImageModelOption {
   const entry = getImageModelRegistryEntry(name) ?? getImageModelRegistryEntry(id)
+  const displayLabel = getImageModelDisplayName(
+    name,
+    getImageModelDisplayName(id, label)
+  )
 
   if (!entry) {
     return {
       id,
       name,
-      label,
+      label: displayLabel,
       manufacturer,
       inputModalities,
       outputModalities,
@@ -221,7 +314,7 @@ export function buildImageModelOption({
     return {
       id,
       name,
-      label,
+      label: displayLabel,
       manufacturer,
       inputModalities,
       outputModalities,
@@ -232,24 +325,40 @@ export function buildImageModelOption({
     }
   }
 
+  const operations: StudioImageModelOperation[] = [
+    imageOperation({
+      id: "generation",
+      entry: entry.openapi,
+      modelKey: name,
+      requiresReferenceImages: false,
+    }),
+  ]
+
+  if (entry.editOpenapi) {
+    operations.push(
+      imageOperation({
+        id: "edit",
+        entry: entry.editOpenapi,
+        modelKey: name,
+        requiresReferenceImages: true,
+      })
+    )
+  }
+
+  const primaryOperation = operations[0]
+
   return {
     id,
     name,
-    label,
+    label: displayLabel,
     manufacturer,
     inputModalities,
     outputModalities,
     coverUrl,
     supported: entry.supported,
     disabledReason: entry.disabledReason,
-    openapi: {
-      file: entry.openapi.file,
-      operationId: entry.openapi.operationId,
-      method: entry.openapi.method,
-      path: entry.openapi.path,
-      contentType: entry.openapi.contentType,
-      adapter: entry.openapi.adapter,
-    },
-    fields: loadImageModelFields(name),
+    openapi: primaryOperation.openapi,
+    operations,
+    fields: primaryOperation.fields,
   }
 }

@@ -6,8 +6,9 @@ import {
   getImageModelEndpoint,
   getImageModelConstantForRequest,
   getImageModelRegistryEntry,
+  type ImageOpenapiRegistryEntry,
 } from "@/lib/image-model-openapi"
-import { loadImageModelFields } from "@/lib/image-openapi"
+import { loadImageModelOperationFields } from "@/lib/image-openapi"
 import { getStoredModelverseApiKey } from "@/lib/modelverse-openai"
 import {
   createStudioImageGeneration,
@@ -32,6 +33,7 @@ const paramsSchema = z.record(z.string(), z.unknown())
 const submitSchema = z.object({
   modelId: z.string().trim().min(1),
   modelName: z.string().trim().min(1),
+  operationId: z.string().trim().min(1).optional(),
   prompt: z.string().trim().min(1).max(4_000),
   params: paramsSchema.default({}),
   attachments: z
@@ -74,6 +76,85 @@ function dataUrlFromBase64(value: string, fallbackMime: string) {
   }
 
   return `data:${fallbackMime};base64,${value}`
+}
+
+function parseDataUrl(value: string) {
+  const match = value.match(/^data:([^;,]+)?(;base64)?,(.*)$/)
+
+  if (!match) {
+    return null
+  }
+
+  const mimeType = match[1] || "image/png"
+  const isBase64 = Boolean(match[2])
+  const raw = match[3] ?? ""
+  const bytes = isBase64
+    ? Buffer.from(raw, "base64")
+    : Buffer.from(decodeURIComponent(raw), "utf8")
+
+  return { bytes, mimeType }
+}
+
+function extensionFromMimeType(mimeType: string) {
+  if (mimeType === "image/jpeg") return "jpg"
+  if (mimeType === "image/webp") return "webp"
+  if (mimeType === "image/gif") return "gif"
+  return "png"
+}
+
+function attachmentFileName(
+  attachment: SubmitInput["attachments"][number],
+  index: number,
+  mimeType: string
+) {
+  const normalized = attachment.name?.trim()
+
+  if (normalized) {
+    return normalized
+  }
+
+  return `reference-${index + 1}.${extensionFromMimeType(mimeType)}`
+}
+
+async function attachmentToBlob(
+  attachment: SubmitInput["attachments"][number],
+  index: number
+) {
+  if (attachment.dataUrl) {
+    const parsed = parseDataUrl(attachment.dataUrl)
+
+    if (!parsed) {
+      throw new Error("Invalid reference image data.")
+    }
+
+    return {
+      blob: new Blob([parsed.bytes], { type: parsed.mimeType }),
+      name: attachmentFileName(attachment, index, parsed.mimeType),
+    }
+  }
+
+  if (attachment.url) {
+    const response = await fetch(attachment.url)
+
+    if (!response.ok) {
+      throw new Error("Failed to fetch reference image URL.")
+    }
+
+    const responseMimeType = response.headers.get("content-type")?.split(";")[0]
+    const attachmentMimeType =
+      attachment.mimeType && attachment.mimeType !== "image/url"
+        ? attachment.mimeType
+        : null
+    const mimeType = responseMimeType || attachmentMimeType || "image/png"
+    const bytes = await response.arrayBuffer()
+
+    return {
+      blob: new Blob([bytes], { type: mimeType }),
+      name: attachmentFileName(attachment, index, mimeType),
+    }
+  }
+
+  throw new Error("Reference image is missing data.")
 }
 
 function fieldByName(fields: StudioImageParameterField[], name: string) {
@@ -166,6 +247,54 @@ function buildOpenaiPayload(
   }
 
   return payload
+}
+
+async function buildOpenaiEditPayload(
+  modelId: string,
+  prompt: string,
+  fields: StudioImageParameterField[],
+  params: Record<string, unknown>,
+  attachments: SubmitInput["attachments"]
+) {
+  const form = new FormData()
+  form.append("model", modelId)
+  form.append("prompt", prompt)
+
+  for (const field of fields) {
+    if (
+      field.name === "prompt" ||
+      field.name === "model" ||
+      field.name === "image" ||
+      field.name === "image[]" ||
+      field.name === "mask"
+    ) {
+      continue
+    }
+
+    if (field.constantValue !== undefined) {
+      form.append(field.name, String(field.constantValue))
+      continue
+    }
+
+    const value = coerceFieldValue(field, params[field.name])
+
+    if (
+      typeof value === "string" ||
+      typeof value === "number" ||
+      typeof value === "boolean"
+    ) {
+      form.append(field.name, String(value))
+    }
+  }
+
+  const files = await Promise.all(attachments.map(attachmentToBlob))
+  const imageFieldName = files.length > 1 ? "image[]" : "image"
+
+  for (const file of files) {
+    form.append(imageFieldName, file.blob, file.name)
+  }
+
+  return form
 }
 
 function buildGeminiPayload(
@@ -514,8 +643,11 @@ async function callProvider({
   apiKey: string
   adapter: string
 }) {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
+  const isMultipart = payload instanceof FormData
+  const headers: Record<string, string> = {}
+
+  if (!isMultipart) {
+    headers["Content-Type"] = "application/json"
   }
 
   if (adapter === "gemini-generate-content") {
@@ -527,7 +659,7 @@ async function callProvider({
   const response = await fetch(url, {
     method: "POST",
     headers,
-    body: JSON.stringify(payload),
+    body: isMultipart ? payload : JSON.stringify(payload),
   })
 
   const text = await response.text()
@@ -540,6 +672,27 @@ async function callProvider({
   }
 
   return { ok: response.ok, status: response.status, body: parsed }
+}
+
+function getOpenapiOperation(
+  registry: {
+    openapi?: ImageOpenapiRegistryEntry
+    editOpenapi?: ImageOpenapiRegistryEntry
+  },
+  operationId?: string
+) {
+  const operations = [registry.openapi, registry.editOpenapi].filter(
+    (operation): operation is ImageOpenapiRegistryEntry => Boolean(operation)
+  )
+
+  if (!operationId) {
+    return registry.openapi ?? null
+  }
+
+  return (
+    operations.find((operation) => operation.operationId === operationId) ??
+    null
+  )
 }
 
 export async function GET(_request: Request, context: RouteContext) {
@@ -606,6 +759,25 @@ export async function POST(request: Request, context: RouteContext) {
     )
   }
 
+  const openapi = getOpenapiOperation(registry, parsed.data.operationId)
+
+  if (!openapi) {
+    return NextResponse.json(
+      { ok: false, error: "Image operation is not supported." },
+      { status: 400 }
+    )
+  }
+
+  if (
+    openapi.adapter === "openai-images-edit" &&
+    parsed.data.attachments.length === 0
+  ) {
+    return NextResponse.json(
+      { ok: false, error: "Reference image is required for image editing." },
+      { status: 400 }
+    )
+  }
+
   const apiKey = getStoredModelverseApiKey()
 
   if (!apiKey) {
@@ -615,54 +787,62 @@ export async function POST(request: Request, context: RouteContext) {
     )
   }
 
-  const fields = loadImageModelFields(parsed.data.modelName)
+  const fields = loadImageModelOperationFields(
+    parsed.data.modelName,
+    openapi.operationId
+  )
   const generation = createStudioImageGeneration({
     sessionId,
     modelSquareId: parsed.data.modelId,
     modelName: parsed.data.modelName,
-    openapiFile: registry.openapi.file,
-    operationId: registry.openapi.operationId,
+    openapiFile: openapi.file,
+    operationId: openapi.operationId,
     prompt: parsed.data.prompt,
     params: parsed.data.params,
     status: "running",
   })
 
-  const endpointUrl = getImageModelEndpoint(
-    registry.openapi,
-    parsed.data.modelName
-  )
+  const endpointUrl = getImageModelEndpoint(openapi, parsed.data.modelName)
   const modelConstant = getImageModelConstantForRequest(
-    registry.openapi,
+    openapi,
     parsed.data.modelName
   )
 
   const payload =
-    registry.openapi.adapter === "gemini-generate-content"
+    openapi.adapter === "gemini-generate-content"
       ? buildGeminiPayload(
           parsed.data.prompt,
           fields,
           parsed.data.params,
           parsed.data.attachments
         )
-      : registry.openapi.adapter === "async-task"
+      : openapi.adapter === "async-task"
         ? buildAsyncTaskPayload(modelConstant, parsed.data.prompt)
-        : buildOpenaiPayload(
-            modelConstant,
-            parsed.data.prompt,
-            fields,
-            parsed.data.params,
-            parsed.data.attachments
-          )
+        : openapi.adapter === "openai-images-edit"
+          ? await buildOpenaiEditPayload(
+              modelConstant,
+              parsed.data.prompt,
+              fields,
+              parsed.data.params,
+              parsed.data.attachments
+            )
+          : buildOpenaiPayload(
+              modelConstant,
+              parsed.data.prompt,
+              fields,
+              parsed.data.params,
+              parsed.data.attachments
+            )
 
   try {
     let providerResponse = await callProvider({
       url: endpointUrl,
       payload,
       apiKey,
-      adapter: registry.openapi.adapter,
+      adapter: openapi.adapter,
     })
 
-    if (providerResponse.ok && registry.openapi.adapter === "async-task") {
+    if (providerResponse.ok && openapi.adapter === "async-task") {
       const taskId = getAsyncTaskId(providerResponse.body)
 
       if (!taskId) {
@@ -717,7 +897,7 @@ export async function POST(request: Request, context: RouteContext) {
     }
 
     const outputs = extractOutputs(
-      registry.openapi.adapter,
+      openapi.adapter,
       providerResponse.body
     )
 

@@ -128,6 +128,15 @@ export type StudioImageModelOpenapi = {
   adapter: StudioImageAdapter
 }
 
+export type StudioImageOperationKind = "generation" | "edit"
+
+export type StudioImageModelOperation = {
+  id: StudioImageOperationKind
+  openapi: StudioImageModelOpenapi
+  fields: StudioImageParameterField[]
+  requiresReferenceImages: boolean
+}
+
 export type StudioImageModelOption = {
   id: string
   name: string
@@ -139,6 +148,7 @@ export type StudioImageModelOption = {
   supported: boolean
   disabledReason?: StudioImageDisabledReason
   openapi?: StudioImageModelOpenapi
+  operations?: StudioImageModelOperation[]
   fields: StudioImageParameterField[]
 }
 
@@ -161,6 +171,27 @@ export type StudioImageOutput = {
   height: number | null
   savedAt: string | null
   createdAt: string
+}
+
+export type StudioSavedImageOutput = {
+  id: string
+  generationId: string
+  sessionId: string
+  index: number
+  prompt: string
+  modelName: string
+  manufacturer: string | null
+  mimeType: string | null
+  width: number | null
+  height: number | null
+  savedAt: string
+  createdAt: string
+}
+
+export type StudioLibraryFile = StudioSavedImageOutput & {
+  kind: "image"
+  src: string
+  downloadUrl: string
 }
 
 export type StudioImageGeneration = {

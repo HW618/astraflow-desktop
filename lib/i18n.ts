@@ -13,6 +13,7 @@ const en = {
   // Navigation
   explore: "Explore",
   studio: "Studio",
+  files: "Files",
   logout: "Logout",
   toggleTheme: "Toggle theme",
   toggleLanguage: "Switch language",
@@ -92,11 +93,15 @@ const en = {
   // Studio image
   studioImageModel: "Model",
   studioImageModelPlaceholder: "Select a model",
+  studioImageOperation: "Mode",
+  studioImageOperationGeneration: "Generate",
+  studioImageOperationEdit: "Edit",
   studioImageModelsLoading: "Loading models...",
   studioImageModelsFailed: "Failed to load image models.",
   studioImagePrompt: "Prompt",
   studioImagePromptPlaceholder: "Describe the image",
   studioImageReferences: "References",
+  studioImagePasteHint: "Paste images directly",
   studioImageReferenceUrl: "Image URL",
   studioImageAddUrl: "Add URL",
   studioImageAttach: "Add image",
@@ -113,6 +118,17 @@ const en = {
   studioImageRunning: "Running",
   studioImageComplete: "Complete",
   studioImageFailed: "Failed",
+  // File library
+  fileLibraryTitle: "File Library",
+  fileLibraryImages: "Images",
+  fileLibraryImage: "Image",
+  fileLibrarySearch: "Search files",
+  fileLibrarySummary: (visibleCount: number, totalCount: number) =>
+    `${visibleCount} shown · ${totalCount} total`,
+  fileLibraryEmpty: "No saved files yet.",
+  fileLibraryNoMatches: "No files match the current search.",
+  fileLibraryCreate: "AI Generator",
+  fileLibraryDownload: "Download",
   // Model square
   modelTypes: "Output type",
   allTypes: "All",
@@ -159,6 +175,7 @@ const zh: Dictionary = {
   // Navigation
   explore: "探索",
   studio: "操作台",
+  files: "文件库",
   logout: "登出",
   toggleTheme: "切换主题",
   toggleLanguage: "切换语言",
@@ -234,11 +251,15 @@ const zh: Dictionary = {
   // Studio image
   studioImageModel: "模型",
   studioImageModelPlaceholder: "选择模型",
+  studioImageOperation: "模式",
+  studioImageOperationGeneration: "生成",
+  studioImageOperationEdit: "编辑",
   studioImageModelsLoading: "正在加载模型...",
   studioImageModelsFailed: "加载图像模型失败。",
   studioImagePrompt: "提示词",
   studioImagePromptPlaceholder: "描述要生成的图像",
   studioImageReferences: "参考图",
+  studioImagePasteHint: "可直接粘贴图片",
   studioImageReferenceUrl: "图像链接",
   studioImageAddUrl: "添加链接",
   studioImageAttach: "添加图片",
@@ -255,6 +276,17 @@ const zh: Dictionary = {
   studioImageRunning: "生成中",
   studioImageComplete: "已完成",
   studioImageFailed: "失败",
+  // File library
+  fileLibraryTitle: "文件库",
+  fileLibraryImages: "图像",
+  fileLibraryImage: "图像",
+  fileLibrarySearch: "搜索文件",
+  fileLibrarySummary: (visibleCount: number, totalCount: number) =>
+    `已显示 ${visibleCount} 个 · 共 ${totalCount} 个`,
+  fileLibraryEmpty: "暂无已保存文件。",
+  fileLibraryNoMatches: "没有匹配当前搜索的文件。",
+  fileLibraryCreate: "AI 生成器",
+  fileLibraryDownload: "下载",
   // Model square
   modelTypes: "输出类型",
   allTypes: "全部",

@@ -1,6 +1,7 @@
 "use client"
 
 import Image from "next/image"
+import Link from "next/link"
 
 import { Button } from "@/components/ui/button"
 import { useI18n } from "@/components/i18n-provider"
@@ -27,10 +28,13 @@ function Navbar() {
 
         <nav className="flex items-center gap-1 sm:gap-2">
           <Button variant="ghost" size="sm" asChild>
-            <a href="/explore">{t.explore}</a>
+            <Link href="/explore">{t.explore}</Link>
           </Button>
           <Button variant="ghost" size="sm" asChild>
-            <a href="/studio">{t.studio}</a>
+            <Link href="/studio">{t.studio}</Link>
+          </Button>
+          <Button variant="ghost" size="sm" asChild>
+            <Link href="/files">{t.files}</Link>
           </Button>
 
           <span className="mx-1 h-5 w-px bg-border" aria-hidden="true" />

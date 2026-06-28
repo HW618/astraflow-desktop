@@ -7,6 +7,7 @@ import type {
   StudioAttachment,
   StudioImageGeneration,
   StudioImageOutput,
+  StudioSavedImageOutput,
   StudioImageStatus,
   StudioMessage,
   StudioMessageRole,
@@ -83,6 +84,21 @@ type DbImageOutputRow = {
   height: number | null
   metadata: string | null
   saved_at: string | null
+  created_at: string
+}
+
+type DbSavedImageOutputRow = {
+  id: string
+  generation_id: string
+  session_id: string
+  output_index: number
+  prompt: string
+  model_name: string
+  manufacturer: string | null
+  mime_type: string | null
+  width: number | null
+  height: number | null
+  saved_at: string
   created_at: string
 }
 
@@ -852,6 +868,39 @@ export function getStudioImageOutput(outputId: string) {
     .get(outputId) as DbImageOutputRow | undefined
 
   return row ? mapImageOutput(row) : null
+}
+
+export function listStudioSavedImageOutputs(): StudioSavedImageOutput[] {
+  const rows = getDb()
+    .prepare(
+      `
+        SELECT outputs.id, outputs.generation_id, generations.session_id,
+               outputs.output_index, generations.prompt, generations.model_name,
+               generations.manufacturer, outputs.mime_type, outputs.width,
+               outputs.height, outputs.saved_at, outputs.created_at
+        FROM studio_image_outputs AS outputs
+        INNER JOIN studio_image_generations AS generations
+          ON generations.id = outputs.generation_id
+        WHERE outputs.saved_at IS NOT NULL
+        ORDER BY outputs.saved_at DESC, outputs.created_at DESC
+      `
+    )
+    .all() as DbSavedImageOutputRow[]
+
+  return rows.map((row) => ({
+    id: row.id,
+    generationId: row.generation_id,
+    sessionId: row.session_id,
+    index: row.output_index,
+    prompt: row.prompt,
+    modelName: row.model_name,
+    manufacturer: row.manufacturer,
+    mimeType: row.mime_type,
+    width: row.width,
+    height: row.height,
+    savedAt: row.saved_at,
+    createdAt: row.created_at,
+  }))
 }
 
 export function saveStudioImageOutputData(
