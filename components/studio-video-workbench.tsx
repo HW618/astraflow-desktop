@@ -75,6 +75,8 @@ function getVideoCopy(locale: string) {
       saved: "已保存",
       queued: "排队中",
       running: "生成中",
+      generatingTitle: "正在生成视频",
+      generatingHint: "完成后会自动显示在这里",
       complete: "已完成",
       failed: "失败",
     }
@@ -101,6 +103,8 @@ function getVideoCopy(locale: string) {
     saved: "Saved",
     queued: "Queued",
     running: "Running",
+    generatingTitle: "Generating video",
+    generatingHint: "The result will appear here",
     complete: "Complete",
     failed: "Failed",
   }
@@ -1267,11 +1271,30 @@ function CanvasPendingTile({
 }: {
   generation: StudioVideoGeneration
 }) {
+  const { locale } = useI18n()
+  const copy = getVideoCopy(locale)
+
   return (
-    <div className="relative flex min-h-0 flex-col overflow-hidden rounded-2xl border bg-muted text-muted-foreground">
-      <div className="absolute inset-0 animate-pulse bg-gradient-to-br from-muted via-muted/40 to-muted" />
-      <div className="relative z-10 flex flex-1 items-center justify-center">
-        <RiLoader4Line className="size-8 animate-spin" aria-hidden />
+    <div className="relative flex min-h-0 flex-col overflow-hidden rounded-2xl border border-primary/20 bg-card text-foreground shadow-sm">
+      <div className="absolute inset-0 animate-pulse bg-muted/50" />
+      <div className="relative z-10 flex flex-1 items-center justify-center p-6">
+        <div className="flex max-w-sm flex-col items-center gap-4 text-center">
+          <div className="flex size-16 items-center justify-center rounded-full border bg-background shadow-sm">
+            <RiLoader4Line
+              className="size-9 animate-spin text-primary"
+              aria-hidden
+            />
+          </div>
+          <div className="flex min-w-0 flex-col gap-1">
+            <p className="text-sm font-medium">{copy.generatingTitle}</p>
+            <p className="line-clamp-2 text-xs text-muted-foreground">
+              {generation.prompt}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {copy.generatingHint}
+            </p>
+          </div>
+        </div>
       </div>
       <div className="absolute top-0 left-0 right-0 flex items-start justify-between gap-2 bg-gradient-to-b from-black/30 to-transparent p-2 text-xs">
         <div className="flex min-w-0 flex-col">

@@ -249,12 +249,41 @@ function getFieldKey(field: StudioAudioParameterField) {
   return field.payloadPath.join(".") || field.name
 }
 
+function getInitialParamValue(field: StudioAudioParameterField) {
+  if (field.defaultValue !== undefined) {
+    return field.defaultValue
+  }
+
+  if (!field.required) {
+    return undefined
+  }
+
+  if (
+    (field.kind === "number" || field.kind === "slider") &&
+    typeof field.min === "number"
+  ) {
+    return field.min
+  }
+
+  if (field.kind === "select") {
+    return field.options?.[0]?.value
+  }
+
+  if (field.kind === "boolean") {
+    return false
+  }
+
+  return undefined
+}
+
 function getInitialParamsForFields(fields: StudioAudioParameterField[]) {
   const initial: Record<string, unknown> = {}
 
   for (const field of fields) {
-    if (field.defaultValue !== undefined) {
-      initial[getFieldKey(field)] = field.defaultValue
+    const value = getInitialParamValue(field)
+
+    if (value !== undefined) {
+      initial[getFieldKey(field)] = value
     }
   }
 

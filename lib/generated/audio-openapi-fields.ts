@@ -295,6 +295,7 @@ export const AUDIO_OPENAPI_FIELDS = {
           "label": "30000"
         }
       ],
+      "defaultValue": 30000,
       "min": 1,
       "max": 600000,
       "step": 1
@@ -438,6 +439,7 @@ export const AUDIO_OPENAPI_FIELDS = {
           "label": "30000"
         }
       ],
+      "defaultValue": 30000,
       "min": 1,
       "max": 600000,
       "step": 1
@@ -555,6 +557,7 @@ export const AUDIO_OPENAPI_FIELDS = {
           "label": "30000"
         }
       ],
+      "defaultValue": 30000,
       "min": 1,
       "max": 600000,
       "step": 1

@@ -107,6 +107,33 @@ function getParamValue(
   return params[getFieldKey(field)] ?? params[field.name]
 }
 
+function getDefaultFieldValue(field: StudioAudioParameterField) {
+  if (field.defaultValue !== undefined) {
+    return field.defaultValue
+  }
+
+  if (!field.required) {
+    return undefined
+  }
+
+  if (
+    (field.kind === "number" || field.kind === "slider") &&
+    typeof field.min === "number"
+  ) {
+    return field.min
+  }
+
+  if (field.kind === "select") {
+    return field.options?.[0]?.value
+  }
+
+  if (field.kind === "boolean") {
+    return false
+  }
+
+  return undefined
+}
+
 function getActivePromptFieldKey(
   fields: StudioAudioParameterField[],
   promptFieldKey?: string | null
@@ -210,7 +237,9 @@ function buildJsonPayload({
     } else if (field.constantValue !== undefined) {
       value = field.constantValue
     } else {
-      value = coerceFieldValue(field, getParamValue(params, field))
+      value =
+        coerceFieldValue(field, getParamValue(params, field)) ??
+        getDefaultFieldValue(field)
     }
 
     if (value === undefined) {
@@ -321,7 +350,8 @@ function buildFormData({
         : field.name === "model"
           ? field.constantValue ?? openapi.modelConstant
           : field.constantValue ??
-            coerceFieldValue(field, getParamValue(params, field))
+            coerceFieldValue(field, getParamValue(params, field)) ??
+            getDefaultFieldValue(field)
 
     appendFormDataValue(formData, key, value)
   }

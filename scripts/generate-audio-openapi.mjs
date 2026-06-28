@@ -215,6 +215,19 @@ function getSuggestedOptions(schema) {
   return Array.isArray(values) ? uniqueOptions(values) : undefined
 }
 
+function getNumericExampleDefault(schema) {
+  if (!Array.isArray(schema?.examples)) {
+    return undefined
+  }
+
+  const value = schema.examples.find(
+    (item) => typeof item === "number" || typeof item === "string"
+  )
+  const parsed = typeof value === "number" ? value : Number(value)
+
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
 function getArrayEnum(schema) {
   if (inferType(schema) !== "array") {
     return undefined
@@ -345,6 +358,12 @@ function buildField(path, schema, required) {
     typeof schema.default === "boolean"
   ) {
     field.defaultValue = schema.default
+  } else if (required && (kind === "number" || kind === "slider")) {
+    const numericDefault = getNumericExampleDefault(schema)
+
+    if (numericDefault !== undefined) {
+      field.defaultValue = numericDefault
+    }
   }
 
   if (typeof schema.minimum === "number") {
