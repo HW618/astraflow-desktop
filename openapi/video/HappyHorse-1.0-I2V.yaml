@@ -1,0 +1,413 @@
+openapi: 3.1.0
+x-language: zh-CN
+info:
+  title: HappyHorse-1.0-I2V接口文档
+  version: "1.0.0"
+  description: |
+    这是 ModelVerse 上 `HappyHorse-1.0-I2V` 的视频接口文档，说明如何提交生成任务、查询任务状态、读取视频结果以及处理错误。
+    接口路径包括 `POST /v1/tasks/submit`、`GET /v1/tasks/status`。
+servers:
+  - url: https://api.modelverse.cn
+    description: 该模型文档中使用的 ModelVerse API 端点。
+
+tags:
+  - name: HappyHorse-1.0-I2V
+    description: Image-to-video asynchronous task operations for HappyHorse-1.0-I2V.
+
+paths:
+  /v1/tasks/submit:
+    post:
+      tags:
+        - HappyHorse-1.0-I2V
+      operationId: submitHappyHorse10I2VTask
+      summary: 提交 HappyHorse-1.0-I2V 图生视频任务
+      description: |
+        提交异步任务。请求体中的模型和参数按本模型文档填写，响应会返回任务 ID。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-DashScope-Async
+          in: header
+          required: true
+          description: Enables asynchronous task submission as shown in the source request example.
+          schema:
+            type: string
+            const: enable
+          example: enable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HappyHorse10I2VSubmitRequest"
+            examples:
+              documented:
+                summary: 源文档 图生视频 请求
+                value:
+                  model: happyhorse-1.0-i2v
+                  input:
+                    prompt: 一只猫在草地上奔跑
+                    img_url: https://example.com/cat.png
+                  parameters:
+                    resolution: 720P
+                    duration: 5
+              withOptionalControls:
+                summary: 图生视频请求带可选控制参数
+                value:
+                  model: happyhorse-1.0-i2v
+                  input:
+                    prompt: A cat runs across a meadow at sunrise.
+                    first_frame_url: https://example.com/cat.png
+                  parameters:
+                    resolution: 1080P
+                    duration: 8
+                    watermark: false
+                    seed: 12345
+              withImagesAlias:
+                summary: 图生视频请求使用the images alias
+                value:
+                  model: happyhorse-1.0-i2v
+                  input:
+                    prompt: A cat runs across a meadow at sunrise.
+                    images:
+                      - https://example.com/cat.png
+                  parameters:
+                    duration: 5
+      responses:
+        "200":
+          description: 任务提交成功。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HappyHorse10I2VSubmitResponse"
+              examples:
+                submitted:
+                  summary: 已提交任务
+                  value:
+                    output:
+                      task_id: task_id
+                    request_id: request_id
+        "400":
+          description: 请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HappyHorse10I2VErrorResponse"
+              examples:
+                paramError:
+                  $ref: "#/components/examples/HappyHorse10I2VParamError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HappyHorse10I2VErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/HappyHorse10I2VParamError"
+
+  /v1/tasks/status:
+    get:
+      tags:
+        - HappyHorse-1.0-I2V
+      operationId: getHappyHorse10I2VTaskStatus
+      summary: 查询 HappyHorse-1.0-I2V 任务状态
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: task_id
+          in: query
+          required: true
+          description: Asynchronous task identifier returned by `/v1/tasks/submit`.
+          schema:
+            type: string
+          examples:
+            placeholder:
+              summary: 源文档占位值
+              value: task_id
+      responses:
+        "200":
+          description: 任务状态响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HappyHorse10I2VStatusResponse"
+              examples:
+                success:
+                  summary: 成功任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Success
+                      urls:
+                        - https://xxxxx/xxxx.mp4
+                      submit_time: 1756959000
+                      finish_time: 1756959050
+                    usage:
+                      duration: 5
+                      output_video_duration: 5
+                      video_count: 1
+                      SR: 720
+                    request_id: request_id
+                failure:
+                  summary: 失败任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Failure
+                      submit_time: 1756959000
+                      finish_time: 1756959019
+                      error_message: error_message
+                    usage:
+                      duration: 5
+                      output_video_duration: 0
+                      video_count: 0
+                      SR: 720
+                    request_id: request_id
+        "400":
+          description: 任务标识或请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HappyHorse10I2VErrorResponse"
+              examples:
+                paramError:
+                  $ref: "#/components/examples/HappyHorse10I2VParamError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HappyHorse10I2VErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/HappyHorse10I2VParamError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+  schemas:
+    HappyHorse10I2VSubmitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - input
+      properties:
+        model:
+          type: string
+          const: happyhorse-1.0-i2v
+          description: Model name. This schema is pinned to `happyhorse-1.0-i2v`.
+        input:
+          $ref: "#/components/schemas/HappyHorse10I2VInput"
+        parameters:
+          $ref: "#/components/schemas/HappyHorse10I2VParameters"
+
+    HappyHorse10I2VInput:
+      type: object
+      additionalProperties: false
+      anyOf:
+        - required:
+            - img_url
+        - required:
+            - first_frame_url
+        - required:
+            - images
+      properties:
+        prompt:
+          type: string
+          description: Text prompt describing the desired generated video content.
+        img_url:
+          type: string
+          format: uri
+          description: Video first-frame image URL. This is the primary field documented for the model.
+        first_frame_url:
+          type: string
+          format: uri
+          description: Compatible alias for `img_url`.
+        images:
+          type: array
+          minItems: 1
+          description: Compatible image URL list alias. The first item is used as the first frame.
+          items:
+            type: string
+            format: uri
+
+    HappyHorse10I2VParameters:
+      type: object
+      additionalProperties: false
+      properties:
+        resolution:
+          type: string
+          enum:
+            - 720P
+            - 1080P
+          default: 1080P
+          description: Generated video resolution tier.
+        duration:
+          type: integer
+          minimum: 3
+          maximum: 15
+          default: 5
+          description: Generated video duration in seconds.
+        watermark:
+          type: boolean
+          default: true
+          description: 是否为生成视频添加水印。
+        seed:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+          description: 随机种子。
+
+    HappyHorse10I2VSubmitResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/HappyHorse10I2VSubmitOutput"
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    HappyHorse10I2VSubmitOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+      properties:
+        task_id:
+          type: string
+          description: 异步任务唯一标识。
+
+    HappyHorse10I2VStatusResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/HappyHorse10I2VStatusOutput"
+        usage:
+          $ref: "#/components/schemas/HappyHorse10I2VUsage"
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    HappyHorse10I2VStatusOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+        - task_status
+      properties:
+        task_id:
+          type: string
+          description: 异步任务唯一标识。
+        task_status:
+          $ref: "#/components/schemas/HappyHorse10I2VTaskStatus"
+        urls:
+          type: array
+          description: 视频结果 URL 列表。
+          items:
+            type: string
+            format: uri
+        submit_time:
+          type: integer
+          format: int64
+          description: 任务提交时间戳。
+        finish_time:
+          type: integer
+          format: int64
+          description: 任务完成时间戳。
+        error_message:
+          type: string
+          description: 任务失败时返回的错误信息。
+
+    HappyHorse10I2VTaskStatus:
+      type: string
+      enum:
+        - Pending
+        - Running
+        - Success
+        - Failure
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+    HappyHorse10I2VUsage:
+      type: object
+      additionalProperties: false
+      properties:
+        duration:
+          type: integer
+          description: 计费视频时长，单位为秒。
+        output_video_duration:
+          type: number
+          description: 输出视频时长，单位为秒。
+        video_count:
+          type: integer
+          description: 输出视频数量。
+        SR:
+          type: integer
+          description: 输出视频分辨率高度，例如 `720` 或 `1080`。
+
+    HappyHorse10I2VErrorResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/HappyHorse10I2VErrorObject"
+        request_id:
+          type: string
+          description: 唯一请求标识，如可用。
+
+    HappyHorse10I2VErrorObject:
+      type: object
+      additionalProperties: true
+      required:
+        - message
+        - type
+      properties:
+        message:
+          type: string
+          description: 错误信息。
+        type:
+          type: string
+          description: 错误类型。
+          examples:
+            - invalid_request_error
+        code:
+          type:
+            - string
+            - "null"
+          description: 错误码。
+          examples:
+            - param_error
+        param:
+          type:
+            - string
+            - "null"
+          description: 相关请求参数，如有。
+
+  examples:
+    HappyHorse10I2VParamError:
+      summary: 参数错误
+      value:
+        error:
+          message: Invalid param
+          type: invalid_request_error
+          code: param_error
+          param: input.img_url
+        request_id: request_id

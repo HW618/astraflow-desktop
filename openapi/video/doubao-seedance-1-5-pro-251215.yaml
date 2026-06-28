@@ -1,0 +1,529 @@
+openapi: 3.1.0
+x-language: zh-CN
+info:
+  title: doubao-seedance-1-5-pro-251215接口文档
+  version: "1.0.0"
+  description: |
+    这是 ModelVerse 上 `doubao-seedance-1-5-pro-251215` 的视频接口文档，说明如何提交生成任务、查询任务状态、读取视频结果以及处理错误。
+    接口路径包括 `POST /v1/tasks/submit`、`GET /v1/tasks/status`。
+servers:
+  - url: https://api.modelverse.cn
+    description: 该模型文档中使用的 ModelVerse API 端点。
+
+tags:
+  - name: Doubao Seedance 1.5 Pro 251215
+    description: Text/image-to-video asynchronous task operations.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/tasks/submit:
+    post:
+      tags:
+        - Doubao Seedance 1.5 Pro 251215
+      operationId: submitDoubaoSeedance15Pro251215Task
+      summary: 提交 Doubao Seedance 1.5 Pro 251215视频任务
+      description: |
+        提交异步任务。请求体中的模型和参数按本模型文档填写，响应会返回任务 ID。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DoubaoSeedance15Pro251215SubmitRequest"
+            examples:
+              textAndFirstLastFrames:
+                summary: 提交 text and 首尾帧视频任务
+                value:
+                  model: doubao-seedance-1-5-pro-251215
+                  input:
+                    content:
+                      - type: text
+                        text: Make the character run.
+                      - type: image_url
+                        image_url:
+                          url: https://umodelverse-inference.cn-wlcb.ufileos.com/ucloud-maxcot.jpg
+                        role: first_frame
+                      - type: image_url
+                        image_url:
+                          url: https://umodelverse-inference.cn-wlcb.ufileos.com/ucloud-maxcot.jpg
+                        role: last_frame
+                  parameters:
+                    generate_audio: true
+                    duration: 5
+                    execution_expires_after: 3600
+                    resolution: "720p"
+                    ratio: adaptive
+                    camera_fixed: false
+                    watermark: false
+                    draft: false
+                    service_tier: default
+              draftTask:
+                summary: 提交任务根据a draft 任务
+                value:
+                  model: doubao-seedance-1-5-pro-251215
+                  input:
+                    content:
+                      - type: draft_task
+                        draft_task:
+                          id: task_id
+                  parameters:
+                    resolution: "480p"
+                    duration: 5
+                    draft: false
+      responses:
+        "200":
+          description: 任务提交成功。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DoubaoSeedance15Pro251215SubmitResponse"
+              examples:
+                submitted:
+                  summary: 已提交任务
+                  value:
+                    output:
+                      task_id: task_id
+                    request_id: request_id
+        "400":
+          description: 请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DoubaoSeedance15Pro251215ErrorResponse"
+              examples:
+                paramError:
+                  $ref: "#/components/examples/DoubaoSeedance15Pro251215ParamError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DoubaoSeedance15Pro251215ErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/DoubaoSeedance15Pro251215ParamError"
+
+  /v1/tasks/status:
+    get:
+      tags:
+        - Doubao Seedance 1.5 Pro 251215
+      operationId: getDoubaoSeedance15Pro251215TaskStatus
+      summary: 查询 Doubao Seedance 1.5 Pro 251215 任务状态
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      parameters:
+        - name: task_id
+          in: query
+          required: true
+          description: Asynchronous task identifier returned by `/v1/tasks/submit`.
+          schema:
+            type: string
+          examples:
+            placeholder:
+              summary: 源文档占位值
+              value: task_id
+      responses:
+        "200":
+          description: 任务状态响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DoubaoSeedance15Pro251215StatusResponse"
+              examples:
+                success:
+                  summary: 成功任务
+                  value:
+                    output:
+                      task_id: xxxxxxx
+                      task_status: Success
+                      urls:
+                        - http://xxxxxxxx/xx.mp4
+                      submit_time: 1768460826
+                      finish_time: 1768460932
+                    usage:
+                      completion_tokens: 108900
+                      total_tokens: 108900
+                      duration: 5
+                    request_id: ""
+                failure:
+                  summary: 失败任务
+                  value:
+                    output:
+                      task_id: xxxxxxx
+                      task_status: Failure
+                      submit_time: 1756959000
+                      finish_time: 1756959019
+                      error_message: error_message
+                    usage:
+                      completion_tokens: 0
+                      total_tokens: 0
+                      duration: 5
+                    request_id: ""
+        "400":
+          description: 请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DoubaoSeedance15Pro251215ErrorResponse"
+              examples:
+                paramError:
+                  $ref: "#/components/examples/DoubaoSeedance15Pro251215ParamError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DoubaoSeedance15Pro251215ErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/DoubaoSeedance15Pro251215ParamError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+  schemas:
+    DoubaoSeedance15Pro251215SubmitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - input
+      properties:
+        model:
+          type: string
+          const: doubao-seedance-1-5-pro-251215
+          description: Model name. This schema is pinned to `doubao-seedance-1-5-pro-251215`.
+        input:
+          $ref: "#/components/schemas/DoubaoSeedance15Pro251215Input"
+        parameters:
+          $ref: "#/components/schemas/DoubaoSeedance15Pro251215Parameters"
+
+    DoubaoSeedance15Pro251215Input:
+      type: object
+      additionalProperties: false
+      required:
+        - content
+      properties:
+        content:
+          description: |
+            Content objects sent to the model. Draft task content cannot be
+            mixed with text or image content.
+          oneOf:
+            - $ref: "#/components/schemas/DoubaoSeedance15Pro251215TextImageContent"
+            - $ref: "#/components/schemas/DoubaoSeedance15Pro251215DraftTaskContent"
+
+    DoubaoSeedance15Pro251215TextImageContent:
+      type: array
+      minItems: 1
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      items:
+        oneOf:
+          - $ref: "#/components/schemas/DoubaoSeedance15Pro251215TextContent"
+          - $ref: "#/components/schemas/DoubaoSeedance15Pro251215ImageUrlContent"
+
+    DoubaoSeedance15Pro251215DraftTaskContent:
+      type: array
+      minItems: 1
+      maxItems: 1
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      items:
+        $ref: "#/components/schemas/DoubaoSeedance15Pro251215DraftTaskContentItem"
+
+    DoubaoSeedance15Pro251215TextContent:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - text
+      properties:
+        type:
+          type: string
+          const: text
+          description: Input content type.
+        text:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Text prompt describing the expected video. Chinese and English are supported.
+
+    DoubaoSeedance15Pro251215ImageUrlContent:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - image_url
+      properties:
+        type:
+          type: string
+          const: image_url
+          description: Input content type for an image URL or base64 data URL.
+        image_url:
+          $ref: "#/components/schemas/DoubaoSeedance15Pro251215ImageUrl"
+        role:
+          type: string
+          enum:
+            - first_frame
+            - last_frame
+          description: |
+            Image position or purpose. For one image object, this field can be
+            omitted or set to `first_frame`. For two image objects, this field is
+            required: use `first_frame` for the first frame and `last_frame` for
+            the last frame.
+
+    DoubaoSeedance15Pro251215ImageUrl:
+      type: object
+      additionalProperties: false
+      required:
+        - url
+      properties:
+        url:
+          type: string
+          minLength: 1
+          description: |
+            Image URL or base64-encoded data URL. URL inputs must be accessible.
+            Base64 inputs must use the form
+            `data:image/<image-format>;base64,<base64-data>` with a lowercase
+            image format.
+
+    DoubaoSeedance15Pro251215DraftTaskContentItem:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - draft_task
+      properties:
+        type:
+          type: string
+          const: draft_task
+          description: Input content type for a draft task.
+        draft_task:
+          $ref: "#/components/schemas/DoubaoSeedance15Pro251215DraftTask"
+
+    DoubaoSeedance15Pro251215DraftTask:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+      properties:
+        id:
+          type: string
+          minLength: 1
+          description: Draft task ID.
+
+    DoubaoSeedance15Pro251215Parameters:
+      type: object
+      additionalProperties: false
+      properties:
+        execution_expires_after:
+          type: integer
+          minimum: 3600
+          maximum: 259200
+          default: 172800
+          description: Task expiration threshold in seconds after submission.
+        generate_audio:
+          type: boolean
+          default: false
+          description: Whether the generated video includes synchronized audio.
+        draft:
+          type: boolean
+          default: false
+          description: |
+            Whether to enable draft mode. Draft mode generates a preview video
+            for faster validation of scene structure, camera scheduling, subject
+            motion, and prompt intent. Draft mode only supports `480p`.
+        resolution:
+          type: string
+          enum:
+            - "480p"
+            - "720p"
+            - "1080p"
+          default: "720p"
+          description: Generated video resolution. Draft mode only supports `480p`.
+        ratio:
+          type: string
+          enum:
+            - "16:9"
+            - "4:3"
+            - "1:1"
+            - "3:4"
+            - "9:16"
+            - "21:9"
+            - adaptive
+          default: adaptive
+          description: Generated video aspect ratio.
+        duration:
+          type: integer
+          minimum: 4
+          maximum: 12
+          default: 5
+          description: Generated video duration in seconds.
+        seed:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+          description: 随机种子。
+        camera_fixed:
+          type: boolean
+          default: false
+          description: Whether to fix the camera.
+        watermark:
+          type: boolean
+          default: false
+          description: Whether the generated video includes a watermark.
+        service_tier:
+          type: string
+          enum:
+            - default
+            - flex
+          default: default
+          description: |
+            Processing service tier. `default` is online inference for lower
+            latency; `flex` is offline inference for latency-tolerant workloads.
+
+    DoubaoSeedance15Pro251215SubmitResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          type: object
+          additionalProperties: false
+          required:
+            - task_id
+          properties:
+            task_id:
+              type: string
+              description: 异步任务唯一标识。
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    DoubaoSeedance15Pro251215StatusResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/DoubaoSeedance15Pro251215StatusOutput"
+        usage:
+          $ref: "#/components/schemas/DoubaoSeedance15Pro251215Usage"
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    DoubaoSeedance15Pro251215StatusOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+        - task_status
+      properties:
+        task_id:
+          type: string
+          description: 异步任务唯一标识。
+        task_status:
+          $ref: "#/components/schemas/DoubaoSeedance15Pro251215TaskStatus"
+        urls:
+          type: array
+          description: 视频结果 URL 列表。
+          items:
+            type: string
+            format: uri
+        submit_time:
+          type: integer
+          format: int64
+          description: 任务提交时间戳。
+        finish_time:
+          type: integer
+          format: int64
+          description: 任务完成时间戳。
+        error_message:
+          type: string
+          description: 任务失败时返回的错误信息。
+
+    DoubaoSeedance15Pro251215TaskStatus:
+      type: string
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      enum:
+        - Pending
+        - Running
+        - Success
+        - Failure
+        - Expired
+
+    DoubaoSeedance15Pro251215Usage:
+      type: object
+      additionalProperties: false
+      properties:
+        duration:
+          type: integer
+          description: 视频时长，单位为秒。
+        completion_tokens:
+          type: integer
+          description: Token count charged for generated video output.
+        total_tokens:
+          type: integer
+          description: |
+            Total token count for this request. Video generation does not count
+            input tokens, so `total_tokens` equals `completion_tokens`.
+
+    DoubaoSeedance15Pro251215ErrorResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/DoubaoSeedance15Pro251215ErrorObject"
+
+    DoubaoSeedance15Pro251215ErrorObject:
+      type: object
+      additionalProperties: true
+      required:
+        - message
+        - type
+      properties:
+        message:
+          type: string
+          description: 错误信息。
+        type:
+          type: string
+          description: 错误类型。
+          examples:
+            - invalid_request_error
+        code:
+          type:
+            - string
+            - "null"
+          description: 错误码。
+          examples:
+            - param_error
+        param:
+          type:
+            - string
+            - "null"
+          description: 相关请求参数，如有。
+
+  examples:
+    DoubaoSeedance15Pro251215ParamError:
+      summary: 参数错误
+      value:
+        error:
+          message: Invalid param
+          type: invalid_request_error
+          code: param_error
+          param: parameters.duration

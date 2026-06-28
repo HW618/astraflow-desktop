@@ -1,0 +1,417 @@
+openapi: 3.1.0
+x-language: zh-CN
+info:
+  title: MiniMax-Hailuo-2.3-T2V接口文档
+  version: "1.0.0"
+  description: |
+    这是 ModelVerse 上 `MiniMax-Hailuo-2.3-T2V` 的视频接口文档，说明如何提交生成任务、查询任务状态、读取视频结果以及处理错误。
+    接口路径包括 `POST /v1/tasks/submit`、`GET /v1/tasks/status`。
+servers:
+  - url: https://api.modelverse.cn
+    description: 该模型文档中使用的 ModelVerse API 端点。
+
+tags:
+  - name: MiniMax/Hailuo-2.3-T2V
+    description: Text-to-video asynchronous task operations for MiniMax/Hailuo-2.3-T2V.
+
+paths:
+  /v1/tasks/submit:
+    post:
+      tags:
+        - MiniMax/Hailuo-2.3-T2V
+      operationId: submitMiniMaxHailuo23T2VTask
+      summary: 提交 MiniMax/Hailuo-2.3-T2V 文生视频任务
+      description: |
+        提交异步任务。请求体中的模型和参数按本模型文档填写，响应会返回任务 ID。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MiniMaxHailuo23T2VTaskSubmitRequest"
+            examples:
+              withCameraControls:
+                summary: 1080P 文生视频请求带camera controls
+                value:
+                  model: MiniMax-Hailuo-2.3
+                  input:
+                    prompt: A beautiful sunset over the ocean with waves gently crashing on the shore. [推进, 跟随]
+                  parameters:
+                    duration: 6
+                    resolution: 1080P
+                    prompt_optimizer: true
+                    fast_pretreatment: false
+                    aigc_watermark: false
+              tenSecond768P:
+                summary: 10 second 768P 文生视频 请求
+                value:
+                  model: MiniMax-Hailuo-2.3
+                  input:
+                    prompt: A cat runs across a meadow [左摇,上升], then the camera pulls back [拉远]
+                  parameters:
+                    duration: 10
+                    resolution: 768P
+                    prompt_optimizer: true
+                    fast_pretreatment: false
+                    aigc_watermark: false
+      responses:
+        "200":
+          description: 任务提交成功。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniMaxHailuo23T2VTaskSubmitResponse"
+              examples:
+                submitted:
+                  summary: 已提交任务
+                  value:
+                    output:
+                      task_id: "106916112212032"
+                    request_id: request_id
+        "400":
+          description: 请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniMaxHailuo23T2VErrorResponse"
+              examples:
+                invalidParameter:
+                  $ref: "#/components/examples/MiniMaxHailuo23T2VInvalidParameterError"
+        "401":
+          description: Bearer token 无效或缺失。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniMaxHailuo23T2VErrorResponse"
+              examples:
+                authError:
+                  $ref: "#/components/examples/MiniMaxHailuo23T2VAuthError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniMaxHailuo23T2VErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/MiniMaxHailuo23T2VInvalidParameterError"
+
+  /v1/tasks/status:
+    get:
+      tags:
+        - MiniMax/Hailuo-2.3-T2V
+      operationId: getMiniMaxHailuo23T2VTaskStatus
+      summary: 查询 MiniMax/Hailuo-2.3-T2V 任务状态
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: task_id
+          in: query
+          required: true
+          description: Asynchronous task identifier returned by `/v1/tasks/submit`.
+          schema:
+            type: string
+          examples:
+            submittedTask:
+              value: "106916112212032"
+      responses:
+        "200":
+          description: 任务状态响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniMaxHailuo23T2VTaskStatusResponse"
+              examples:
+                success:
+                  summary: 成功任务
+                  value:
+                    output:
+                      task_id: "176843862716480"
+                      task_status: Success
+                      urls:
+                        - https://xxxxx/xxxx.mp4
+                      submit_time: 1756959000
+                      finish_time: 1756959050
+                    usage:
+                      duration: 6
+                    request_id: ""
+                failure:
+                  summary: 失败任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Failure
+                      submit_time: 1756959000
+                      finish_time: 1756959019
+                      error_message: error_message
+                    usage:
+                      duration: 6
+                    request_id: ""
+        "400":
+          description: 任务标识或请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniMaxHailuo23T2VErrorResponse"
+              examples:
+                invalidParameter:
+                  $ref: "#/components/examples/MiniMaxHailuo23T2VInvalidParameterError"
+        "401":
+          description: Bearer token 无效或缺失。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniMaxHailuo23T2VErrorResponse"
+              examples:
+                authError:
+                  $ref: "#/components/examples/MiniMaxHailuo23T2VAuthError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniMaxHailuo23T2VErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/MiniMaxHailuo23T2VInvalidParameterError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+  schemas:
+    MiniMaxHailuo23T2VTaskSubmitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - input
+      properties:
+        model:
+          type: string
+          const: MiniMax-Hailuo-2.3
+          description: Model name. Fixed to `MiniMax-Hailuo-2.3` for this API document.
+        input:
+          $ref: "#/components/schemas/MiniMaxHailuo23T2VInput"
+        parameters:
+          $ref: "#/components/schemas/MiniMaxHailuo23T2VParameters"
+
+    MiniMaxHailuo23T2VInput:
+      type: object
+      additionalProperties: false
+      required:
+        - prompt
+      properties:
+        prompt:
+          type: string
+          maxLength: 2000
+          description: |
+            Text prompt used to guide video generation. MiniMax-Hailuo-2.3 supports camera
+            control directives in square brackets, including `[左移]`, `[右移]`, `[左摇]`,
+            `[右摇]`, `[推进]`, `[拉远]`, `[上升]`, `[下降]`, `[上摇]`, `[下摇]`,
+            `[变焦推近]`, `[变焦拉远]`, `[晃动]`, `[跟随]`, and `[固定]`.
+
+    MiniMaxHailuo23T2VParameters:
+      type: object
+      additionalProperties: false
+      properties:
+        duration:
+          type: integer
+          description: |
+            Generated video duration in seconds. MiniMax-Hailuo-2.3 supports 6 seconds
+            at 768P or 1080P, and 10 seconds at 768P.
+          enum:
+            - 6
+            - 10
+          default: 6
+        resolution:
+          type: string
+          description: |
+            Generated video resolution. For 6 second videos, 768P and 1080P are supported.
+            For 10 second videos, only 768P is supported. The documented default is 768P.
+          enum:
+            - 768P
+            - 1080P
+          default: 768P
+        prompt_optimizer:
+          type: boolean
+          description: Whether to automatically optimize the text prompt.
+          default: true
+        fast_pretreatment:
+          type: boolean
+          description: |
+            Whether to shorten prompt optimization latency. This parameter is only effective
+            for MiniMax-Hailuo-2.3.
+          default: false
+        aigc_watermark:
+          type: boolean
+          description: Whether to add an AIGC watermark to the generated video.
+          default: false
+
+    MiniMaxHailuo23T2VTaskSubmitResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/MiniMaxHailuo23T2VTaskSubmitOutput"
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    MiniMaxHailuo23T2VTaskSubmitOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+      properties:
+        task_id:
+          type: string
+          description: 异步任务唯一标识。
+
+    MiniMaxHailuo23T2VTaskStatusResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/MiniMaxHailuo23T2VTaskStatusOutput"
+        usage:
+          $ref: "#/components/schemas/MiniMaxHailuo23T2VUsage"
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    MiniMaxHailuo23T2VTaskStatusOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+        - task_status
+      properties:
+        task_id:
+          type: string
+          description: 异步任务唯一标识。
+        task_status:
+          $ref: "#/components/schemas/MiniMaxHailuo23T2VTaskStatus"
+        urls:
+          type: array
+          description: 视频结果 URL 列表。
+          items:
+            type: string
+            format: uri
+        submit_time:
+          type: integer
+          format: int64
+          description: 任务提交时间的 Unix 秒级时间戳。
+        finish_time:
+          type: integer
+          format: int64
+          description: 任务完成时间的 Unix 秒级时间戳。
+        error_message:
+          type: string
+          description: 任务失败时返回的错误信息。
+
+    MiniMaxHailuo23T2VTaskStatus:
+      type: string
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      enum:
+        - Pending
+        - Running
+        - Success
+        - Failure
+
+    MiniMaxHailuo23T2VUsage:
+      type: object
+      additionalProperties: false
+      properties:
+        duration:
+          type: integer
+          description: Generated video duration in seconds.
+
+    MiniMaxHailuo23T2VErrorResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/MiniMaxHailuo23T2VErrorObject"
+        request_id:
+          type: string
+          description: 唯一请求标识，如可用。
+
+    MiniMaxHailuo23T2VErrorObject:
+      type: object
+      additionalProperties: true
+      required:
+        - message
+        - type
+      properties:
+        message:
+          type: string
+          description: 错误信息。
+        type:
+          type: string
+          description: 错误类型。
+          enum:
+            - invalid_request_error
+            - timeout
+            - rate_limit_error
+            - internal_error
+        code:
+          type:
+            - string
+            - "null"
+          description: 错误码。
+          enum:
+            - param_error
+            - invalid_messages
+            - sensitive_check_error
+            - model_error
+            - tokens_too_long
+            - auth_error
+            - timeout
+            - rate_limit
+            - internal_error
+            - model_server_error
+            - gateway_timeout_error
+            - null
+        param:
+          type:
+            - string
+            - "null"
+          description: 与错误相关的请求参数。
+
+  examples:
+    MiniMaxHailuo23T2VInvalidParameterError:
+      summary: 参数错误
+      value:
+        error:
+          message: Invalid param
+          type: invalid_request_error
+          code: param_error
+          param: parameters.resolution
+        request_id: request_id
+    MiniMaxHailuo23T2VAuthError:
+      summary: Bearer 认证错误
+      value:
+        error:
+          message: Validate Certification failed
+          type: invalid_request_error
+          code: auth_error
+          param: null
+        request_id: request_id

@@ -1,0 +1,388 @@
+openapi: 3.1.0
+x-language: zh-CN
+info:
+  title: Wan-AI-Wan2.6-I2V接口文档
+  version: "1.0.0"
+  description: |
+    这是 ModelVerse 上 `Wan-AI-Wan2.6-I2V` 的视频接口文档，说明如何提交生成任务、查询任务状态、读取视频结果以及处理错误。
+    接口路径包括 `POST /v1/tasks/submit`、`GET /v1/tasks/status`。
+servers:
+  - url: https://api.modelverse.cn
+    description: 该模型文档中使用的 ModelVerse API 端点。
+
+tags:
+  - name: Wan-AI/Wan2.6-I2V
+    description: Image-to-video asynchronous task operations.
+
+paths:
+  /v1/tasks/submit:
+    post:
+      tags:
+        - Wan-AI/Wan2.6-I2V
+      operationId: submitWanAIWan26I2VTask
+      summary: 提交 Wan-AI/Wan2.6-I2V 图生视频任务
+      description: |
+        提交异步任务。请求体中的模型和参数按本模型文档填写，响应会返回任务 ID。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WanAIWan26I2VSubmitRequest"
+            examples:
+              imageToVideo:
+                summary: 提交 图生视频任务
+                value:
+                  model: Wan-AI/Wan2.6-I2V
+                  input:
+                    img_url: https://umodelverse-inference.cn-wlcb.ufileos.com/ucloud-maxcot.jpg
+                    prompt: make it swim
+                  parameters:
+                    resolution: 1080P
+                    duration: 5
+                    prompt_extend: true
+                    shot_type: single
+              withAudioGuidance:
+                summary: 提交an 图生视频任务带音频引导
+                value:
+                  model: Wan-AI/Wan2.6-I2V
+                  input:
+                    img_url: https://umodelverse-inference.cn-wlcb.ufileos.com/ucloud-maxcot.jpg
+                    prompt: make it swim in sync with the music
+                    negative_prompt: blurry, distorted
+                    audio_url: https://example.com/audio.mp3
+                  parameters:
+                    resolution: 720P
+                    duration: 10
+                    seed: 12345
+                    prompt_extend: true
+                    shot_type: single
+      responses:
+        "200":
+          description: 任务提交成功。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WanAIWan26I2VSubmitResponse"
+              examples:
+                submitted:
+                  summary: 已提交任务
+                  value:
+                    output:
+                      task_id: task_id
+                    request_id: request_id
+        "400":
+          description: 请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WanAIWan26I2VErrorResponse"
+              examples:
+                paramError:
+                  $ref: "#/components/examples/WanAIWan26I2VParamError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WanAIWan26I2VErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/WanAIWan26I2VParamError"
+
+  /v1/tasks/status:
+    get:
+      tags:
+        - Wan-AI/Wan2.6-I2V
+      operationId: getWanAIWan26I2VTaskStatus
+      summary: 查询 Wan-AI/Wan2.6-I2V 任务状态
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: task_id
+          in: query
+          required: true
+          description: Asynchronous task identifier returned by `/v1/tasks/submit`.
+          schema:
+            type: string
+          examples:
+            placeholder:
+              summary: 源文档占位值
+              value: task_id
+      responses:
+        "200":
+          description: 任务状态响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WanAIWan26I2VStatusResponse"
+              examples:
+                success:
+                  summary: 成功任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Success
+                      urls:
+                        - https://xxxxx/xxxx.mp4
+                      submit_time: 1756959000
+                      finish_time: 1756959050
+                    usage:
+                      duration: 5
+                    request_id: ""
+                failure:
+                  summary: 失败任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Failure
+                      submit_time: 1756959000
+                      finish_time: 1756959019
+                      error_message: error_message
+                    usage:
+                      duration: 5
+                    request_id: ""
+        "400":
+          description: 请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WanAIWan26I2VErrorResponse"
+              examples:
+                paramError:
+                  $ref: "#/components/examples/WanAIWan26I2VParamError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WanAIWan26I2VErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/WanAIWan26I2VParamError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+  schemas:
+    WanAIWan26I2VSubmitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - input
+      properties:
+        model:
+          type: string
+          const: Wan-AI/Wan2.6-I2V
+          description: Model name. This schema is pinned to `Wan-AI/Wan2.6-I2V`.
+        input:
+          $ref: "#/components/schemas/WanAIWan26I2VInput"
+        parameters:
+          $ref: "#/components/schemas/WanAIWan26I2VParameters"
+
+    WanAIWan26I2VInput:
+      type: object
+      additionalProperties: false
+      required:
+        - prompt
+      properties:
+        prompt:
+          type: string
+          minLength: 1
+          description: 用于指导视频生成的提示词。
+        negative_prompt:
+          type: string
+          description: 用于限制不期望内容的负向提示词。
+        img_url:
+          type: string
+          format: uri
+          description: Video first-frame image URL.
+        audio_url:
+          type: string
+          format: uri
+          description: |
+            Audio URL used to guide generation. If the audio is longer than the
+            requested video duration, it is truncated; if shorter, the remaining
+            video segment is silent.
+
+    WanAIWan26I2VParameters:
+      type: object
+      additionalProperties: false
+      properties:
+        resolution:
+          type: string
+          description: |
+            Generated video resolution tier. The selected tier affects pricing,
+            and the model scales to a similar total pixel count while preserving
+            the input image aspect ratio as much as possible.
+          enum:
+            - 720P
+            - 1080P
+          default: 1080P
+        duration:
+          type: integer
+          description: Generated video duration in seconds.
+          enum:
+            - 5
+            - 10
+            - 15
+        seed:
+          type: integer
+          minimum: 0
+          maximum: 4294967295
+          description: 随机种子。
+        prompt_extend:
+          type: boolean
+          description: |
+            Whether to enable intelligent prompt rewriting. This can improve
+            short prompts but may increase latency.
+          default: true
+        shot_type:
+          type: string
+          description: |
+            Video shot type. This only takes effect when `prompt_extend` is true,
+            and has higher priority than instructions in `prompt`.
+          enum:
+            - single
+            - multi
+          default: single
+
+    WanAIWan26I2VSubmitResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          type: object
+          additionalProperties: false
+          required:
+            - task_id
+          properties:
+            task_id:
+              type: string
+              description: 异步任务唯一标识。
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    WanAIWan26I2VStatusResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/WanAIWan26I2VStatusOutput"
+        usage:
+          $ref: "#/components/schemas/WanAIWan26I2VUsage"
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    WanAIWan26I2VStatusOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+        - task_status
+      properties:
+        task_id:
+          type: string
+          description: 异步任务唯一标识。
+        task_status:
+          $ref: "#/components/schemas/WanAIWan26I2VTaskStatus"
+        urls:
+          type: array
+          description: 视频结果 URL 列表。
+          items:
+            type: string
+            format: uri
+        submit_time:
+          type: integer
+          format: int64
+          description: 任务提交时间戳。
+        finish_time:
+          type: integer
+          format: int64
+          description: 任务完成时间戳。
+        error_message:
+          type: string
+          description: 任务失败时返回的错误信息。
+
+    WanAIWan26I2VTaskStatus:
+      type: string
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      enum:
+        - Pending
+        - Running
+        - Success
+        - Failure
+
+    WanAIWan26I2VUsage:
+      type: object
+      additionalProperties: false
+      properties:
+        duration:
+          type: integer
+          description: 任务执行时长，单位为秒。
+
+    WanAIWan26I2VErrorResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/WanAIWan26I2VErrorObject"
+
+    WanAIWan26I2VErrorObject:
+      type: object
+      additionalProperties: true
+      required:
+        - message
+        - type
+      properties:
+        message:
+          type: string
+          description: 错误信息。
+        type:
+          type: string
+          description: 错误类型。
+          examples:
+            - invalid_request_error
+        code:
+          type:
+            - string
+            - "null"
+          description: 错误码。
+          examples:
+            - param_error
+        param:
+          type:
+            - string
+            - "null"
+          description: 相关请求参数，如有。
+
+  examples:
+    WanAIWan26I2VParamError:
+      summary: 参数错误
+      value:
+        error:
+          message: Invalid param
+          type: invalid_request_error
+          code: param_error
+          param: task_id

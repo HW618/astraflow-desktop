@@ -1,0 +1,585 @@
+openapi: 3.1.0
+x-language: zh-CN
+info:
+  title: Kling-O3接口文档
+  version: "1.0.0"
+  description: |
+    这是 ModelVerse 上 `Kling-O3` 的视频接口文档，说明如何提交生成任务、查询任务状态、读取视频结果以及处理错误。
+    接口路径包括 `POST /v1/tasks/submit`、`GET /v1/tasks/status`。
+servers:
+  - url: https://api.modelverse.cn
+    description: 该模型文档中使用的 ModelVerse API 端点。
+
+tags:
+  - name: Kling/V3-Omni
+    description: Multimodal video generation asynchronous task operations for Kling/V3-Omni.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/tasks/submit:
+    post:
+      tags:
+        - Kling/V3-Omni
+      operationId: submitKlingO3Task
+      summary: 提交 Kling/V3-Omni视频任务
+      description: |
+        提交异步任务。请求体中的模型和参数按本模型文档填写，响应会返回任务 ID。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KlingO3SubmitRequest"
+            examples:
+              textToVideo:
+                summary: 文生视频请求带sound
+                value:
+                  model: kling-v3-omni
+                  input:
+                    prompt: A beautiful sunset over the ocean with waves gently crashing
+                  parameters:
+                    mode: pro
+                    aspect_ratio: "16:9"
+                    duration: 5
+                    sound: "on"
+              imageReferenceStartEndFrames:
+                summary: Image reference带first and end frames
+                value:
+                  model: kling-v3-omni
+                  input:
+                    prompt: A girl walking through a garden
+                  parameters:
+                    mode: pro
+                    aspect_ratio: "16:9"
+                    duration: 5
+                    image_list:
+                      - image_url: https://example.com/first_frame.jpg
+                        type: first_frame
+                      - image_url: https://example.com/last_frame.jpg
+                        type: end_frame
+              videoEditBaseReference:
+                summary: Video editing请求带a base video
+                value:
+                  model: kling-v3-omni
+                  input:
+                    prompt: Add a cinematic color grading effect
+                  parameters:
+                    mode: pro
+                    video_list:
+                      - video_url: https://example.com/input.mp4
+                        refer_type: base
+                        keep_original_sound: "yes"
+              multiShotImageReference:
+                summary: Custom multi-shot请求带an图像reference
+                value:
+                  model: kling-v3-omni
+                  parameters:
+                    mode: pro
+                    aspect_ratio: "16:9"
+                    duration: 5
+                    multi_shot: true
+                    shot_type: customize
+                    multi_prompt:
+                      - index: 1
+                        prompt: "<<<image_1>>>A person sitting on a park bench, sunlight filtering through trees"
+                        duration: "2"
+                      - index: 2
+                        prompt: A car speeding down a rainy street, headlights glowing
+                        duration: "3"
+                    image_list:
+                      - image_url: https://example.com/person.jpg
+                    sound: "on"
+      responses:
+        "200":
+          description: 任务提交成功。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KlingO3SubmitResponse"
+              examples:
+                submitted:
+                  summary: 已提交任务
+                  value:
+                    output:
+                      task_id: task_id
+                    request_id: request_id
+        "400":
+          description: Invalid request parameters or task creation failure.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KlingO3ErrorResponse"
+              examples:
+                taskCreationError:
+                  $ref: "#/components/examples/KlingO3TaskCreationError"
+        "401":
+          description: Bearer token 无效或缺失。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KlingO3ErrorResponse"
+              examples:
+                authError:
+                  $ref: "#/components/examples/KlingO3AuthError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KlingO3ErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/KlingO3TaskCreationError"
+
+  /v1/tasks/status:
+    get:
+      tags:
+        - Kling/V3-Omni
+      operationId: getKlingO3TaskStatus
+      summary: 查询 Kling/V3-Omni 任务状态
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      parameters:
+        - name: task_id
+          in: query
+          required: true
+          description: Asynchronous task identifier returned by `/v1/tasks/submit`.
+          schema:
+            type: string
+          examples:
+            documented:
+              summary: 源文档占位值
+              value: task_id
+      responses:
+        "200":
+          description: 任务状态响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KlingO3StatusResponse"
+              examples:
+                success:
+                  summary: 成功任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Success
+                      urls:
+                        - https://xxxxx/xxxx.mp4
+                      submit_time: 1756959000
+                      finish_time: 1756959050
+                    usage:
+                      duration: 5
+                    request_id: ""
+                failure:
+                  summary: 失败任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Failure
+                      submit_time: 1756959000
+                      finish_time: 1756959019
+                      error_message: error_message
+                    usage:
+                      duration: 5
+                    request_id: ""
+        "400":
+          description: 任务标识或请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KlingO3ErrorResponse"
+              examples:
+                paramError:
+                  $ref: "#/components/examples/KlingO3ParamError"
+        "401":
+          description: Bearer token 无效或缺失。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KlingO3ErrorResponse"
+              examples:
+                authError:
+                  $ref: "#/components/examples/KlingO3AuthError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KlingO3ErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/KlingO3TaskCreationError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+  schemas:
+    KlingO3SubmitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+      properties:
+        model:
+          type: string
+          const: kling-v3-omni
+          description: Model name. This schema is pinned to `kling-v3-omni`.
+        input:
+          $ref: "#/components/schemas/KlingO3Input"
+        parameters:
+          $ref: "#/components/schemas/KlingO3Parameters"
+
+    KlingO3Input:
+      type: object
+      additionalProperties: false
+      properties:
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 2500
+          description: |
+            Prompt used to guide video generation. When `multi_shot` is `false`,
+            the prompt must be present and can reference images or videos using
+            placeholders such as `<<<image_1>>>` and `<<<video_1>>>`.
+          examples:
+            - A beautiful sunset over the ocean with waves gently crashing
+        negative_prompt:
+          type: string
+          maxLength: 2500
+          description: 用于限制不期望内容的负向提示词。
+
+    KlingO3Parameters:
+      type: object
+      additionalProperties: false
+      properties:
+        mode:
+          type: string
+          enum:
+            - std
+            - pro
+          default: pro
+          description: |
+            Generation mode. `std` produces standard 720P output and `pro`
+            produces professional 1080P output.
+        aspect_ratio:
+          type: string
+          enum:
+            - "16:9"
+            - "9:16"
+            - "1:1"
+          description: |
+            Video aspect ratio. This is required except when using video
+            editing with `video_list[].refer_type` set to `base`.
+        duration:
+          type: integer
+          minimum: 3
+          maximum: 15
+          default: 5
+          description: |
+            Generated video duration in seconds. Video reference mode supports
+            3 to 10 seconds. When video editing with `refer_type: base`, the
+            output duration follows the input video and this parameter is ignored.
+        sound:
+          type: string
+          enum:
+            - "on"
+            - "off"
+          default: "off"
+          description: |
+            Whether to generate sound. When a reference video is present, this
+            parameter must be `off`.
+        multi_shot:
+          type: boolean
+          default: false
+          description: |
+            Whether to enable multi-shot mode. When `true`, `input.prompt` is
+            ignored; when `false`, `shot_type` and `multi_prompt` are ignored.
+        shot_type:
+          type: string
+          enum:
+            - customize
+          description: Shot type. Required when `multi_shot` is `true`.
+        multi_prompt:
+          type: array
+          minItems: 1
+          maxItems: 6
+          description: |
+            Custom multi-shot prompt list. Required when `multi_shot` is `true`
+            and `shot_type` is `customize`. Each shot prompt is limited to 512
+            characters, each shot duration must be at least 1 second and no
+            greater than the total video duration, and all shot durations must
+            add up to the total video duration.
+          items:
+            $ref: "#/components/schemas/KlingO3MultiPromptItem"
+        image_list:
+          type: array
+          maxItems: 7
+          description: |
+            Reference image list for first-frame, end-frame, and reference-image
+            generation. With a reference video, at most 4 images are supported;
+            without a reference video, at most 7 images are supported. More than
+            2 images cannot be combined with an end frame, and end-frame-only
+            requests are not supported.
+          items:
+            $ref: "#/components/schemas/KlingO3ImageReference"
+        video_list:
+          type: array
+          maxItems: 1
+          description: |
+            Reference video list. At most 1 MP4 or MOV video is supported.
+            Reference videos must be at least 3 seconds long; when a reference
+            video is present, generated-video duration is limited to 3 to 10
+            seconds and `sound` must be `off`.
+          items:
+            $ref: "#/components/schemas/KlingO3VideoReference"
+        watermark_enabled:
+          type: boolean
+          description: Whether to generate a watermarked result. Custom watermarks are not supported.
+        external_task_id:
+          type: string
+          minLength: 1
+          description: |
+            Caller-provided task identifier. This does not replace the system
+            task ID, but the task can be queried with this ID. It must be unique
+            for the same user.
+
+    KlingO3MultiPromptItem:
+      type: object
+      additionalProperties: false
+      required:
+        - index
+        - prompt
+        - duration
+      properties:
+        index:
+          type: integer
+          minimum: 1
+          description: Shot index, starting from 1.
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: Prompt for this shot.
+        duration:
+          type: string
+          minLength: 1
+          description: Shot duration in seconds, represented as a string in the documented request shape.
+
+    KlingO3ImageReference:
+      type: object
+      additionalProperties: false
+      required:
+        - image_url
+      properties:
+        image_url:
+          type: string
+          minLength: 1
+          description: |
+            Image URL or raw Base64-encoded image string. Supported image
+            formats are JPG, JPEG, and PNG. File size must be no larger than
+            10 MB, width and height must each be at least 300 px, and the
+            aspect ratio must be between 1:2.5 and 2.5:1. When using Base64,
+            do not include a `data:image/...;base64,` prefix.
+          examples:
+            - https://example.com/first_frame.jpg
+        type:
+          type: string
+          enum:
+            - first_frame
+            - end_frame
+          description: Image role. Omit for a general reference image.
+
+    KlingO3VideoReference:
+      type: object
+      additionalProperties: false
+      required:
+        - video_url
+      properties:
+        video_url:
+          type: string
+          format: uri
+          description: |
+            Reference video URL. Supported formats are MP4 and MOV. The video
+            must be at least 3 seconds long, no larger than 200 MB, have width
+            and height between 720 px and 2160 px, and use 24 fps to 60 fps.
+            Generated video output is 24 fps.
+          examples:
+            - https://example.com/input.mp4
+        refer_type:
+          type: string
+          enum:
+            - feature
+            - base
+          default: base
+          description: |
+            Reference type. Use `feature` for feature reference and `base` for
+            a source video to edit.
+        keep_original_sound:
+          type: string
+          enum:
+            - "yes"
+            - "no"
+          description: Whether to keep the original audio from the reference video.
+
+    KlingO3SubmitResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          type: object
+          additionalProperties: false
+          required:
+            - task_id
+          properties:
+            task_id:
+              type: string
+              description: 异步任务唯一标识。
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    KlingO3StatusResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/KlingO3StatusOutput"
+        usage:
+          $ref: "#/components/schemas/KlingO3Usage"
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    KlingO3StatusOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+        - task_status
+      properties:
+        task_id:
+          type: string
+          description: 异步任务唯一标识。
+        task_status:
+          $ref: "#/components/schemas/KlingO3TaskStatus"
+        urls:
+          type: array
+          description: 视频结果 URL 列表。
+          items:
+            type: string
+            format: uri
+        submit_time:
+          type: integer
+          format: int64
+          description: 任务提交时间戳。
+        finish_time:
+          type: integer
+          format: int64
+          description: 任务完成时间戳。
+        error_message:
+          type: string
+          description: 任务失败时返回的错误信息。
+
+    KlingO3TaskStatus:
+      type: string
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      enum:
+        - Pending
+        - Running
+        - Success
+        - Failure
+
+    KlingO3Usage:
+      type: object
+      additionalProperties: false
+      properties:
+        duration:
+          type: integer
+          description: Generated video duration in seconds.
+
+    KlingO3ErrorResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/KlingO3ErrorObject"
+        request_id:
+          type: string
+          description: 唯一请求标识，如可用。
+
+    KlingO3ErrorObject:
+      type: object
+      additionalProperties: true
+      required:
+        - message
+        - type
+      properties:
+        message:
+          type: string
+          description: 错误信息。
+        type:
+          type: string
+          description: 错误类型。
+          examples:
+            - invalid_request_error
+        code:
+          type: string
+          description: |
+            Error code. The source document lists `006001094` for insufficient
+            task resources, `006001095` for task response errors, and
+            `006001099` for task creation errors.
+          enum:
+            - "006001094"
+            - "006001095"
+            - "006001099"
+        param:
+          type:
+            - string
+            - "null"
+          description: 相关请求参数，如有。
+
+  examples:
+    KlingO3TaskCreationError:
+      summary: Documented任务creation error
+      value:
+        error:
+          message: Task creation error
+          type: invalid_request_error
+          code: "006001099"
+          param: null
+        request_id: request_id
+    KlingO3ParamError:
+      summary: 参数错误
+      value:
+        error:
+          message: Invalid param
+          type: invalid_request_error
+          code: param_error
+          param: parameters.aspect_ratio
+        request_id: request_id
+    KlingO3AuthError:
+      summary: Bearer 认证错误
+      value:
+        error:
+          message: Validate Certification failed
+          type: invalid_request_error
+          code: auth_error
+          param: null
+        request_id: request_id

@@ -1,0 +1,482 @@
+openapi: 3.1.0
+x-language: zh-CN
+info:
+  title: Kling-O1接口文档
+  version: "1.0.0"
+  description: |
+    这是 ModelVerse 上 `Kling-O1` 的视频接口文档，说明如何提交生成任务、查询任务状态、读取视频结果以及处理错误。
+    接口路径包括 `POST /v1/tasks/submit`、`GET /v1/tasks/status`。
+servers:
+  - url: https://api.modelverse.cn
+    description: 该模型文档中使用的 ModelVerse API 端点。
+
+tags:
+  - name: Kling/O1
+    description: Asynchronous video generation and task status operations for Kling/O1.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/tasks/submit:
+    post:
+      tags:
+        - Kling/O1
+      operationId: submitKlingO1VideoTask
+      summary: 提交 Kling/O1视频任务
+      description: |
+        提交异步任务。请求体中的模型和参数按本模型文档填写，响应会返回任务 ID。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KlingO1TaskSubmitRequest"
+            examples:
+              firstFrame:
+                summary: 根据 a prompt and 首帧图像 生成视频
+                value:
+                  model: kling-video-o1
+                  input:
+                    prompt: A beautiful sunset over the ocean with waves gently crashing
+                  parameters:
+                    mode: pro
+                    aspect_ratio: "16:9"
+                    duration: 5
+                    image_list:
+                      - image_url: https://example.com/first_frame.jpg
+                        type: first_frame
+              textToVideo:
+                summary: 生成文生视频任务
+                value:
+                  model: kling-video-o1
+                  input:
+                    prompt: A cinematic shot of a glass train crossing a snowy mountain bridge at sunrise
+                  parameters:
+                    mode: pro
+                    aspect_ratio: "9:16"
+                    duration: 10
+              videoEdit:
+                summary: 编辑a base视频while keeping original sound
+                value:
+                  model: kling-video-o1
+                  input:
+                    prompt: Replace the background with a neon city street at night
+                  parameters:
+                    mode: pro
+                    video_list:
+                      - video_url: https://example.com/base-video.mp4
+                        refer_type: base
+                        keep_original_sound: "yes"
+      responses:
+        "200":
+          description: 任务提交成功。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KlingO1TaskSubmitResponse"
+              examples:
+                submitted:
+                  summary: 已提交任务
+                  value:
+                    output:
+                      task_id: task_id
+                    request_id: request_id
+        "400":
+          description: 请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KlingO1ErrorResponse"
+              examples:
+                invalidParameter:
+                  $ref: "#/components/examples/KlingO1InvalidParameterError"
+        "401":
+          description: Bearer token 无效或缺失。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KlingO1ErrorResponse"
+              examples:
+                authError:
+                  $ref: "#/components/examples/KlingO1AuthError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KlingO1ErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/KlingO1InvalidParameterError"
+
+  /v1/tasks/status:
+    get:
+      tags:
+        - Kling/O1
+      operationId: getKlingO1VideoTaskStatus
+      summary: 查询 Kling/O1 任务状态
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: task_id
+          in: query
+          required: true
+          description: Asynchronous task identifier returned by `/v1/tasks/submit`.
+          schema:
+            type: string
+          examples:
+            taskId:
+              value: task_id
+      responses:
+        "200":
+          description: 任务状态响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KlingO1TaskStatusResponse"
+              examples:
+                success:
+                  summary: 成功任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Success
+                      urls:
+                        - https://xxxxx/xxxx.mp4
+                      submit_time: 1756959000
+                      finish_time: 1756959050
+                    usage:
+                      duration: 5
+                    request_id: ""
+                failure:
+                  summary: 失败任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Failure
+                      submit_time: 1756959000
+                      finish_time: 1756959019
+                      error_message: error_message
+                    usage:
+                      duration: 5
+                    request_id: ""
+        "400":
+          description: 任务标识或请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KlingO1ErrorResponse"
+              examples:
+                invalidParameter:
+                  $ref: "#/components/examples/KlingO1InvalidParameterError"
+        "401":
+          description: Bearer token 无效或缺失。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KlingO1ErrorResponse"
+              examples:
+                authError:
+                  $ref: "#/components/examples/KlingO1AuthError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KlingO1ErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/KlingO1InvalidParameterError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+  schemas:
+    KlingO1TaskSubmitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - input
+      properties:
+        model:
+          type: string
+          const: kling-video-o1
+          description: Model name. Fixed to `kling-video-o1` for this API document.
+        input:
+          $ref: "#/components/schemas/KlingO1Input"
+        parameters:
+          $ref: "#/components/schemas/KlingO1Parameters"
+
+    KlingO1Input:
+      type: object
+      additionalProperties: false
+      required:
+        - prompt
+      properties:
+        prompt:
+          type: string
+          minLength: 1
+          description: 用于指导视频生成的提示词。
+
+    KlingO1Parameters:
+      type: object
+      additionalProperties: false
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      properties:
+        mode:
+          type: string
+          description: |
+            Generation mode. The source document lists `std` and `pro`, but states that
+            Kling/O1 currently supports only `pro`.
+          enum:
+            - pro
+          default: pro
+        aspect_ratio:
+          type: string
+          description: Generated video aspect ratio.
+          enum:
+            - "16:9"
+            - "9:16"
+            - "1:1"
+        duration:
+          type: integer
+          description: |
+            Generated video duration in seconds. For text-to-video and first-frame
+            image-to-video, only 5 and 10 seconds are supported. For video editing
+            requests where a `video_list` item has `refer_type: base`, the output
+            follows the input video duration and this parameter is ignored.
+          enum:
+            - 3
+            - 4
+            - 5
+            - 6
+            - 7
+            - 8
+            - 9
+            - 10
+          default: 5
+        image_list:
+          type: array
+          description: Image references used to specify the first or final frame.
+          items:
+            $ref: "#/components/schemas/KlingO1ImageReference"
+        video_list:
+          type: array
+          description: Video references used for feature reference or video editing.
+          items:
+            $ref: "#/components/schemas/KlingO1VideoReference"
+
+    KlingO1ImageReference:
+      type: object
+      additionalProperties: false
+      required:
+        - image_url
+        - type
+      properties:
+        image_url:
+          type: string
+          minLength: 1
+          description: Image URL or Base64-encoded image data.
+        type:
+          type: string
+          description: Image role in the generated video.
+          enum:
+            - first_frame
+            - end_frame
+
+    KlingO1VideoReference:
+      type: object
+      additionalProperties: false
+      required:
+        - video_url
+        - refer_type
+        - keep_original_sound
+      properties:
+        video_url:
+          type: string
+          format: uri
+          description: Video URL.
+        refer_type:
+          type: string
+          description: Video reference type.
+          enum:
+            - feature
+            - base
+        keep_original_sound:
+          type: string
+          description: Whether to keep the original audio from the referenced video.
+          enum:
+            - "yes"
+            - "no"
+
+    KlingO1TaskSubmitResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/KlingO1TaskSubmitOutput"
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    KlingO1TaskSubmitOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+      properties:
+        task_id:
+          type: string
+          description: 异步任务唯一标识。
+
+    KlingO1TaskStatusResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/KlingO1TaskStatusOutput"
+        usage:
+          $ref: "#/components/schemas/KlingO1Usage"
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    KlingO1TaskStatusOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+        - task_status
+      properties:
+        task_id:
+          type: string
+          description: 异步任务唯一标识。
+        task_status:
+          $ref: "#/components/schemas/KlingO1TaskStatus"
+        urls:
+          type: array
+          description: 视频结果 URL 列表。
+          items:
+            type: string
+            format: uri
+        submit_time:
+          type: integer
+          format: int64
+          description: 任务提交时间的 Unix 秒级时间戳。
+        finish_time:
+          type: integer
+          format: int64
+          description: 任务完成时间的 Unix 秒级时间戳。
+        error_message:
+          type: string
+          description: 任务失败时返回的错误信息。
+
+    KlingO1TaskStatus:
+      type: string
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      enum:
+        - Pending
+        - Running
+        - Success
+        - Failure
+
+    KlingO1Usage:
+      type: object
+      additionalProperties: false
+      properties:
+        duration:
+          type: integer
+          description: 视频时长，单位为秒。
+
+    KlingO1ErrorResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/KlingO1ErrorObject"
+        request_id:
+          type: string
+          description: 唯一请求标识，如可用。
+
+    KlingO1ErrorObject:
+      type: object
+      additionalProperties: true
+      required:
+        - message
+        - type
+      properties:
+        message:
+          type: string
+          description: 错误信息。
+        type:
+          type: string
+          description: 错误类型。
+          enum:
+            - invalid_request_error
+            - timeout
+            - rate_limit_error
+            - internal_error
+        code:
+          type:
+            - string
+            - "null"
+          description: 机器可读的错误码。
+          enum:
+            - param_error
+            - invalid_messages
+            - sensitive_check_error
+            - model_error
+            - tokens_too_long
+            - auth_error
+            - timeout
+            - rate_limit
+            - internal_error
+            - model_server_error
+            - gateway_timeout_error
+            - null
+        param:
+          type:
+            - string
+            - "null"
+          description: 与错误相关的请求参数。
+
+  examples:
+    KlingO1InvalidParameterError:
+      summary: 参数错误
+      value:
+        error:
+          message: Invalid param
+          type: invalid_request_error
+          code: param_error
+          param: parameters.duration
+        request_id: request_id
+    KlingO1AuthError:
+      summary: Bearer 认证错误
+      value:
+        error:
+          message: Validate Certification failed
+          type: invalid_request_error
+          code: auth_error
+          param: null
+        request_id: request_id

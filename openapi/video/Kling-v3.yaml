@@ -1,0 +1,572 @@
+openapi: 3.1.0
+x-language: zh-CN
+info:
+  title: Kling-v3接口文档
+  version: "1.0.0"
+  description: |
+    这是 ModelVerse 上 `Kling-v3` 的视频接口文档，说明如何提交生成任务、查询任务状态、读取视频结果以及处理错误。
+    接口路径包括 `POST /v1/tasks/submit`、`GET /v1/tasks/status`。
+servers:
+  - url: https://api.modelverse.cn
+    description: 该模型文档中使用的 ModelVerse API 端点。
+
+tags:
+  - name: Kling/v3
+    description: Kling/v3 的异步视频任务接口。
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/tasks/submit:
+    post:
+      tags:
+        - Kling/v3
+      operationId: submitKlingV3Task
+      summary: 提交 Kling/v3 视频任务
+      description: |
+        提交异步任务。请求体中的模型和参数按本模型文档填写，响应会返回任务 ID。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KlingV3TaskSubmitRequest"
+            examples:
+              textToVideo:
+                summary: 文生视频 请求
+                value:
+                  model: kling-v3
+                  input:
+                    prompt: A beautiful sunset over the ocean with waves gently crashing
+                  parameters:
+                    kling_v3_type: t2v
+                    mode: pro
+                    aspect_ratio: "16:9"
+                    duration: 5
+                    sound: "on"
+              imageToVideo:
+                summary: 图生视频请求带a 首帧图像
+                value:
+                  model: kling-v3
+                  input:
+                    prompt: The image comes to life with gentle movement
+                  parameters:
+                    kling_v3_type: i2v
+                    mode: pro
+                    duration: 5
+                    image: https://example.com/first_frame.jpg
+              firstAndTailFrames:
+                summary: 图生视频请求带first and tail frames
+                value:
+                  model: kling-v3
+                  input:
+                    prompt: A girl walking through a garden
+                  parameters:
+                    kling_v3_type: i2v
+                    mode: pro
+                    duration: 5
+                    image: https://example.com/first_frame.jpg
+                    image_tail: https://example.com/last_frame.jpg
+              multiShotTextToVideo:
+                summary: Multi-shot 文生视频 请求
+                value:
+                  model: kling-v3
+                  parameters:
+                    kling_v3_type: t2v
+                    mode: pro
+                    aspect_ratio: "16:9"
+                    duration: 5
+                    multi_shot: true
+                    shot_type: customize
+                    multi_prompt:
+                      - index: 1
+                        prompt: A person walking through a misty forest at dawn
+                        duration: "2"
+                      - index: 2
+                        prompt: A car speeding down a rainy street, headlights glowing
+                        duration: "3"
+                    sound: "on"
+              motionControl:
+                summary: Motion-control请求带参考图 and video
+                value:
+                  model: kling-v3
+                  input:
+                    img_url: https://example.com/character.jpg
+                    video_url: https://example.com/motion_reference.mp4
+                    prompt: A person dancing gracefully
+                  parameters:
+                    kling_v3_type: motion_control
+                    duration: 5
+                    aspect_ratio: "16:9"
+                    character_orientation: image
+                    mode: std
+      responses:
+        "200":
+          description: 任务提交成功。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KlingV3TaskSubmitResponse"
+              examples:
+                submitted:
+                  summary: 已提交任务
+                  value:
+                    output:
+                      task_id: task_id
+                    request_id: request_id
+        "400":
+          description: 请求参数无效或任务创建失败。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KlingV3ErrorResponse"
+              examples:
+                taskCreationError:
+                  $ref: "#/components/examples/KlingV3TaskCreationError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KlingV3ErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/KlingV3TaskCreationError"
+
+  /v1/tasks/status:
+    get:
+      tags:
+        - Kling/v3
+      operationId: getKlingV3TaskStatus
+      summary: 查询 Kling/v3 任务状态
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      parameters:
+        - name: task_id
+          in: query
+          required: true
+          description: Asynchronous task identifier returned by `/v1/tasks/submit`.
+          schema:
+            type: string
+          examples:
+            documented:
+              summary: 源文档占位值
+              value: task_id
+      responses:
+        "200":
+          description: 任务状态响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KlingV3TaskStatusResponse"
+              examples:
+                success:
+                  summary: 成功任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Success
+                      urls:
+                        - https://xxxxx/xxxx.mp4
+                      submit_time: 1756959000
+                      finish_time: 1756959050
+                    usage:
+                      duration: 5
+                    request_id: ""
+                failure:
+                  summary: 失败任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Failure
+                      submit_time: 1756959000
+                      finish_time: 1756959019
+                      error_message: error_message
+                    usage:
+                      duration: 5
+                    request_id: ""
+        "400":
+          description: 任务标识无效或任务状态查询失败。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KlingV3ErrorResponse"
+              examples:
+                taskResponseError:
+                  $ref: "#/components/examples/KlingV3TaskResponseError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KlingV3ErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/KlingV3TaskResponseError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+  schemas:
+    KlingV3TaskSubmitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+      properties:
+        model:
+          type: string
+          const: kling-v3
+          description: Model name. This schema is pinned to `kling-v3`.
+        input:
+          $ref: "#/components/schemas/KlingV3Input"
+        parameters:
+          $ref: "#/components/schemas/KlingV3Parameters"
+
+    KlingV3Input:
+      type: object
+      additionalProperties: false
+      properties:
+        prompt:
+          type: string
+          maxLength: 2500
+          description: |
+            Prompt used to guide video generation. Required for `t2v` and `i2v`
+            when `parameters.multi_shot` is `false`; optional for
+            `motion_control`.
+          examples:
+            - A beautiful sunset over the ocean with waves gently crashing
+        negative_prompt:
+          type: string
+          maxLength: 2500
+          description: 用于限制不期望内容的负向提示词。
+        img_url:
+          type: string
+          minLength: 1
+          description: |
+            Reference image URL or raw Base64 image. In `motion_control` mode,
+            this field is required together with `input.video_url`. When used
+            without `input.video_url`, the source document lists it as a
+            first-frame signal for implicit `i2v` routing.
+          examples:
+            - https://example.com/character.jpg
+        video_url:
+          type: string
+          format: uri
+          description: |
+            Reference video URL for `motion_control` mode. MP4 and MOV are
+            supported. The referenced file must be no larger than 100 MB, with
+            width and height between 340 px and 3850 px. The video must be at
+            least 3 seconds long; landscape videos can be up to 30 seconds and
+            portrait videos can be up to 10 seconds.
+          examples:
+            - https://example.com/motion_reference.mp4
+        first_frame_url:
+          type: string
+          format: uri
+          description: |
+            First-frame image URL. The source document lists this field as a
+            first-frame signal for implicit `i2v` routing.
+        images:
+          type: array
+          description: |
+            First-frame image inputs. The source document lists this field as a
+            first-frame signal for implicit `i2v` routing.
+          items:
+            type: string
+            minLength: 1
+
+    KlingV3Parameters:
+      type: object
+      additionalProperties: false
+      properties:
+        kling_v3_type:
+          type: string
+          description: |
+            Explicit generation mode. If omitted, the service infers
+            `motion_control` when `input.video_url` is present, `i2v` when any
+            first-frame image field is present, and `t2v` otherwise.
+          enum:
+            - t2v
+            - i2v
+            - motion_control
+        mode:
+          type: string
+          description: Generation quality mode. `std` is 720P and `pro` is 1080P.
+          enum:
+            - std
+            - pro
+          default: std
+        aspect_ratio:
+          type: string
+          description: |
+            Generated video aspect ratio. Ignored in `i2v` mode, where the
+            input image aspect ratio is used.
+          enum:
+            - "16:9"
+            - "9:16"
+            - "1:1"
+          default: "16:9"
+        duration:
+          type: integer
+          minimum: 3
+          maximum: 15
+          default: 5
+          description: |
+            Generated video duration in seconds. `t2v` and `i2v` support values
+            from 3 to 15. `motion_control` supports 5 or 10.
+        watermark_enabled:
+          type: boolean
+          description: Whether to generate the result with a watermark.
+        external_task_id:
+          type: string
+          description: |
+            Client-provided task ID. It does not overwrite the service-generated
+            task ID, but can be used to query the task. It must be unique per
+            user.
+        image:
+          type: string
+          minLength: 1
+          description: |
+            First-frame reference image for `i2v` mode. Supports a public image
+            URL or raw Base64-encoded image string. When using Base64, do not
+            include a `data:image/...;base64,` prefix. Supported formats are
+            JPG, JPEG, and PNG. The file must be no larger than 10 MB, width and
+            height must each be at least 300 px, and the aspect ratio must be
+            between 1:2.5 and 2.5:1.
+          examples:
+            - https://example.com/first_frame.jpg
+        image_tail:
+          type: string
+          minLength: 1
+          description: |
+            Tail-frame reference image for first-and-last-frame control. Must be
+            used together with `parameters.image` and follows the same URL,
+            Base64, format, size, dimension, and aspect-ratio requirements.
+          examples:
+            - https://example.com/last_frame.jpg
+        sound:
+          type: string
+          description: Whether to generate sound for `t2v` or `i2v` output.
+          enum:
+            - "on"
+            - "off"
+          default: "off"
+        multi_shot:
+          type: boolean
+          default: false
+          description: |
+            Whether to enable multi-shot mode. When `true`, `input.prompt` is
+            ignored. When `false`, `parameters.shot_type` and
+            `parameters.multi_prompt` are ignored.
+        shot_type:
+          type: string
+          description: Multi-shot type. Required when `multi_shot` is `true`.
+          enum:
+            - customize
+        multi_prompt:
+          type: array
+          minItems: 1
+          maxItems: 6
+          description: |
+            Custom multi-shot prompt list. Required when `multi_shot` is `true`
+            and `shot_type` is `customize`. Each shot duration must be at least
+            1 second and no greater than the total video duration; the sum of
+            all shot durations must equal the total duration.
+          items:
+            $ref: "#/components/schemas/KlingV3MultiPromptItem"
+        character_orientation:
+          type: string
+          description: |
+            Character facing direction for `motion_control` mode. Required in
+            `motion_control`.
+          enum:
+            - image
+            - video
+        keep_original_sound:
+          type: string
+          description: Whether to keep the original audio from the reference video.
+          enum:
+            - "yes"
+            - "no"
+          default: "yes"
+      dependentRequired:
+        image_tail:
+          - image
+
+    KlingV3MultiPromptItem:
+      type: object
+      additionalProperties: false
+      required:
+        - index
+        - prompt
+        - duration
+      properties:
+        index:
+          type: integer
+          minimum: 1
+          description: Shot index, starting from 1.
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: Prompt for this shot.
+        duration:
+          type: string
+          minLength: 1
+          description: Shot duration in seconds, represented as a string.
+
+    KlingV3TaskSubmitResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/KlingV3TaskSubmitOutput"
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    KlingV3TaskSubmitOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+      properties:
+        task_id:
+          type: string
+          description: 异步任务唯一标识。
+
+    KlingV3TaskStatusResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/KlingV3TaskStatusOutput"
+        usage:
+          $ref: "#/components/schemas/KlingV3Usage"
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    KlingV3TaskStatusOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+        - task_status
+      properties:
+        task_id:
+          type: string
+          description: 异步任务唯一标识。
+        task_status:
+          $ref: "#/components/schemas/KlingV3TaskStatus"
+        urls:
+          type: array
+          description: 视频结果 URL 列表。
+          items:
+            type: string
+            format: uri
+        submit_time:
+          type: integer
+          format: int64
+          description: 任务提交时间的 Unix 秒级时间戳。
+        finish_time:
+          type: integer
+          format: int64
+          description: 任务完成时间的 Unix 秒级时间戳。
+        error_message:
+          type: string
+          description: 任务失败时返回的错误信息。
+
+    KlingV3TaskStatus:
+      type: string
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      enum:
+        - Pending
+        - Running
+        - Success
+        - Failure
+
+    KlingV3Usage:
+      type: object
+      additionalProperties: false
+      properties:
+        duration:
+          type: integer
+          description: Generated video duration in seconds.
+
+    KlingV3ErrorResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/KlingV3ErrorObject"
+        request_id:
+          type: string
+          description: 唯一请求标识，如可用。
+
+    KlingV3ErrorObject:
+      type: object
+      additionalProperties: true
+      required:
+        - message
+        - type
+      properties:
+        message:
+          type: string
+          description: 错误信息。
+        type:
+          type: string
+          description: 错误类型。
+          examples:
+            - invalid_request_error
+        code:
+          type:
+            - string
+            - "null"
+          description: |
+            Error code. The source model document lists `006001094` for task
+            resource shortage, `006001095` for task response error, and
+            `006001099` for task creation error.
+          examples:
+            - "006001099"
+        param:
+          type:
+            - string
+            - "null"
+          description: 相关请求参数，如有。
+
+  examples:
+    KlingV3TaskCreationError:
+      summary: Task creation error
+      value:
+        error:
+          message: Task creation error
+          type: invalid_request_error
+          code: "006001099"
+          param: null
+        request_id: request_id
+    KlingV3TaskResponseError:
+      summary: Task响应error
+      value:
+        error:
+          message: Task response error
+          type: invalid_request_error
+          code: "006001095"
+          param: null
+        request_id: request_id

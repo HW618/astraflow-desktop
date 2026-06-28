@@ -1,0 +1,454 @@
+openapi: 3.1.0
+x-language: zh-CN
+info:
+  title: Pixverse-v6接口文档
+  version: "1.0.0"
+  description: |
+    这是 ModelVerse 上 `Pixverse-v6` 的视频接口文档，说明如何提交生成任务、查询任务状态、读取视频结果以及处理错误。
+    接口路径包括 `POST /v1/tasks/submit`、`GET /v1/tasks/status`。
+servers:
+  - url: https://api.modelverse.cn
+    description: 该模型文档中使用的 ModelVerse API 端点。
+
+tags:
+  - name: Pixverse v6
+    description: Pixverse v6 asynchronous video generation operations.
+
+paths:
+  /v1/tasks/submit:
+    post:
+      tags:
+        - Pixverse v6
+      operationId: submitPixverseV6Task
+      summary: 提交 Pixverse v6视频任务
+      description: |
+        提交异步任务。请求体中的模型和参数按本模型文档填写，响应会返回任务 ID。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PixverseV6SubmitRequest"
+            examples:
+              textToVideo:
+                summary: 源文档 文生视频 请求
+                value:
+                  model: pixverse-v6
+                  input:
+                    prompt: Convert to quick pencil sketch
+                  parameters:
+                    resolution: 720p
+                    aspect_ratio: "16:9"
+                    duration: 5
+              firstLastFrameToVideo:
+                summary: 源文档 首尾帧-to-video 请求
+                value:
+                  model: pixverse-v6
+                  input:
+                    first_frame_url: https://umodelverse-inference.cn-wlcb.ufileos.com/ucloud-maxcot.jpg
+                    last_frame_url: https://umodelverse-inference.cn-wlcb.ufileos.com/ucloud-maxcot.jpg
+                    prompt: Convert to quick pencil sketch
+                  parameters:
+                    resolution: 720p
+                    duration: 5
+              referenceImageToVideo:
+                summary: 源文档参考图生视频请求
+                value:
+                  model: pixverse-v6
+                  input:
+                    img_url: https://umodelverse-inference.cn-wlcb.ufileos.com/ucloud-maxcot.jpg
+                    prompt: Convert to quick pencil sketch
+                  parameters:
+                    resolution: 720p
+                    duration: 5
+              videoExtend:
+                summary: 源文档 video-extension 请求
+                value:
+                  model: pixverse-v6
+                  input:
+                    video_url: https://umodelverse-inference.cn-wlcb.ufileos.com/maxcot-dance.mp4
+                    prompt: Convert to quick pencil sketch
+                  parameters:
+                    resolution: 720p
+                    duration: 5
+      responses:
+        "200":
+          description: 任务提交成功。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PixverseV6SubmitResponse"
+              examples:
+                submitted:
+                  summary: 已提交任务
+                  value:
+                    output:
+                      task_id: task_id
+                    request_id: request_id
+        "400":
+          description: 请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PixverseV6ErrorResponse"
+              examples:
+                paramError:
+                  $ref: "#/components/examples/PixverseV6ParamError"
+        "401":
+          description: Bearer token 无效或缺失。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PixverseV6ErrorResponse"
+              examples:
+                authError:
+                  $ref: "#/components/examples/PixverseV6AuthError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PixverseV6ErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/PixverseV6ParamError"
+
+  /v1/tasks/status:
+    get:
+      tags:
+        - Pixverse v6
+      operationId: getPixverseV6TaskStatus
+      summary: 查询 Pixverse v6 任务状态
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: task_id
+          in: query
+          required: true
+          description: Asynchronous task identifier returned by `/v1/tasks/submit`.
+          schema:
+            type: string
+          examples:
+            documented:
+              summary: 源文档占位值
+              value: task_id
+      responses:
+        "200":
+          description: 任务状态响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PixverseV6StatusResponse"
+              examples:
+                success:
+                  summary: 成功任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Success
+                      urls:
+                        - https://xxxxx/xxxx.mp4
+                      submit_time: 1756959000
+                      finish_time: 1756959050
+                    usage:
+                      duration: 5
+                    request_id: ""
+                failure:
+                  summary: 失败任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Failure
+                      submit_time: 1756959000
+                      finish_time: 1756959019
+                      error_message: error_message
+                    usage:
+                      duration: 5
+                    request_id: ""
+        "400":
+          description: 任务标识或请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PixverseV6ErrorResponse"
+              examples:
+                paramError:
+                  $ref: "#/components/examples/PixverseV6ParamError"
+        "401":
+          description: Bearer token 无效或缺失。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PixverseV6ErrorResponse"
+              examples:
+                authError:
+                  $ref: "#/components/examples/PixverseV6AuthError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PixverseV6ErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/PixverseV6ParamError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+  schemas:
+    PixverseV6SubmitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - input
+      properties:
+        model:
+          type: string
+          const: pixverse-v6
+          description: Model name. This schema is pinned to `pixverse-v6`.
+        input:
+          $ref: "#/components/schemas/PixverseV6Input"
+        parameters:
+          $ref: "#/components/schemas/PixverseV6Parameters"
+
+    PixverseV6Input:
+      type: object
+      additionalProperties: false
+      required:
+        - prompt
+      dependentRequired:
+        first_frame_url:
+          - last_frame_url
+        last_frame_url:
+          - first_frame_url
+      properties:
+        first_frame_url:
+          type: string
+          description: |
+            First-frame image as a URL or Base64 value. Required together with
+            `last_frame_url` for the documented first/last-frame-to-video mode.
+          examples:
+            - https://umodelverse-inference.cn-wlcb.ufileos.com/ucloud-maxcot.jpg
+        last_frame_url:
+          type: string
+          description: |
+            Last-frame image as a URL or Base64 value. Required together with
+            `first_frame_url` for the documented first/last-frame-to-video mode.
+          examples:
+            - https://umodelverse-inference.cn-wlcb.ufileos.com/ucloud-maxcot.jpg
+        img_url:
+          type: string
+          description: |
+            Reference image as a URL or Base64 value. Required for the
+            documented reference-image-to-video mode.
+          examples:
+            - https://umodelverse-inference.cn-wlcb.ufileos.com/ucloud-maxcot.jpg
+        video_url:
+          type: string
+          format: uri
+          description: Reference video URL. Required for the documented video-extension mode.
+          examples:
+            - https://umodelverse-inference.cn-wlcb.ufileos.com/maxcot-dance.mp4
+        prompt:
+          type: string
+          minLength: 1
+          description: 用于指导视频生成的提示词。
+          examples:
+            - Convert to quick pencil sketch
+
+    PixverseV6Parameters:
+      type: object
+      additionalProperties: false
+      properties:
+        resolution:
+          type: string
+          description: Generated video resolution tier.
+          enum:
+            - 1080p
+            - 720p
+            - 540p
+            - 360p
+        aspect_ratio:
+          type: string
+          description: |
+            Generated video aspect ratio. The source document says this is only
+            effective for text-only generation without a reference image or video.
+          enum:
+            - "16:9"
+            - "4:3"
+            - "1:1"
+            - "3:4"
+            - "9:16"
+            - "2:3"
+            - "3:2"
+            - "21:9"
+        duration:
+          type: integer
+          minimum: 1
+          maximum: 15
+          description: Generated video duration in seconds.
+        generate_audio:
+          type: integer
+          description: Documented integer flag controlling whether the generated video includes audio.
+        seed:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+          description: 随机种子。
+
+    PixverseV6SubmitResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/PixverseV6SubmitOutput"
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    PixverseV6SubmitOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+      properties:
+        task_id:
+          type: string
+          description: 异步任务唯一标识。
+
+    PixverseV6StatusResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/PixverseV6StatusOutput"
+        usage:
+          $ref: "#/components/schemas/PixverseV6Usage"
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    PixverseV6StatusOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+        - task_status
+      properties:
+        task_id:
+          type: string
+          description: 异步任务唯一标识。
+        task_status:
+          $ref: "#/components/schemas/PixverseV6TaskStatus"
+        urls:
+          type: array
+          description: 视频结果 URL 列表。
+          items:
+            type: string
+            format: uri
+        submit_time:
+          type: integer
+          format: int64
+          description: 任务提交时间戳。
+        finish_time:
+          type: integer
+          format: int64
+          description: 任务完成时间戳。
+        error_message:
+          type: string
+          description: 任务失败时返回的错误信息。
+
+    PixverseV6TaskStatus:
+      type: string
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      enum:
+        - Pending
+        - Running
+        - Success
+        - Failure
+
+    PixverseV6Usage:
+      type: object
+      additionalProperties: false
+      properties:
+        duration:
+          type: integer
+          description: 任务执行时长，单位为秒。
+
+    PixverseV6ErrorResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/PixverseV6ErrorObject"
+        request_id:
+          type: string
+          description: 唯一请求标识，如可用。
+
+    PixverseV6ErrorObject:
+      type: object
+      additionalProperties: true
+      required:
+        - message
+        - type
+      properties:
+        message:
+          type: string
+          description: 错误信息。
+        type:
+          type: string
+          description: 错误类型。
+          examples:
+            - invalid_request_error
+        code:
+          type:
+            - string
+            - "null"
+          description: 错误码。
+          examples:
+            - param_error
+        param:
+          type:
+            - string
+            - "null"
+          description: 与错误相关的请求参数。
+
+  examples:
+    PixverseV6ParamError:
+      summary: 参数错误
+      value:
+        error:
+          message: Invalid param
+          type: invalid_request_error
+          code: param_error
+          param: parameters.duration
+        request_id: request_id
+    PixverseV6AuthError:
+      summary: Invalid bearer token error
+      value:
+        error:
+          message: Validate Certification failed
+          type: invalid_request_error
+          code: auth_error
+          param: null
+        request_id: request_id

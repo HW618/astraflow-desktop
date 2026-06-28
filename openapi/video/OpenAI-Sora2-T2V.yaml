@@ -1,0 +1,323 @@
+openapi: 3.1.0
+x-language: zh-CN
+info:
+  title: OpenAI-Sora2-T2V接口文档
+  version: "1.0.0"
+  description: |
+    这是 ModelVerse 上 `OpenAI-Sora2-T2V` 的视频接口文档，说明如何提交生成任务、查询任务状态、读取视频结果以及处理错误。
+    接口路径包括 `POST /v1/tasks/submit`、`GET /v1/tasks/status`。
+servers:
+  - url: https://api.modelverse.cn
+    description: ModelVerse API endpoint.
+
+tags:
+  - name: OpenAI Sora2 T2V
+    description: OpenAI/Sora2-T2V async text-to-video task APIs.
+
+paths:
+  /v1/tasks/submit:
+    post:
+      tags:
+        - OpenAI Sora2 T2V
+      operationId: submitOpenAISora2T2VTask
+      summary: 提交 OpenAI/Sora2-T2V 文生视频任务
+      description: |
+        提交异步任务。请求体中的模型和参数按本模型文档填写，响应会返回任务 ID。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OpenAISora2T2VTaskSubmitRequest"
+            examples:
+              default:
+                summary: 文生视频任务
+                value:
+                  model: openai/sora-2/text-to-video
+                  input:
+                    prompt: A beautiful girl is dancing
+                  parameters:
+                    size: 720x1280
+                    duration: 4
+      responses:
+        "200":
+          description: 任务提交成功。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAISora2T2VTaskSubmitResponse"
+              examples:
+                submitted:
+                  summary: 已提交任务
+                  value:
+                    output:
+                      task_id: task_id
+                    request_id: request_id
+        "400":
+          description: 请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                paramError:
+                  $ref: "#/components/examples/ParamError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/ParamError"
+
+  /v1/tasks/status:
+    get:
+      tags:
+        - OpenAI Sora2 T2V
+      operationId: getOpenAISora2T2VTaskStatus
+      summary: 查询 OpenAI/Sora2-T2V 任务状态
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: task_id
+          in: query
+          required: true
+          description: 异步任务的唯一标识。
+          schema:
+            type: string
+          example: task_id
+      responses:
+        "200":
+          description: 任务状态响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAISora2T2VTaskStatusResponse"
+              examples:
+                success:
+                  summary: 成功任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Success
+                      urls:
+                        - https://xxxxx/xxxx.mp4
+                      submit_time: 1756959000
+                      finish_time: 1756959050
+                    usage:
+                      duration: 4
+                    request_id: ""
+                failure:
+                  summary: 失败任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Failure
+                      submit_time: 1756959000
+                      finish_time: 1756959019
+                      error_message: error_message
+                    usage:
+                      duration: 5
+                    request_id: ""
+        "400":
+          description: Invalid task_id or request parameters.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                paramError:
+                  $ref: "#/components/examples/ParamError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/ParamError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+
+  schemas:
+    OpenAISora2T2VTaskSubmitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - input
+      properties:
+        model:
+          type: string
+          const: openai/sora-2/text-to-video
+          description: 模型名称，此处为 openai/sora-2/text-to-video。
+        input:
+          $ref: "#/components/schemas/OpenAISora2T2VInput"
+        parameters:
+          $ref: "#/components/schemas/OpenAISora2T2VParameters"
+
+    OpenAISora2T2VInput:
+      type: object
+      additionalProperties: false
+      required:
+        - prompt
+      properties:
+        prompt:
+          type: string
+          description: 提示词，用于指导视频生成。
+
+    OpenAISora2T2VParameters:
+      type: object
+      additionalProperties: false
+      properties:
+        size:
+          type: string
+          enum:
+            - 720x1280
+            - 1280x720
+          default: 720x1280
+          description: 生成视频的尺寸。
+        duration:
+          type: integer
+          enum:
+            - 4
+            - 8
+            - 12
+          default: 4
+          description: 视频生成时长，单位为秒。
+
+    OpenAISora2T2VTaskSubmitResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/OpenAISora2T2VTaskSubmitOutput"
+        request_id:
+          type: string
+          description: 请求的唯一标识。
+
+    OpenAISora2T2VTaskSubmitOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+      properties:
+        task_id:
+          type: string
+          description: 异步任务的唯一标识。
+
+    OpenAISora2T2VTaskStatusResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/OpenAISora2T2VTaskStatusOutput"
+        usage:
+          $ref: "#/components/schemas/OpenAISora2T2VTaskUsage"
+        request_id:
+          type: string
+          description: 请求的唯一标识。
+
+    OpenAISora2T2VTaskStatusOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+        - task_status
+      properties:
+        task_id:
+          type: string
+          description: 异步任务的唯一标识。
+        task_status:
+          $ref: "#/components/schemas/OpenAISora2T2VTaskStatus"
+        urls:
+          type: array
+          description: 视频结果的 URL 列表。
+          items:
+            type: string
+            format: uri
+        submit_time:
+          type: integer
+          format: int64
+          description: 任务提交时间戳。
+        finish_time:
+          type: integer
+          format: int64
+          description: 任务完成时间戳。
+        error_message:
+          type: string
+          description: 失败时返回的错误信息。
+
+    OpenAISora2T2VTaskStatus:
+      type: string
+      enum:
+        - Pending
+        - Running
+        - Success
+        - Failure
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+    OpenAISora2T2VTaskUsage:
+      type: object
+      additionalProperties: false
+      properties:
+        duration:
+          type: integer
+          description: 任务执行时长，单位为秒。
+
+    ErrorResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorObject"
+
+    ErrorObject:
+      type: object
+      additionalProperties: true
+      required:
+        - message
+        - type
+      properties:
+        message:
+          type: string
+        type:
+          type: string
+        code:
+          type:
+            - string
+            - "null"
+        param:
+          type:
+            - string
+            - "null"
+
+  examples:
+    ParamError:
+      summary: 参数错误
+      value:
+        error:
+          message: Invalid param
+          type: invalid_request_error
+          code: param_error
+          param: null

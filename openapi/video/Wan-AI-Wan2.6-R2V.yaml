@@ -1,0 +1,363 @@
+openapi: 3.1.0
+x-language: zh-CN
+info:
+  title: Wan-AI-Wan2.6-R2V接口文档
+  version: "1.0.0"
+  description: |
+    这是 ModelVerse 上 `Wan-AI-Wan2.6-R2V` 的视频接口文档，说明如何提交生成任务、查询任务状态、读取视频结果以及处理错误。
+    接口路径包括 `POST /v1/tasks/submit`、`GET /v1/tasks/status`。
+servers:
+  - url: https://api.modelverse.cn
+    description: 该模型文档中使用的 ModelVerse API 端点。
+
+tags:
+  - name: Wan-AI/Wan2.6-R2V
+    description: Reference-to-video asynchronous task operations.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/tasks/submit:
+    post:
+      tags:
+        - Wan-AI/Wan2.6-R2V
+      operationId: submitWanAIWan26R2VTask
+      summary: 提交 Wan-AI/Wan2.6-R2V 参考图生视频任务
+      description: |
+        提交异步任务。请求体中的模型和参数按本模型文档填写，响应会返回任务 ID。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WanAIWan26R2VSubmitRequest"
+            examples:
+              documented:
+                summary: 提交 参考图生视频任务
+                value:
+                  model: wan2.6-r2v
+                  input:
+                    prompt: "Character2 坐在靠窗的椅子上，手持 character3，在 character4 旁演奏一首舒缓的美国乡村民谣。Character1 对Character2开口说道：“听起来不错”"
+                    reference_urls:
+                      - https://example.com/wan-r2v-role1.mp4
+                      - https://example.com/wan-r2v-role2.mp4
+                      - https://example.com/wan-r2v-object4.png
+                      - https://example.com/wan-r2v-backgroud5.png
+                  parameters:
+                    size: 1920x1080
+                    duration: 5
+                    shot_type: single
+      responses:
+        "200":
+          description: 任务提交成功。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WanAIWan26R2VSubmitResponse"
+              examples:
+                submitted:
+                  summary: 已提交任务
+                  value:
+                    output:
+                      task_id: task_id
+                    request_id: request_id
+        "400":
+          description: 请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                paramError:
+                  $ref: "#/components/examples/ParamError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/ParamError"
+
+  /v1/tasks/status:
+    get:
+      tags:
+        - Wan-AI/Wan2.6-R2V
+      operationId: getWanAIWan26R2VTaskStatus
+      summary: 查询 Wan-AI/Wan2.6-R2V 任务状态
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      parameters:
+        - name: task_id
+          in: query
+          required: true
+          description: Asynchronous task identifier returned by `/v1/tasks/submit`.
+          schema:
+            type: string
+          example: task_id
+      responses:
+        "200":
+          description: 任务状态响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WanAIWan26R2VStatusResponse"
+              examples:
+                success:
+                  summary: 成功任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Success
+                      urls:
+                        - https://xxxxx/xxxx.mp4
+                      submit_time: 1756959000
+                      finish_time: 1756959050
+                    usage:
+                      duration: 5
+                    request_id: ""
+                failure:
+                  summary: 失败任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Failure
+                      submit_time: 1756959000
+                      finish_time: 1756959019
+                      error_message: error_message
+                    usage:
+                      duration: 5
+                    request_id: ""
+        "400":
+          description: 请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                paramError:
+                  $ref: "#/components/examples/ParamError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/ParamError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+  schemas:
+    WanAIWan26R2VSubmitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - input
+        - parameters
+      properties:
+        model:
+          type: string
+          const: wan2.6-r2v
+          description: Model name. This schema is pinned to `wan2.6-r2v`.
+        input:
+          $ref: "#/components/schemas/WanAIWan26R2VInput"
+        parameters:
+          $ref: "#/components/schemas/WanAIWan26R2VParameters"
+
+    WanAIWan26R2VInput:
+      type: object
+      additionalProperties: false
+      required:
+        - prompt
+        - reference_urls
+      properties:
+        prompt:
+          type: string
+          description: 用于指导视频生成的提示词。
+        reference_urls:
+          type: array
+          maxItems: 5
+          description: |
+            Reference file URL array used to extract character appearance and,
+            when available, voice characteristics. Each URL points to one image
+            or one video, and the array order defines character order
+            (`character1`, `character2`, and so on). Image count is documented
+            as 0 to 5, video count as 0 to 3, with a total image plus video
+            limit of 5. Reference videos must be MP4 or MOV, 1 to 30 seconds,
+            and no larger than 100 MB. Reference images must be JPEG, JPG, PNG
+            without alpha, BMP, or WEBP; width and height must each be between
+            240 and 8000 pixels; file size must not exceed 20 MB.
+          items:
+            type: string
+            format: uri
+
+    WanAIWan26R2VParameters:
+      type: object
+      additionalProperties: false
+      required:
+        - size
+      properties:
+        size:
+          type: string
+          description: Generated video size. The documented options cover 720P and 1080P landscape or portrait outputs.
+          enum:
+            - 1280x720
+            - 720x1280
+            - 1920x1080
+            - 1080x1920
+        duration:
+          type: integer
+          description: Generated video duration in seconds.
+          enum:
+            - 5
+            - 10
+          default: 5
+        shot_type:
+          type: string
+          description: |
+            Shot composition type. This parameter has priority over prompt
+            instructions: `single` generates a single-shot video, while `multi`
+            generates a multi-shot video.
+          enum:
+            - single
+            - multi
+          default: single
+        watermark:
+          type: boolean
+          description: Whether to add the fixed "AI generated" watermark in the lower-right corner.
+          default: false
+
+    WanAIWan26R2VSubmitResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          type: object
+          additionalProperties: false
+          required:
+            - task_id
+          properties:
+            task_id:
+              type: string
+              description: 异步任务唯一标识。
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    WanAIWan26R2VStatusResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          type: object
+          additionalProperties: false
+          required:
+            - task_id
+            - task_status
+          properties:
+            task_id:
+              type: string
+              description: 异步任务唯一标识。
+            task_status:
+              $ref: "#/components/schemas/WanAIWan26R2VTaskStatus"
+            urls:
+              type: array
+              description: 视频结果 URL 列表。
+              items:
+                type: string
+                format: uri
+            submit_time:
+              type: integer
+              format: int64
+              description: 任务提交时间的 Unix 秒级时间戳。
+            finish_time:
+              type: integer
+              format: int64
+              description: 任务完成时间的 Unix 秒级时间戳。
+            error_message:
+              type: string
+              description: 任务失败时返回的错误信息。
+        usage:
+          type: object
+          additionalProperties: false
+          properties:
+            duration:
+              type: integer
+              description: 任务执行时长，单位为秒。
+        request_id:
+          type: string
+          description: 唯一请求标识。
+        error:
+          $ref: "#/components/schemas/ErrorObject"
+
+    WanAIWan26R2VTaskStatus:
+      type: string
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      enum:
+        - Pending
+        - Running
+        - Success
+        - Failure
+
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorObject"
+
+    ErrorObject:
+      type: object
+      additionalProperties: true
+      required:
+        - message
+        - type
+      properties:
+        message:
+          type: string
+          description: 错误信息。
+        type:
+          type: string
+          description: 错误类型。
+          examples:
+            - invalid_request_error
+        code:
+          type: string
+          description: 错误码。
+          examples:
+            - param_error
+        param:
+          type:
+            - string
+            - "null"
+          description: 相关请求参数，如有。
+
+  examples:
+    ParamError:
+      summary: 参数错误
+      value:
+        error:
+          message: Invalid param
+          type: invalid_request_error
+          code: param_error
+          param: model

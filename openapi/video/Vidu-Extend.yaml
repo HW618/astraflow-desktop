@@ -1,0 +1,387 @@
+openapi: 3.1.0
+x-language: zh-CN
+info:
+  title: Vidu-Extend接口文档
+  version: "1.0.0"
+  description: |
+    这是 ModelVerse 上 `Vidu-Extend` 的视频接口文档，说明如何提交生成任务、查询任务状态、读取视频结果以及处理错误。
+    接口路径包括 `POST /v1/tasks/submit`、`GET /v1/tasks/status`。
+servers:
+  - url: https://api.modelverse.cn
+    description: 该模型文档中使用的 ModelVerse API 端点。
+
+tags:
+  - name: Vidu Extend
+    description: Video extension asynchronous task operations for Vidu Extend.
+
+paths:
+  /v1/tasks/submit:
+    post:
+      tags:
+        - Vidu Extend
+      operationId: submitViduExtendTask
+      summary: 提交 Vidu Extend视频任务
+      description: |
+        提交异步任务。请求体中的模型和参数按本模型文档填写，响应会返回任务 ID。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ViduExtendSubmitRequest"
+            examples:
+              documentedVideoUrl:
+                summary: 源文档 视频续写 请求
+                value:
+                  model: viduq2-turbo
+                  input:
+                    video_url: https://umodelverse-inference.cn-wlcb.ufileos.com/maxcot-dance.mp4
+                    last_frame_url: https://umodelverse-inference.cn-wlcb.ufileos.com/ucloud-maxcot.jpg
+                    prompt: Continue the video with smooth camera movement
+                  parameters:
+                    vidu_type: extend
+                    duration: 5
+                    resolution: 720p
+              base64LastFrame:
+                summary: Extension请求带a Base64 last-frame reference
+                value:
+                  model: viduq2-pro
+                  input:
+                    video_url: https://example.com/source-video.mp4
+                    last_frame_url: data:image/png;base64,{base64_encode}
+                    prompt: Extend the final action naturally with stable motion.
+                  parameters:
+                    vidu_type: extend
+                    duration: 7
+                    resolution: 1080p
+      responses:
+        "200":
+          description: 任务提交成功。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ViduExtendSubmitResponse"
+              examples:
+                submitted:
+                  summary: 已提交任务
+                  value:
+                    output:
+                      task_id: task_id
+                    request_id: request_id
+        "400":
+          description: 请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ViduExtendErrorResponse"
+              examples:
+                paramError:
+                  $ref: "#/components/examples/ViduExtendParamError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ViduExtendErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/ViduExtendParamError"
+
+  /v1/tasks/status:
+    get:
+      tags:
+        - Vidu Extend
+      operationId: getViduExtendTaskStatus
+      summary: 查询 Vidu Extend 任务状态
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: task_id
+          in: query
+          required: true
+          description: Asynchronous task identifier returned by `/v1/tasks/submit`.
+          schema:
+            type: string
+          examples:
+            placeholder:
+              summary: 源文档占位值
+              value: task_id
+      responses:
+        "200":
+          description: 任务状态响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ViduExtendStatusResponse"
+              examples:
+                success:
+                  summary: 成功任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Success
+                      urls:
+                        - https://xxxxx/xxxx-extended.mp4
+                      submit_time: 1756959000
+                      finish_time: 1756959050
+                    usage:
+                      duration: 5
+                    request_id: ""
+                failure:
+                  summary: 失败任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Failure
+                      submit_time: 1756959000
+                      finish_time: 1756959019
+                      error_message: error_message
+                    usage:
+                      duration: 5
+                    request_id: ""
+        "400":
+          description: 任务标识或请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ViduExtendErrorResponse"
+              examples:
+                paramError:
+                  $ref: "#/components/examples/ViduExtendParamError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ViduExtendErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/ViduExtendParamError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+  schemas:
+    ViduExtendSubmitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - input
+        - parameters
+      properties:
+        model:
+          type: string
+          description: |
+            Vidu Extend model name. This schema is pinned to the
+            `Vidu-Extend` source document and only allows its documented
+            video extension model values.
+          enum:
+            - viduq2-turbo
+            - viduq2-pro
+        input:
+          $ref: "#/components/schemas/ViduExtendInput"
+        parameters:
+          $ref: "#/components/schemas/ViduExtendParameters"
+
+    ViduExtendInput:
+      type: object
+      additionalProperties: false
+      required:
+        - video_url
+      properties:
+        video_url:
+          type: string
+          format: uri
+          description: |
+            Publicly accessible video URL to extend. The source video duration
+            must be at least 4 seconds and no more than 1 minute.
+          examples:
+            - https://umodelverse-inference.cn-wlcb.ufileos.com/maxcot-dance.mp4
+        last_frame_url:
+          type: string
+          description: |
+            Last-frame reference image as a URL or Base64-encoded image. The
+            image may be png, jpeg, jpg, or webp; its aspect ratio must be
+            within the documented 1:4 to 4:1 bounds; it must not exceed 50 MB;
+            and Base64-decoded bytes must be less than 10 MB. Base64 values
+            must include the content type prefix, for example
+            `data:image/png;base64,{base64_encode}`.
+          examples:
+            - https://umodelverse-inference.cn-wlcb.ufileos.com/ucloud-maxcot.jpg
+            - data:image/png;base64,{base64_encode}
+        prompt:
+          type: string
+          description: Text prompt used to control the extended video content.
+          examples:
+            - Continue the video with smooth camera movement
+
+    ViduExtendParameters:
+      type: object
+      additionalProperties: false
+      required:
+        - vidu_type
+      properties:
+        vidu_type:
+          type: string
+          const: extend
+          description: Vidu interface type. This schema is pinned to `extend`.
+        duration:
+          type: integer
+          minimum: 1
+          maximum: 7
+          default: 5
+          description: Extension duration in seconds.
+        resolution:
+          type: string
+          enum:
+            - 540p
+            - 720p
+            - 1080p
+          default: 720p
+          description: Extended video resolution.
+
+    ViduExtendSubmitResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/ViduExtendSubmitOutput"
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    ViduExtendSubmitOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+      properties:
+        task_id:
+          type: string
+          description: 异步任务唯一标识。
+
+    ViduExtendStatusResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/ViduExtendStatusOutput"
+        usage:
+          $ref: "#/components/schemas/ViduExtendUsage"
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    ViduExtendStatusOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+        - task_status
+      properties:
+        task_id:
+          type: string
+          description: 异步任务唯一标识。
+        task_status:
+          $ref: "#/components/schemas/ViduExtendTaskStatus"
+        urls:
+          type: array
+          description: 视频结果 URL 列表。
+          items:
+            type: string
+            format: uri
+        submit_time:
+          type: integer
+          format: int64
+          description: 任务提交时间戳。
+        finish_time:
+          type: integer
+          format: int64
+          description: 任务完成时间戳。
+        error_message:
+          type: string
+          description: 任务失败时返回的错误信息。
+
+    ViduExtendTaskStatus:
+      type: string
+      enum:
+        - Pending
+        - Running
+        - Success
+        - Failure
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+    ViduExtendUsage:
+      type: object
+      additionalProperties: false
+      properties:
+        duration:
+          type: integer
+          description: Extended video duration in seconds.
+
+    ViduExtendErrorResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/ViduExtendErrorObject"
+        request_id:
+          type: string
+          description: 唯一请求标识，如可用。
+
+    ViduExtendErrorObject:
+      type: object
+      additionalProperties: true
+      required:
+        - message
+        - type
+      properties:
+        message:
+          type: string
+          description: 错误信息。
+        type:
+          type: string
+          description: 错误类型。
+          examples:
+            - invalid_request_error
+        code:
+          type:
+            - string
+            - "null"
+          description: 错误码。
+          examples:
+            - param_error
+        param:
+          type:
+            - string
+            - "null"
+          description: 与错误相关的请求参数。
+
+  examples:
+    ViduExtendParamError:
+      summary: 参数错误
+      value:
+        error:
+          message: Invalid param
+          type: invalid_request_error
+          code: param_error
+          param: parameters.duration
+        request_id: request_id

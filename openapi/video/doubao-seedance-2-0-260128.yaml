@@ -1,0 +1,543 @@
+openapi: 3.1.0
+x-language: zh-CN
+info:
+  title: doubao-seedance-2-0-260128接口文档
+  version: "1.0.0"
+  description: |
+    这是 ModelVerse 上 `doubao-seedance-2-0-260128` 的视频接口文档，说明如何提交生成任务、查询任务状态、读取视频结果以及处理错误。
+    接口路径包括 `POST /v1/tasks/submit`、`GET /v1/tasks/status`。
+servers:
+  - url: https://api.modelverse.cn
+    description: 该模型文档中使用的 ModelVerse API 端点。
+
+tags:
+  - name: doubao-seedance-2-0-260128
+    description: doubao-seedance-2-0-260128 的异步视频任务接口。
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/tasks/submit:
+    post:
+      tags:
+        - doubao-seedance-2-0-260128
+      operationId: submitDoubaoSeedance20260128Task
+      summary: 提交 doubao-seedance-2-0-260128视频任务
+      description: |
+        提交异步任务。请求体中的模型和参数按本模型文档填写，响应会返回任务 ID。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DoubaoSeedance20260128TaskSubmitRequest"
+            examples:
+              textAndFirstFrame:
+                summary: Text prompt带a 首帧图像
+                value:
+                  model: doubao-seedance-2-0-260128
+                  input:
+                    content:
+                      - type: text
+                        text: 让他跑起来。
+                      - type: image_url
+                        image_url:
+                          url: https://umodelverse-inference.cn-wlcb.ufileos.com/ucloud-maxcot.jpg
+                        role: first_frame
+                  parameters:
+                    duration: 5
+                    resolution: 720p
+                    ratio: adaptive
+                    generate_audio: false
+              withReferenceVideoAndAudio:
+                summary: 带 text, image, reference video, and reference音频的请求
+                value:
+                  model: doubao-seedance-2-0-260128
+                  input:
+                    content:
+                      - type: text
+                        text: 让他跑起来。
+                      - type: image_url
+                        image_url:
+                          url: https://umodelverse-inference.cn-wlcb.ufileos.com/ucloud-maxcot.jpg
+                        role: first_frame
+                      - type: video_url
+                        video_url:
+                          url: https://ark-project.tos-cn-beijing.volces.com/doc_video/r2v_tea_video1.mp4
+                        role: reference_video
+                      - type: audio_url
+                        audio_url:
+                          url: https://ark-project.tos-cn-beijing.volces.com/doc_audio/r2v_tea_audio1.mp3
+                        role: reference_audio
+                  parameters:
+                    execution_expires_after: 3600
+                    generate_audio: true
+                    resolution: 720p
+                    ratio: adaptive
+                    duration: 15
+                    camera_fixed: false
+                    watermark: false
+                    callback_url: https://ark-project.tos-cn-beijing.volces.com
+      responses:
+        "200":
+          description: 任务提交成功。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DoubaoSeedance20260128TaskSubmitResponse"
+              examples:
+                submitted:
+                  summary: 已提交任务
+                  value:
+                    output:
+                      task_id: task_id
+                    request_id: request_id
+        "400":
+          description: 请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DoubaoSeedance20260128ErrorResponse"
+              examples:
+                invalidParameter:
+                  $ref: "#/components/examples/DoubaoSeedance20260128InvalidParameterError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DoubaoSeedance20260128ErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/DoubaoSeedance20260128InvalidParameterError"
+
+  /v1/tasks/status:
+    get:
+      tags:
+        - doubao-seedance-2-0-260128
+      operationId: getDoubaoSeedance20260128TaskStatus
+      summary: 查询 doubao-seedance-2-0-260128 任务状态
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      parameters:
+        - name: task_id
+          in: query
+          required: true
+          description: Asynchronous task identifier returned by `/v1/tasks/submit`.
+          schema:
+            type: string
+          examples:
+            taskId:
+              value: task_id
+      responses:
+        "200":
+          description: 任务状态响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DoubaoSeedance20260128TaskStatusResponse"
+              examples:
+                success:
+                  summary: 成功任务
+                  value:
+                    output:
+                      task_id: xxxxxxx
+                      task_status: Success
+                      urls:
+                        - http://xxxxxxxx/xx.mp4
+                      submit_time: 1768460826
+                      finish_time: 1768460932
+                    usage:
+                      completion_tokens: 108900
+                      total_tokens: 108900
+                      duration: 5
+                    request_id: ""
+                failure:
+                  summary: 失败任务
+                  value:
+                    output:
+                      task_id: xxxxxxx
+                      task_status: Failure
+                      submit_time: 1756959000
+                      finish_time: 1756959019
+                      error_message: error_message
+                    usage:
+                      completion_tokens: 0
+                      total_tokens: 0
+                      duration: 5
+                    request_id: ""
+        "400":
+          description: 任务标识或请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DoubaoSeedance20260128ErrorResponse"
+              examples:
+                invalidParameter:
+                  $ref: "#/components/examples/DoubaoSeedance20260128InvalidParameterError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DoubaoSeedance20260128ErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/DoubaoSeedance20260128InvalidParameterError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+  schemas:
+    DoubaoSeedance20260128TaskSubmitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - input
+      properties:
+        model:
+          type: string
+          const: doubao-seedance-2-0-260128
+          description: Model name. Fixed to `doubao-seedance-2-0-260128` for this API document.
+        input:
+          $ref: "#/components/schemas/DoubaoSeedance20260128Input"
+        parameters:
+          $ref: "#/components/schemas/DoubaoSeedance20260128Parameters"
+
+    DoubaoSeedance20260128Input:
+      type: object
+      additionalProperties: false
+      required:
+        - content
+      properties:
+        content:
+          type: array
+          minItems: 1
+          description: |
+            Information objects used to generate the video. The source document defines
+            text, image, reference video, and reference audio object schemas. It also
+            mentions a sample-video mode, but does not define that object's fields; sample
+            mode must not be mixed with text or image objects.
+          items:
+            oneOf:
+              - $ref: "#/components/schemas/DoubaoSeedance20260128TextContent"
+              - $ref: "#/components/schemas/DoubaoSeedance20260128ImageUrlContent"
+              - $ref: "#/components/schemas/DoubaoSeedance20260128VideoUrlContent"
+              - $ref: "#/components/schemas/DoubaoSeedance20260128AudioUrlContent"
+
+    DoubaoSeedance20260128TextContent:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - text
+      properties:
+        type:
+          type: string
+          const: text
+          description: Input content type for text information.
+        text:
+          type: string
+          minLength: 1
+          description: Text prompt describing the expected video. Chinese and English are supported; no more than 500 Chinese characters is recommended.
+
+    DoubaoSeedance20260128ImageUrlContent:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - image_url
+      properties:
+        type:
+          type: string
+          const: image_url
+          description: Input content type for image information.
+        image_url:
+          $ref: "#/components/schemas/DoubaoSeedance20260128ImageUrlObject"
+        role:
+          type: string
+          description: |
+            Image position or usage. With one image object, this may be omitted or set to
+            `first_frame`. With two image objects, this is required: use `first_frame` for
+            the first frame and `last_frame` for the last frame. Use `reference_image` for
+            a reference image.
+          enum:
+            - first_frame
+            - last_frame
+            - reference_image
+
+    DoubaoSeedance20260128ImageUrlObject:
+      type: object
+      additionalProperties: false
+      required:
+        - url
+      properties:
+        url:
+          type: string
+          description: |
+            Image URL or Base64 data URL. For Base64 input, use
+            `data:image/<format>;base64,<Base64 data>` and keep `<format>` lowercase,
+            for example `data:image/png;base64,{base64_image}`.
+
+    DoubaoSeedance20260128VideoUrlContent:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - video_url
+        - role
+      properties:
+        type:
+          type: string
+          const: video_url
+          description: Input content type for reference video information.
+        video_url:
+          $ref: "#/components/schemas/DoubaoSeedance20260128VideoUrlObject"
+        role:
+          type: string
+          const: reference_video
+          description: Fixed value for reference video information.
+
+    DoubaoSeedance20260128VideoUrlObject:
+      type: object
+      additionalProperties: false
+      required:
+        - url
+      properties:
+        url:
+          type: string
+          format: uri
+          description: Reference video URL. Ensure the URL is accessible.
+
+    DoubaoSeedance20260128AudioUrlContent:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - audio_url
+        - role
+      properties:
+        type:
+          type: string
+          const: audio_url
+          description: Input content type for reference audio information.
+        audio_url:
+          $ref: "#/components/schemas/DoubaoSeedance20260128AudioUrlObject"
+        role:
+          type: string
+          const: reference_audio
+          description: Fixed value for reference audio information.
+
+    DoubaoSeedance20260128AudioUrlObject:
+      type: object
+      additionalProperties: false
+      required:
+        - url
+      properties:
+        url:
+          type: string
+          format: uri
+          description: Reference audio URL. Ensure the URL is accessible.
+
+    DoubaoSeedance20260128Parameters:
+      type: object
+      additionalProperties: false
+      properties:
+        execution_expires_after:
+          type: integer
+          minimum: 3600
+          maximum: 259200
+          default: 172800
+          description: Task expiration threshold in seconds after submission. Defaults to 172800 seconds, or 48 hours.
+        generate_audio:
+          type: boolean
+          default: false
+          description: Whether the generated video includes synchronized audio.
+        resolution:
+          type: string
+          default: 720p
+          description: Video resolution. Sample-video mode supports only `480p`.
+          enum:
+            - 480p
+            - 720p
+            - 1080p
+            - 4K
+        ratio:
+          type: string
+          default: adaptive
+          description: Generated video aspect ratio. `adaptive` lets the model choose the most suitable aspect ratio.
+          enum:
+            - "16:9"
+            - "4:3"
+            - "1:1"
+            - "3:4"
+            - "9:16"
+            - "21:9"
+            - adaptive
+        duration:
+          type: integer
+          minimum: 4
+          maximum: 15
+          default: 5
+          description: Generated video duration in seconds.
+        seed:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+          description: 随机种子。
+        camera_fixed:
+          type: boolean
+          default: false
+          description: Whether to fix the camera.
+        watermark:
+          type: boolean
+          default: false
+          description: Whether the generated video includes a watermark.
+        callback_url:
+          type: string
+          format: uri
+          description: Callback URL for task status change notifications. ModelVerse sends POST requests to this URL when the video task status changes.
+
+    DoubaoSeedance20260128TaskSubmitResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          type: object
+          additionalProperties: false
+          required:
+            - task_id
+          properties:
+            task_id:
+              type: string
+              description: 异步任务唯一标识。
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    DoubaoSeedance20260128TaskStatusResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/DoubaoSeedance20260128TaskStatusOutput"
+        usage:
+          $ref: "#/components/schemas/DoubaoSeedance20260128Usage"
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    DoubaoSeedance20260128TaskStatusOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+        - task_status
+      properties:
+        task_id:
+          type: string
+          description: 异步任务唯一标识。
+        task_status:
+          $ref: "#/components/schemas/DoubaoSeedance20260128TaskStatus"
+        urls:
+          type: array
+          description: 视频结果 URL 列表。
+          items:
+            type: string
+            format: uri
+        submit_time:
+          type: integer
+          format: int64
+          description: 任务提交时间的 Unix 秒级时间戳。
+        finish_time:
+          type: integer
+          format: int64
+          description: 任务完成时间的 Unix 秒级时间戳。
+        error_message:
+          type: string
+          description: 任务失败时返回的错误信息。
+
+    DoubaoSeedance20260128TaskStatus:
+      type: string
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      enum:
+        - Pending
+        - Running
+        - Success
+        - Failure
+        - Expired
+
+    DoubaoSeedance20260128Usage:
+      type: object
+      additionalProperties: false
+      properties:
+        duration:
+          type: integer
+          description: 视频时长，单位为秒。
+        completion_tokens:
+          type: integer
+          description: Number of tokens charged for the generated output video.
+        total_tokens:
+          type: integer
+          description: Total tokens consumed by this request. Video generation models do not count input tokens, so `total_tokens` equals `completion_tokens`.
+
+    DoubaoSeedance20260128ErrorResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/DoubaoSeedance20260128ErrorObject"
+        request_id:
+          type: string
+          description: 唯一请求标识，如可用。
+
+    DoubaoSeedance20260128ErrorObject:
+      type: object
+      additionalProperties: true
+      required:
+        - message
+        - type
+      properties:
+        message:
+          type: string
+          description: 错误信息。
+        type:
+          type: string
+          description: 错误类型。
+        code:
+          type:
+            - string
+            - "null"
+          description: 错误码。
+        param:
+          type:
+            - string
+            - "null"
+          description: 与错误相关的请求参数。
+
+  examples:
+    DoubaoSeedance20260128InvalidParameterError:
+      summary: 参数错误
+      value:
+        error:
+          message: Invalid param
+          type: invalid_request_error
+          code: param_error
+          param: parameters.duration
+        request_id: request_id

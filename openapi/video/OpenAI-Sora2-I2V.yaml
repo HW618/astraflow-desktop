@@ -1,0 +1,333 @@
+openapi: 3.1.0
+x-language: zh-CN
+info:
+  title: OpenAI-Sora2-I2V接口文档
+  version: "1.0.0"
+  description: |
+    这是 ModelVerse 上 `OpenAI-Sora2-I2V` 的视频接口文档，说明如何提交生成任务、查询任务状态、读取视频结果以及处理错误。
+    接口路径包括 `POST /v1/tasks/submit`、`GET /v1/tasks/status`。
+servers:
+  - url: https://api.modelverse.cn
+    description: ModelVerse API endpoint from the source documentation.
+
+tags:
+  - name: OpenAI Sora2 I2V
+    description: OpenAI/Sora2 image-to-video asynchronous task APIs.
+
+paths:
+  /v1/tasks/submit:
+    post:
+      tags:
+        - OpenAI Sora2 I2V
+      operationId: submitOpenAISora2I2VTask
+      summary: 提交 OpenAI Sora2 图生视频任务
+      description: |
+        提交异步任务。请求体中的模型和参数按本模型文档填写，响应会返回任务 ID。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OpenAISora2I2VSubmitRequest"
+            examples:
+              imageToVideo:
+                summary: 根据 a 首帧图像 生成视频
+                value:
+                  model: openai/sora-2/image-to-video
+                  input:
+                    first_frame_url: https://test2-im.cn-bj.ufileos.com/image/Adobe%20Express%20-%20file.png
+                    prompt: The image is coming to life
+                  parameters:
+                    size: 720x1280
+                    duration: 4
+      responses:
+        "200":
+          description: 任务提交成功。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAISora2I2VSubmitResponse"
+              examples:
+                submitted:
+                  summary: 已提交任务
+                  value:
+                    output:
+                      task_id: task_id
+                    request_id: request_id
+        "400":
+          description: 请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                paramError:
+                  $ref: "#/components/examples/ParamError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/ParamError"
+
+  /v1/tasks/status:
+    get:
+      tags:
+        - OpenAI Sora2 I2V
+      operationId: getOpenAISora2I2VTaskStatus
+      summary: 查询 OpenAI Sora2 图生视频任务
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: task_id
+          in: query
+          required: true
+          description: Asynchronous task identifier returned by `/v1/tasks/submit`.
+          schema:
+            type: string
+          examples:
+            placeholder:
+              summary: 源文档占位值
+              value: task_id
+      responses:
+        "200":
+          description: 任务状态响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAISora2I2VStatusResponse"
+              examples:
+                success:
+                  summary: 成功任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Success
+                      urls:
+                        - https://xxxxx/xxxx.mp4
+                      submit_time: 1756959000
+                      finish_time: 1756959050
+                    usage:
+                      duration: 4
+                    request_id: ""
+                failure:
+                  summary: 失败任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Failure
+                      submit_time: 1756959000
+                      finish_time: 1756959019
+                      error_message: error_message
+                    usage:
+                      duration: 5
+                    request_id: ""
+        "400":
+          description: 请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                paramError:
+                  $ref: "#/components/examples/ParamError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/ParamError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+
+  schemas:
+    OpenAISora2I2VSubmitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - input
+      properties:
+        model:
+          type: string
+          const: openai/sora-2/image-to-video
+          description: Model name. Pinned to this OpenAI/Sora2 image-to-video model.
+        input:
+          $ref: "#/components/schemas/OpenAISora2I2VInput"
+        parameters:
+          $ref: "#/components/schemas/OpenAISora2I2VParameters"
+
+    OpenAISora2I2VInput:
+      type: object
+      additionalProperties: false
+      required:
+        - first_frame_url
+      properties:
+        first_frame_url:
+          type: string
+          description: Video first-frame image. The source documentation allows either a URL or Base64 value.
+          examples:
+            - https://test2-im.cn-bj.ufileos.com/image/Adobe%20Express%20-%20file.png
+        prompt:
+          type: string
+          description: 用于指导视频生成的提示词。
+          examples:
+            - The image is coming to life
+
+    OpenAISora2I2VParameters:
+      type: object
+      additionalProperties: true
+      properties:
+        duration:
+          type: integer
+          enum:
+            - 4
+            - 8
+            - 12
+          default: 4
+          description: Video generation duration in seconds.
+        size:
+          type: string
+          description: Video size. The source request example uses `720x1280`.
+          examples:
+            - 720x1280
+
+    OpenAISora2I2VSubmitResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          type: object
+          additionalProperties: true
+          required:
+            - task_id
+          properties:
+            task_id:
+              type: string
+              description: 异步任务唯一标识。
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    OpenAISora2I2VStatusResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/OpenAISora2I2VStatusOutput"
+        usage:
+          $ref: "#/components/schemas/OpenAISora2I2VUsage"
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    OpenAISora2I2VStatusOutput:
+      type: object
+      additionalProperties: true
+      required:
+        - task_id
+        - task_status
+      properties:
+        task_id:
+          type: string
+          description: 异步任务唯一标识。
+        task_status:
+          $ref: "#/components/schemas/OpenAISora2I2VTaskStatus"
+        urls:
+          type: array
+          description: Generated video result URLs.
+          items:
+            type: string
+            format: uri
+        submit_time:
+          type: integer
+          format: int64
+          description: 任务提交时间戳。
+        finish_time:
+          type: integer
+          format: int64
+          description: 任务完成时间戳。
+        error_message:
+          type: string
+          description: 任务失败时返回的错误信息。
+
+    OpenAISora2I2VTaskStatus:
+      type: string
+      enum:
+        - Pending
+        - Running
+        - Success
+        - Failure
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+    OpenAISora2I2VUsage:
+      type: object
+      additionalProperties: true
+      properties:
+        duration:
+          type: integer
+          description: 任务执行时长，单位为秒。
+
+    ErrorResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorObject"
+
+    ErrorObject:
+      type: object
+      additionalProperties: true
+      required:
+        - message
+        - type
+      properties:
+        message:
+          type: string
+        type:
+          type: string
+          examples:
+            - invalid_request_error
+        code:
+          type:
+            - string
+            - "null"
+          examples:
+            - param_error
+        param:
+          type:
+            - string
+            - "null"
+
+  examples:
+    ParamError:
+      summary: 参数错误
+      value:
+        error:
+          message: Invalid param
+          type: invalid_request_error
+          code: param_error
+          param: task_id

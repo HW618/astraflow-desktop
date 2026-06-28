@@ -50,6 +50,7 @@ type ApiResponse<T> = ApiOk<T> | ApiErr
 const MAX_REFERENCE_IMAGES = 6
 const MAX_REFERENCE_BYTES = 12 * 1024 * 1024
 const PARAM_STORAGE_KEY = "astraflow:image-model"
+const IMAGE_FALLBACK_TITLE = "New image"
 
 function isOk<T>(payload: ApiResponse<T>): payload is ApiOk<T> {
   return payload.ok === true
@@ -85,13 +86,26 @@ async function fetchImageGenerations(sessionId: string) {
   return readJson<StudioImageGeneration[]>(response)
 }
 
-async function createImageSession() {
+function getFallbackImageTitle(prompt: string) {
+  const normalized = prompt.trim()
+  return normalized ? normalized.slice(0, 120) : IMAGE_FALLBACK_TITLE
+}
+
+async function createImageSession(title: string) {
   const response = await fetch("/api/studio/sessions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mode: "image", title: "New image" }),
+    body: JSON.stringify({ mode: "image", title }),
   })
   return readJson<StudioSession>(response)
+}
+
+async function generateSessionTitle(sessionId: string, prompt: string) {
+  await fetch(`/api/studio/sessions/${sessionId}/title`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt }),
+  })
 }
 
 async function submitImageGeneration({
@@ -348,6 +362,7 @@ function StudioImageWorkbench({
     const promptModel = selectedModel
     const promptParams = paramValues
     const promptAttachments = attachments
+    const isNewSession = !sessionId
 
     const optimistic: StudioImageGeneration = {
       id: optimisticId,
@@ -373,9 +388,20 @@ function StudioImageWorkbench({
       try {
         let activeSessionId = sessionId
         if (!activeSessionId) {
-          const session = await createImageSession()
+          const session = await createImageSession(
+            getFallbackImageTitle(promptText)
+          )
           activeSessionId = session.id
           onSessionChange(activeSessionId)
+          onSessionsChange()
+        }
+
+        if (isNewSession) {
+          void generateSessionTitle(activeSessionId, promptText)
+            .then(() => onSessionsChange())
+            .catch(() => {
+              // Keep the prompt-based fallback title on failure.
+            })
         }
 
         const result = await submitImageGeneration({

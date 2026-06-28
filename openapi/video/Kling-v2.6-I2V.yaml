@@ -1,0 +1,391 @@
+openapi: 3.1.0
+x-language: zh-CN
+info:
+  title: Kling-v2.6-I2V接口文档
+  version: "1.0.0"
+  description: |
+    这是 ModelVerse 上 `Kling-v2.6-I2V` 的视频接口文档，说明如何提交生成任务、查询任务状态、读取视频结果以及处理错误。
+    接口路径包括 `POST /v1/tasks/submit`、`GET /v1/tasks/status`。
+servers:
+  - url: https://api.modelverse.cn
+    description: 该模型文档中使用的 ModelVerse API 端点。
+
+tags:
+  - name: Kling/v2.6-I2V
+    description: Image-to-video asynchronous task operations for Kling/v2.6-I2V.
+
+paths:
+  /v1/tasks/submit:
+    post:
+      tags:
+        - Kling/v2.6-I2V
+      operationId: submitKlingV26I2VTask
+      summary: 提交 Kling/v2.6-I2V 图生视频任务
+      description: |
+        提交异步任务。请求体中的模型和参数按本模型文档填写，响应会返回任务 ID。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KlingV26I2VSubmitRequest"
+            examples:
+              documented:
+                summary: 源文档 图生视频 请求
+                value:
+                  model: kling-v2-6
+                  input:
+                    prompt: The image comes to life with gentle movement
+                  parameters:
+                    mode: pro
+                    aspect_ratio: "16:9"
+                    duration: 5
+                    image: https://example.com/first_frame.jpg
+              withTailFrame:
+                summary: 带 first and tail frames 的请求
+                value:
+                  model: kling-v2-6
+                  input:
+                    prompt: A cinematic reveal from the first frame to the ending frame
+                    negative_prompt: blurry, distorted, low quality
+                  parameters:
+                    mode: pro
+                    aspect_ratio: "9:16"
+                    duration: 10
+                    image: iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg==
+                    image_tail: https://example.com/tail_frame.png
+      responses:
+        "200":
+          description: 任务提交成功。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KlingV26I2VSubmitResponse"
+              examples:
+                submitted:
+                  summary: 已提交任务
+                  value:
+                    output:
+                      task_id: task_id
+                    request_id: request_id
+        "400":
+          description: 请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KlingV26I2VErrorResponse"
+              examples:
+                paramError:
+                  $ref: "#/components/examples/KlingV26I2VParamError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KlingV26I2VErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/KlingV26I2VParamError"
+
+  /v1/tasks/status:
+    get:
+      tags:
+        - Kling/v2.6-I2V
+      operationId: getKlingV26I2VTaskStatus
+      summary: 查询 Kling/v2.6-I2V 任务状态
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: task_id
+          in: query
+          required: true
+          description: Asynchronous task identifier returned by `/v1/tasks/submit`.
+          schema:
+            type: string
+          examples:
+            documented:
+              summary: 源文档占位值
+              value: task_id
+      responses:
+        "200":
+          description: 任务状态响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KlingV26I2VStatusResponse"
+              examples:
+                success:
+                  summary: 成功任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Success
+                      urls:
+                        - https://xxxxx/xxxx.mp4
+                      submit_time: 1756959000
+                      finish_time: 1756959050
+                    usage:
+                      duration: 5
+                    request_id: ""
+                failure:
+                  summary: 失败任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Failure
+                      submit_time: 1756959000
+                      finish_time: 1756959019
+                      error_message: error_message
+                    usage:
+                      duration: 5
+                    request_id: ""
+        "400":
+          description: 任务标识或请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KlingV26I2VErrorResponse"
+              examples:
+                paramError:
+                  $ref: "#/components/examples/KlingV26I2VParamError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KlingV26I2VErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/KlingV26I2VParamError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+  schemas:
+    KlingV26I2VSubmitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - input
+        - parameters
+      properties:
+        model:
+          type: string
+          const: kling-v2-6
+          description: Model name. This schema is pinned to `kling-v2-6`.
+        input:
+          $ref: "#/components/schemas/KlingV26I2VInput"
+        parameters:
+          $ref: "#/components/schemas/KlingV26I2VParameters"
+
+    KlingV26I2VInput:
+      type: object
+      additionalProperties: false
+      required:
+        - prompt
+      properties:
+        prompt:
+          type: string
+          minLength: 1
+          description: 用于指导视频生成的提示词。
+          examples:
+            - The image comes to life with gentle movement
+        negative_prompt:
+          type: string
+          description: 用于限制不期望内容的负向提示词。
+          examples:
+            - blurry, distorted, low quality
+
+    KlingV26I2VParameters:
+      type: object
+      additionalProperties: false
+      properties:
+        mode:
+          type: string
+          enum:
+            - pro
+          default: pro
+          description: |
+            Generation mode. The source parameter table mentions `std` and
+            `pro`, but notes that Kling v2.6 currently supports only `pro`.
+        aspect_ratio:
+          type: string
+          description: Generated video aspect ratio.
+          enum:
+            - "16:9"
+            - "9:16"
+            - "1:1"
+        duration:
+          type: integer
+          description: Generated video duration in seconds.
+          enum:
+            - 5
+            - 10
+          default: 5
+        image:
+          type: string
+          minLength: 1
+          description: |
+            First-frame reference image. Supports a public image URL or a raw
+            Base64-encoded image string. When using Base64, do not include a
+            `data:image/...;base64,` prefix. Supported image formats are JPG,
+            JPEG, and PNG. The image file size must be no larger than 10 MB,
+            width and height must each be at least 300 px, and the image aspect
+            ratio must be between 1:2.5 and 2.5:1.
+          examples:
+            - https://example.com/first_frame.jpg
+            - iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w38GIAXDIBKE0DHxgljNBAAO9TXL0Y4OHwAAAABJRU5ErkJggg==
+        image_tail:
+          type: string
+          minLength: 1
+          description: |
+            Tail-frame reference image. Supports a public image URL or raw
+            Base64-encoded image string, with the same format, size, dimension,
+            and aspect-ratio requirements as `image`.
+          examples:
+            - https://example.com/tail_frame.png
+      anyOf:
+        - required:
+            - image
+        - required:
+            - image_tail
+
+    KlingV26I2VSubmitResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          type: object
+          additionalProperties: false
+          required:
+            - task_id
+          properties:
+            task_id:
+              type: string
+              description: 异步任务唯一标识。
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    KlingV26I2VStatusResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/KlingV26I2VStatusOutput"
+        usage:
+          $ref: "#/components/schemas/KlingV26I2VUsage"
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    KlingV26I2VStatusOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+        - task_status
+      properties:
+        task_id:
+          type: string
+          description: 异步任务唯一标识。
+        task_status:
+          $ref: "#/components/schemas/KlingV26I2VTaskStatus"
+        urls:
+          type: array
+          description: 视频结果 URL 列表。
+          items:
+            type: string
+            format: uri
+        submit_time:
+          type: integer
+          format: int64
+          description: 任务提交时间戳。
+        finish_time:
+          type: integer
+          format: int64
+          description: 任务完成时间戳。
+        error_message:
+          type: string
+          description: 任务失败时返回的错误信息。
+
+    KlingV26I2VTaskStatus:
+      type: string
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      enum:
+        - Pending
+        - Running
+        - Success
+        - Failure
+
+    KlingV26I2VUsage:
+      type: object
+      additionalProperties: false
+      properties:
+        duration:
+          type: integer
+          description: Generated video duration in seconds.
+
+    KlingV26I2VErrorResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/KlingV26I2VErrorObject"
+
+    KlingV26I2VErrorObject:
+      type: object
+      additionalProperties: true
+      required:
+        - message
+        - type
+      properties:
+        message:
+          type: string
+          description: 错误信息。
+        type:
+          type: string
+          description: 错误类型。
+          examples:
+            - invalid_request_error
+        code:
+          type:
+            - string
+            - "null"
+          description: 错误码。
+          examples:
+            - param_error
+        param:
+          type:
+            - string
+            - "null"
+          description: 相关请求参数，如有。
+
+  examples:
+    KlingV26I2VParamError:
+      summary: 参数错误
+      value:
+        error:
+          message: Invalid param
+          type: invalid_request_error
+          code: param_error
+          param: parameters.image

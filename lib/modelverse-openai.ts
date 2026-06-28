@@ -31,7 +31,7 @@ export function createModelverseClient() {
 
 const TITLE_MODEL = "gpt-5.4-mini"
 
-const TITLE_SYSTEM_PROMPT = `You generate an ultra-short title for a chat conversation based on the user's first message.
+const TITLE_SYSTEM_PROMPT = `You generate an ultra-short title for a studio conversation or image generation request based on the user's first message.
 
 Rules:
 - At most 10 characters for Chinese, or about 5 words for other languages.

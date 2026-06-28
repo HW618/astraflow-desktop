@@ -1,0 +1,1176 @@
+openapi: 3.1.0
+x-language: zh-CN
+info:
+  title: volce-asset接口文档
+  version: "1.0.0"
+  description: |
+    这是 ModelVerse 火山视觉资产的接口文档，说明如何校验素材、管理资产分组、创建和查询资产以及处理错误。
+    接口路径包括 `GET /v1/volce-asset/visual-validate/sessions`、`POST /v1/volce-asset/visual-validate/result`、`POST /v1/volce-asset/groups/list`、`POST /v1/volce-asset/groups/get`、`POST /v1/volce-asset/groups/update` 等 11 个接口。
+servers:
+  - url: https://api.modelverse.cn
+    description: ModelVerse China mainland endpoint shown in the source document.
+
+tags:
+  - name: Volce Asset Management
+    description: Manage Volce private asset verification sessions, asset groups, and assets.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/volce-asset/visual-validate/sessions:
+    get:
+      tags:
+        - Volce Asset Management
+      operationId: createVolceAssetVisualValidateSession
+      summary: 创建 a真人 verification session
+      description: |
+        调用火山视觉资产接口。根据路径完成素材校验、分组管理或资产管理操作。
+      x-codeSamples:
+        - lang: curl
+          source: |
+            curl --location "$ENDPOINT/v1/volce-asset/visual-validate/sessions" \
+              --header "Authorization: Bearer $MODELVERSE_API_KEY"
+      responses:
+        "200":
+          description: Verification session created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VolceAssetVisualValidateSessionResponse"
+              examples:
+                created:
+                  summary: Verification session credentials
+                  value:
+                    bearer_token: 2b7b3f8e-0f7d-4d4c-8f0f-xxxxxxxxxxxx
+                    h5_link: https://example.com/visual-validate?token=xxxx
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/volce-asset/visual-validate/result:
+    post:
+      tags:
+        - Volce Asset Management
+      operationId: queryVolceAssetVisualValidateResult
+      summary: Query真人 verification result
+      description: |
+        调用火山视觉资产接口。根据路径完成素材校验、分组管理或资产管理操作。
+      x-codeSamples:
+        - lang: curl
+          source: |
+            curl --location "$ENDPOINT/v1/volce-asset/visual-validate/result" \
+              --header "Authorization: Bearer $MODELVERSE_API_KEY" \
+              --header "Content-Type: application/json" \
+              --data '{
+                "bearer_token": "2b7b3f8e-0f7d-4d4c-8f0f-xxxxxxxxxxxx"
+              }'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VolceAssetVisualValidateResultRequest"
+            examples:
+              by_bearer_token:
+                summary: 查询by session bearer token
+                value:
+                  bearer_token: 2b7b3f8e-0f7d-4d4c-8f0f-xxxxxxxxxxxx
+      responses:
+        "200":
+          description: Verification session status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VolceAssetVisualValidateResultResponse"
+              examples:
+                group_ready:
+                  summary: Verification passed and asset group is ready
+                  value:
+                    status: group_ready
+                    group_id: group-20260331145705-xxxxx
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/volce-asset/groups/list:
+    post:
+      tags:
+        - Volce Asset Management
+      operationId: listVolceAssetGroups
+      summary: List asset groups
+      description: |
+        调用火山视觉资产接口。根据路径完成素材校验、分组管理或资产管理操作。
+      x-codeSamples:
+        - lang: curl
+          source: |
+            curl --location "$ENDPOINT/v1/volce-asset/groups/list" \
+              --header "Authorization: Bearer $MODELVERSE_API_KEY" \
+              --header "Content-Type: application/json" \
+              --data '{
+                "filter": {
+                  "group_type": "LivenessFace"
+                },
+                "page_number": 1,
+                "page_size": 10
+              }'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ListVolceAssetGroupsRequest"
+            examples:
+              liveness_face_groups:
+                summary: List真人 asset groups
+                value:
+                  filter:
+                    group_type: LivenessFace
+                  page_number: 1
+                  page_size: 10
+      responses:
+        "200":
+          description: Asset group list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListVolceAssetGroupsResponse"
+              examples:
+                one_group:
+                  summary: One真人 asset group
+                  value:
+                    items:
+                      - id: group-20260331145705-xxxxx
+                        name: 真人素材组
+                        description: 用于数字人生成
+                        group_type: LivenessFace
+                        project_name: default
+                        create_time: "2026-03-31T06:57:05Z"
+                        update_time: "2026-03-31T06:57:05Z"
+                    total_count: 1
+                    page_number: 1
+                    page_size: 10
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/volce-asset/groups/get:
+    post:
+      tags:
+        - Volce Asset Management
+      operationId: getVolceAssetGroup
+      summary: 查询asset group details
+      description: |
+        调用火山视觉资产接口。根据路径完成素材校验、分组管理或资产管理操作。
+      x-codeSamples:
+        - lang: curl
+          source: |
+            curl --location "$ENDPOINT/v1/volce-asset/groups/get" \
+              --header "Authorization: Bearer $MODELVERSE_API_KEY" \
+              --header "Content-Type: application/json" \
+              --data '{
+                "id": "group-20260331145705-xxxxx"
+              }'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VolceAssetGroupIdRequest"
+            examples:
+              by_group_id:
+                summary: 查询group by ID
+                value:
+                  id: group-20260331145705-xxxxx
+      responses:
+        "200":
+          description: Asset group details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VolceAssetGroup"
+              examples:
+                liveness_face_group:
+                  summary: 真人 asset group
+                  value:
+                    id: group-20260331145705-xxxxx
+                    name: 真人素材组
+                    description: 用于数字人生成
+                    group_type: LivenessFace
+                    project_name: default
+                    create_time: "2026-03-31T06:57:05Z"
+                    update_time: "2026-03-31T06:57:05Z"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/volce-asset/groups/update:
+    post:
+      tags:
+        - Volce Asset Management
+      operationId: updateVolceAssetGroup
+      summary: Update an asset group
+      description: |
+        调用火山视觉资产接口。根据路径完成素材校验、分组管理或资产管理操作。
+      x-codeSamples:
+        - lang: curl
+          source: |
+            curl --location "$ENDPOINT/v1/volce-asset/groups/update" \
+              --header "Authorization: Bearer $MODELVERSE_API_KEY" \
+              --header "Content-Type: application/json" \
+              --data '{
+                "id": "group-20260331145705-xxxxx",
+                "name": "真人素材组",
+                "description": "用于数字人生成"
+              }'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateVolceAssetGroupRequest"
+            examples:
+              rename_group:
+                summary: Update group name and description
+                value:
+                  id: group-20260331145705-xxxxx
+                  name: 真人素材组
+                  description: 用于数字人生成
+      responses:
+        "200":
+          description: Asset group updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VolceAssetGroupIdResponse"
+              examples:
+                updated:
+                  summary: Updated group ID
+                  value:
+                    id: group-20260331145705-xxxxx
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/volce-asset/groups/delete:
+    post:
+      tags:
+        - Volce Asset Management
+      operationId: deleteVolceAssetGroup
+      summary: Delete an asset group
+      description: |
+        调用火山视觉资产接口。根据路径完成素材校验、分组管理或资产管理操作。
+      x-codeSamples:
+        - lang: curl
+          source: |
+            curl --location "$ENDPOINT/v1/volce-asset/groups/delete" \
+              --header "Authorization: Bearer $MODELVERSE_API_KEY" \
+              --header "Content-Type: application/json" \
+              --data '{
+                "id": "group-20260331145705-xxxxx"
+              }'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VolceAssetGroupIdRequest"
+            examples:
+              by_group_id:
+                summary: Delete group by ID
+                value:
+                  id: group-20260331145705-xxxxx
+      responses:
+        "200":
+          description: Asset group deleted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmptyObject"
+              examples:
+                deleted:
+                  summary: 空成功响应
+                  value: {}
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/volce-asset/assets/create:
+    post:
+      tags:
+        - Volce Asset Management
+      operationId: createVolceAssetAsset
+      summary: 创建 an asset
+      description: |
+        调用火山视觉资产接口。根据路径完成素材校验、分组管理或资产管理操作。
+      x-codeSamples:
+        - lang: curl
+          source: |
+            curl --location "$ENDPOINT/v1/volce-asset/assets/create" \
+              --header "Authorization: Bearer $MODELVERSE_API_KEY" \
+              --header "Content-Type: application/json" \
+              --data '{
+                "group_id": "group-20260331145705-xxxxx",
+                "url": "https://example.com/image.jpg",
+                "name": "test-image",
+                "asset_type": "Image"
+              }'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateVolceAssetAssetRequest"
+            examples:
+              image_asset:
+                summary: 创建 an图像asset
+                value:
+                  group_id: group-20260331145705-xxxxx
+                  url: https://example.com/image.jpg
+                  name: test-image
+                  asset_type: Image
+      responses:
+        "200":
+          description: Asset submitted for processing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VolceAssetAssetIdResponse"
+              examples:
+                created:
+                  summary: Created asset ID
+                  value:
+                    id: Asset-20260331150000-xxxxx
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/volce-asset/assets/list:
+    post:
+      tags:
+        - Volce Asset Management
+      operationId: listVolceAssetAssets
+      summary: List assets
+      description: |
+        调用火山视觉资产接口。根据路径完成素材校验、分组管理或资产管理操作。
+      x-codeSamples:
+        - lang: curl
+          source: |
+            curl --location "$ENDPOINT/v1/volce-asset/assets/list" \
+              --header "Authorization: Bearer $MODELVERSE_API_KEY" \
+              --header "Content-Type: application/json" \
+              --data '{
+                "filter": {
+                  "group_ids": ["group-20260331145705-xxxxx"],
+                  "statuses": ["Active"]
+                },
+                "page_number": 1,
+                "page_size": 10
+              }'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ListVolceAssetAssetsRequest"
+            examples:
+              active_assets:
+                summary: List active assets in one group
+                value:
+                  filter:
+                    group_ids:
+                      - group-20260331145705-xxxxx
+                    statuses:
+                      - Active
+                  page_number: 1
+                  page_size: 10
+      responses:
+        "200":
+          description: Asset list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListVolceAssetAssetsResponse"
+              examples:
+                one_image_asset:
+                  summary: One active图像asset
+                  value:
+                    items:
+                      - id: Asset-20260331150000-xxxxx
+                        name: test-image
+                        url: https://example.com/asset-url
+                        group_id: group-20260331145705-xxxxx
+                        asset_type: Image
+                        status: Active
+                        error:
+                          code: ""
+                          message: ""
+                        project_name: default
+                        create_time: "2026-03-31T07:00:00Z"
+                        update_time: "2026-03-31T07:00:30Z"
+                    total_count: 1
+                    page_number: 1
+                    page_size: 10
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/volce-asset/assets/get:
+    post:
+      tags:
+        - Volce Asset Management
+      operationId: getVolceAssetAsset
+      summary: 查询asset details
+      description: |
+        调用火山视觉资产接口。根据路径完成素材校验、分组管理或资产管理操作。
+      x-codeSamples:
+        - lang: curl
+          source: |
+            curl --location "$ENDPOINT/v1/volce-asset/assets/get" \
+              --header "Authorization: Bearer $MODELVERSE_API_KEY" \
+              --header "Content-Type: application/json" \
+              --data '{
+                "id": "Asset-20260331150000-xxxxx"
+              }'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VolceAssetAssetIdRequest"
+            examples:
+              by_asset_id:
+                summary: 查询asset by ID
+                value:
+                  id: Asset-20260331150000-xxxxx
+      responses:
+        "200":
+          description: Asset details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VolceAssetAsset"
+              examples:
+                image_asset:
+                  summary: Active图像asset
+                  value:
+                    id: Asset-20260331150000-xxxxx
+                    name: test-image
+                    url: https://example.com/asset-url
+                    group_id: group-20260331145705-xxxxx
+                    asset_type: Image
+                    status: Active
+                    error:
+                      code: ""
+                      message: ""
+                    project_name: default
+                    create_time: "2026-03-31T07:00:00Z"
+                    update_time: "2026-03-31T07:00:30Z"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/volce-asset/assets/update:
+    post:
+      tags:
+        - Volce Asset Management
+      operationId: updateVolceAssetAsset
+      summary: Update an asset
+      description: |
+        调用火山视觉资产接口。根据路径完成素材校验、分组管理或资产管理操作。
+      x-codeSamples:
+        - lang: curl
+          source: |
+            curl --location "$ENDPOINT/v1/volce-asset/assets/update" \
+              --header "Authorization: Bearer $MODELVERSE_API_KEY" \
+              --header "Content-Type: application/json" \
+              --data '{
+                "id": "Asset-20260331150000-xxxxx",
+                "name": "new-name"
+              }'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateVolceAssetAssetRequest"
+            examples:
+              rename_asset:
+                summary: Update asset name
+                value:
+                  id: Asset-20260331150000-xxxxx
+                  name: new-name
+      responses:
+        "200":
+          description: Asset updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VolceAssetAssetIdResponse"
+              examples:
+                updated:
+                  summary: Updated asset ID
+                  value:
+                    id: Asset-20260331150000-xxxxx
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/volce-asset/assets/delete:
+    post:
+      tags:
+        - Volce Asset Management
+      operationId: deleteVolceAssetAsset
+      summary: Delete an asset
+      description: |
+        调用火山视觉资产接口。根据路径完成素材校验、分组管理或资产管理操作。
+      x-codeSamples:
+        - lang: curl
+          source: |
+            curl --location "$ENDPOINT/v1/volce-asset/assets/delete" \
+              --header "Authorization: Bearer $MODELVERSE_API_KEY" \
+              --header "Content-Type: application/json" \
+              --data '{
+                "id": "Asset-20260331150000-xxxxx"
+              }'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VolceAssetAssetIdRequest"
+            examples:
+              by_asset_id:
+                summary: Delete asset by ID
+                value:
+                  id: Asset-20260331150000-xxxxx
+      responses:
+        "200":
+          description: Asset deleted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmptyObject"
+              examples:
+                deleted:
+                  summary: 空成功响应
+                  value: {}
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        default:
+          $ref: "#/components/responses/Error"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+
+  responses:
+    BadRequest:
+      description: |
+        调用火山视觉资产接口。根据路径完成素材校验、分组管理或资产管理操作。
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            param_error:
+              summary: 参数错误
+              value:
+                error:
+                  message: Invalid param
+                  type: invalid_request_error
+                  code: param_error
+                  param: id
+    Unauthorized:
+      description: |
+        调用火山视觉资产接口。根据路径完成素材校验、分组管理或资产管理操作。
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            auth_error:
+              summary: Authorization failed
+              value:
+                error:
+                  message: Validate Certification failed
+                  type: invalid_request_error
+                  code: auth_error
+                  param: null
+    Error:
+      description: |
+        调用火山视觉资产接口。根据路径完成素材校验、分组管理或资产管理操作。
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            internal_error:
+              summary: Internal service error
+              value:
+                error:
+                  message: Internal error
+                  type: internal_error
+                  code: internal_error
+                  param: null
+
+  schemas:
+    VolceAssetVisualValidateSessionResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - bearer_token
+        - h5_link
+      properties:
+        bearer_token:
+          type: string
+          description: Query credential for this verification session. It is valid for about 30 minutes.
+          examples:
+            - 2b7b3f8e-0f7d-4d4c-8f0f-xxxxxxxxxxxx
+        h5_link:
+          type: string
+          format: uri
+          description: H5 link that the business should direct the user to open for真人 verification.
+          examples:
+            - https://example.com/visual-validate?token=xxxx
+
+    VolceAssetVisualValidateResultRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - bearer_token
+      properties:
+        bearer_token:
+          type: string
+          description: Query credential returned by the create verification session API.
+          examples:
+            - 2b7b3f8e-0f7d-4d4c-8f0f-xxxxxxxxxxxx
+
+    VolceAssetVisualValidateResultResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum:
+            - created
+            - group_ready
+            - failed
+            - expired
+          description: Verification session status.
+        group_id:
+          type: string
+          description: Asset group ID returned after真人 verification passes and the group is ready.
+          examples:
+            - group-20260331145705-xxxxx
+
+    ListVolceAssetGroupsRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        filter:
+          $ref: "#/components/schemas/VolceAssetGroupFilter"
+        page_number:
+          type: integer
+          minimum: 1
+          default: 1
+          description: Page number, starting from 1.
+        page_size:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 10
+          description: 每页条目数。
+
+    VolceAssetGroupFilter:
+      type: object
+      additionalProperties: false
+      properties:
+        group_ids:
+          type: array
+          description: Asset group IDs. Empty means all asset groups visible to the current account.
+          items:
+            type: string
+          examples:
+            - - group-20260331145705-xxxxx
+        group_type:
+          $ref: "#/components/schemas/VolceAssetGroupType"
+        name:
+          type: string
+          description: Asset group name. Supports fuzzy matching.
+          examples:
+            - test
+
+    ListVolceAssetGroupsResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - total_count
+        - page_number
+        - page_size
+      properties:
+        items:
+          type: array
+          description: Asset group list.
+          items:
+            $ref: "#/components/schemas/VolceAssetGroup"
+        total_count:
+          type: integer
+          description: Total number of asset groups that match the filter.
+        page_number:
+          type: integer
+          description: Current page number.
+        page_size:
+          type: integer
+          description: 每页条目数。
+
+    VolceAssetGroup:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - description
+        - group_type
+        - project_name
+        - create_time
+        - update_time
+      properties:
+        id:
+          type: string
+          description: 资产分组 ID。
+          examples:
+            - group-20260331145705-xxxxx
+        name:
+          type: string
+          description: Asset group name.
+          examples:
+            - 真人素材组
+        description:
+          type: string
+          description: Asset group description.
+          examples:
+            - 用于数字人生成
+        group_type:
+          $ref: "#/components/schemas/VolceAssetGroupType"
+        project_name:
+          type: string
+          description: Project that owns the resource.
+          examples:
+            - default
+        create_time:
+          type: string
+          format: date-time
+          description: Creation time.
+          examples:
+            - "2026-03-31T06:57:05Z"
+        update_time:
+          type: string
+          format: date-time
+          description: Last update time.
+          examples:
+            - "2026-03-31T06:57:05Z"
+
+    VolceAssetGroupIdRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+      properties:
+        id:
+          type: string
+          description: 资产分组 ID。
+          examples:
+            - group-20260331145705-xxxxx
+
+    VolceAssetGroupIdResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+      properties:
+        id:
+          type: string
+          description: 资产分组 ID。
+          examples:
+            - group-20260331145705-xxxxx
+
+    UpdateVolceAssetGroupRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+      anyOf:
+        - required:
+            - name
+        - required:
+            - description
+      properties:
+        id:
+          type: string
+          description: 资产分组 ID。
+          examples:
+            - group-20260331145705-xxxxx
+        name:
+          type: string
+          description: New asset group name. At least one of `name` or `description` is required.
+          examples:
+            - new-name
+        description:
+          type: string
+          description: New asset group description. At least one of `name` or `description` is required.
+          examples:
+            - new-description
+
+    CreateVolceAssetAssetRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - group_id
+        - url
+        - asset_type
+      properties:
+        group_id:
+          type: string
+          description: ID of the asset group that owns the asset.
+          examples:
+            - group-20260331145705-xxxxx
+        url:
+          type: string
+          format: uri
+          description: Publicly reachable asset URL. Base64 upload is not supported.
+          examples:
+            - https://example.com/image.jpg
+        name:
+          type: string
+          description: Asset name.
+          examples:
+            - test-image
+        asset_type:
+          $ref: "#/components/schemas/VolceAssetAssetType"
+
+    ListVolceAssetAssetsRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        filter:
+          $ref: "#/components/schemas/VolceAssetAssetFilter"
+        page_number:
+          type: integer
+          minimum: 1
+          default: 1
+          description: Page number, starting from 1.
+        page_size:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 10
+          description: 每页条目数。
+        sort_by:
+          type: string
+          enum:
+            - CreateTime
+            - UpdateTime
+            - GroupId
+          description: Sort field.
+        sort_order:
+          type: string
+          enum:
+            - Desc
+            - Asc
+          description: Sort direction.
+
+    VolceAssetAssetFilter:
+      type: object
+      additionalProperties: false
+      properties:
+        group_ids:
+          type: array
+          description: Asset group IDs. Empty means assets under asset groups visible to the current account.
+          items:
+            type: string
+          examples:
+            - - group-20260331145705-xxxxx
+        group_type:
+          allOf:
+            - $ref: "#/components/schemas/VolceAssetGroupType"
+          default: LivenessFace
+          description: Asset group type. Defaults to `LivenessFace`.
+        statuses:
+          type: array
+          description: Asset statuses to include.
+          items:
+            $ref: "#/components/schemas/VolceAssetAssetStatus"
+          examples:
+            - - Active
+        name:
+          type: string
+          description: Asset name. Supports fuzzy matching.
+          examples:
+            - test
+
+    ListVolceAssetAssetsResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - total_count
+        - page_number
+        - page_size
+      properties:
+        items:
+          type: array
+          description: Asset list.
+          items:
+            $ref: "#/components/schemas/VolceAssetAsset"
+        total_count:
+          type: integer
+          description: Total number of assets that match the filter.
+        page_number:
+          type: integer
+          description: Current page number.
+        page_size:
+          type: integer
+          description: 每页条目数。
+
+    VolceAssetAsset:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - url
+        - group_id
+        - asset_type
+        - status
+        - error
+        - project_name
+        - create_time
+        - update_time
+      properties:
+        id:
+          type: string
+          description: 资产 ID。
+          examples:
+            - Asset-20260331150000-xxxxx
+        name:
+          type: string
+          description: Asset name.
+          examples:
+            - test-image
+        url:
+          type: string
+          format: uri
+          description: Asset access URL.
+          examples:
+            - https://example.com/asset-url
+        group_id:
+          type: string
+          description: 资产分组 ID。
+          examples:
+            - group-20260331145705-xxxxx
+        asset_type:
+          $ref: "#/components/schemas/VolceAssetAssetType"
+        status:
+          $ref: "#/components/schemas/VolceAssetAssetStatus"
+        error:
+          $ref: "#/components/schemas/VolceAssetProcessingError"
+        project_name:
+          type: string
+          description: Project that owns the resource.
+          examples:
+            - default
+        create_time:
+          type: string
+          format: date-time
+          description: Creation time.
+          examples:
+            - "2026-03-31T07:00:00Z"
+        update_time:
+          type: string
+          format: date-time
+          description: Last update time.
+          examples:
+            - "2026-03-31T07:00:30Z"
+
+    VolceAssetProcessingError:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: Error code returned when asset processing fails.
+          examples:
+            - ""
+        message:
+          type: string
+          description: Error message returned when asset processing fails.
+          examples:
+            - ""
+
+    VolceAssetAssetIdRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+      properties:
+        id:
+          type: string
+          description: 资产 ID。
+          examples:
+            - Asset-20260331150000-xxxxx
+
+    VolceAssetAssetIdResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+      properties:
+        id:
+          type: string
+          description: 资产 ID。
+          examples:
+            - Asset-20260331150000-xxxxx
+
+    UpdateVolceAssetAssetRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+      properties:
+        id:
+          type: string
+          description: 资产 ID。
+          examples:
+            - Asset-20260331150000-xxxxx
+        name:
+          type: string
+          description: New asset name.
+          examples:
+            - new-name
+
+    VolceAssetGroupType:
+      type: string
+      enum:
+        - LivenessFace
+        - AIGC
+      description: |
+        调用火山视觉资产接口。根据路径完成素材校验、分组管理或资产管理操作。
+    VolceAssetAssetType:
+      type: string
+      enum:
+        - Image
+        - Video
+        - Audio
+      description: |
+        素材类型。
+
+        文档约束：
+        - `Image`：支持 `jpeg/png/webp/bmp/tiff/gif/heic/heif`；宽高比 `(0.4, 2.5)`；
+          宽高长度 `(300, 6000)` px；单图小于 30 MB。
+        - `Video`：支持 `mp4/mov`；分辨率 `480p/720p/1080p`；时长 `[2, 15]` 秒；
+          宽高比 `[0.4, 2.5]`；宽高 `[300, 6000]` px；
+          总像素数 `[409600, 2086876]`；小于 50 MB；FPS `[24, 60]`。
+        - `Audio`：支持 `wav/mp3`；时长 `[2, 15]` 秒；小于 15 MB。
+    VolceAssetAssetStatus:
+      type: string
+      enum:
+        - Active
+        - Processing
+        - Failed
+      description: |
+        调用火山视觉资产接口。根据路径完成素材校验、分组管理或资产管理操作。
+    EmptyObject:
+      type: object
+      additionalProperties: false
+
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorObject"
+
+    ErrorObject:
+      type: object
+      additionalProperties: false
+      required:
+        - message
+        - type
+      properties:
+        message:
+          type: string
+          description: Human-readable error message.
+          examples:
+            - Invalid param
+        type:
+          type: string
+          description: 错误类型。
+          examples:
+            - invalid_request_error
+        code:
+          type:
+            - string
+            - "null"
+          enum:
+            - param_error
+            - invalid_messages
+            - sensitive_check_error
+            - model_error
+            - tokens_too_long
+            - auth_error
+            - timeout
+            - rate_limit
+            - internal_error
+            - model_server_error
+            - gateway_timeout_error
+            - null
+          description: Machine-readable error code, when provided.
+        param:
+          type:
+            - string
+            - "null"
+          description: Parameter or request ID related to the error, when provided.

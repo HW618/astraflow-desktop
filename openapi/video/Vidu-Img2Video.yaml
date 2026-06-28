@@ -1,0 +1,486 @@
+openapi: 3.1.0
+x-language: zh-CN
+info:
+  title: Vidu-Img2Video接口文档
+  version: "1.0.0"
+  description: |
+    这是 ModelVerse 上 `Vidu-Img2Video` 的视频接口文档，说明如何提交生成任务、查询任务状态、读取视频结果以及处理错误。
+    接口路径包括 `POST /v1/tasks/submit`、`GET /v1/tasks/status`。
+servers:
+  - url: https://api.modelverse.cn
+    description: 该模型文档中使用的 ModelVerse API 端点。
+
+tags:
+  - name: Vidu Img2Video
+    description: Vidu image-to-video asynchronous task operations.
+
+paths:
+  /v1/tasks/submit:
+    post:
+      tags:
+        - Vidu Img2Video
+      operationId: submitViduImg2VideoTask
+      summary: 提交 Vidu 图生视频任务
+      description: |
+        提交异步任务。请求体中的模型和参数按本模型文档填写，响应会返回任务 ID。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ViduImg2VideoSubmitRequest"
+            examples:
+              q3ProWithAudio:
+                summary: 提交a q3-pro 图生视频任务带audio
+                value:
+                  model: viduq3-pro
+                  input:
+                    first_frame_url: https://prod-ss-images.s3.cn-northwest-1.amazonaws.com.cn/vidu-maas/template/image2video.png
+                    prompt: make it dance.
+                  parameters:
+                    vidu_type: img2video
+                    duration: 5
+                    resolution: 1080p
+                    movement_amplitude: auto
+                    audio: true
+              base64FirstFrame:
+                summary: 提交with a Base64 编码 首帧
+                value:
+                  model: viduq2-pro-fast
+                  input:
+                    first_frame_url: data:image/png;base64,{base64_encode}
+                    prompt: make it dance.
+                  parameters:
+                    vidu_type: img2video
+                    duration: 5
+                    resolution: 720p
+                    seed: 42
+                    bgm: false
+                    audio: false
+      responses:
+        "200":
+          description: 任务提交成功。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ViduImg2VideoSubmitResponse"
+              examples:
+                submitted:
+                  summary: 已提交任务
+                  value:
+                    output:
+                      task_id: task_id
+                    request_id: request_id
+        "400":
+          description: 请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ViduImg2VideoErrorResponse"
+              examples:
+                paramError:
+                  $ref: "#/components/examples/ViduImg2VideoParamError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ViduImg2VideoErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/ViduImg2VideoParamError"
+
+  /v1/tasks/status:
+    get:
+      tags:
+        - Vidu Img2Video
+      operationId: getViduImg2VideoTaskStatus
+      summary: 查询 Vidu 图生视频任务状态
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: task_id
+          in: query
+          required: true
+          description: Asynchronous task identifier returned by `/v1/tasks/submit`.
+          schema:
+            type: string
+          examples:
+            placeholder:
+              summary: 源文档占位值
+              value: task_id
+      responses:
+        "200":
+          description: 任务状态响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ViduImg2VideoStatusResponse"
+              examples:
+                success:
+                  summary: 成功任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Success
+                      urls:
+                        - https://xxxxx/xxxx.mp4
+                      submit_time: 1756959000
+                      finish_time: 1756959050
+                    usage:
+                      duration: 5
+                    request_id: ""
+                failure:
+                  summary: 失败任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Failure
+                      submit_time: 1756959000
+                      finish_time: 1756959019
+                      error_message: error_message
+                    usage:
+                      duration: 5
+                    request_id: ""
+        "400":
+          description: 请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ViduImg2VideoErrorResponse"
+              examples:
+                paramError:
+                  $ref: "#/components/examples/ViduImg2VideoParamError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ViduImg2VideoErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/ViduImg2VideoParamError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+  schemas:
+    ViduImg2VideoSubmitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - input
+        - parameters
+      properties:
+        model:
+          type: string
+          description: |
+            Vidu image-to-video model name. This schema is pinned to the
+            `Vidu-Img2Video` source document and only allows its documented
+            image-to-video model values.
+          enum:
+            - viduq3-pro
+            - viduq2-pro
+            - viduq2-turbo
+            - viduq2-pro-fast
+        input:
+          $ref: "#/components/schemas/ViduImg2VideoInput"
+        parameters:
+          $ref: "#/components/schemas/ViduImg2VideoParameters"
+
+    ViduImg2VideoInput:
+      type: object
+      additionalProperties: false
+      required:
+        - first_frame_url
+      properties:
+        first_frame_url:
+          type: string
+          description: |
+            First-frame image as a URL or Base64-encoded image. Supported image
+            formats are png, jpeg, jpg, and webp. The image aspect ratio must be
+            less than 1:4 or 4:1, and the image must not exceed 50 MB. Base64
+            values use the form `data:image/png;base64,{base64_encode}`.
+          examples:
+            - https://prod-ss-images.s3.cn-northwest-1.amazonaws.com.cn/vidu-maas/template/image2video.png
+            - data:image/png;base64,{base64_encode}
+        prompt:
+          type: string
+          maxLength: 2000
+          description: Text prompt used to guide video generation.
+          examples:
+            - make it dance.
+
+    ViduImg2VideoParameters:
+      type: object
+      additionalProperties: false
+      required:
+        - vidu_type
+      properties:
+        vidu_type:
+          type: string
+          const: img2video
+          description: Vidu interface type for image-to-video generation.
+        duration:
+          type: integer
+          minimum: 1
+          maximum: 16
+          default: 5
+          x-model-constraints:
+            viduq3-pro:
+              default: 5
+              minimum: 1
+              maximum: 16
+            viduq2-pro:
+              default: 5
+              minimum: 1
+              maximum: 10
+            viduq2-turbo:
+              default: 5
+              minimum: 1
+              maximum: 10
+            viduq2-pro-fast:
+              default: 5
+              minimum: 1
+              maximum: 10
+          description: |
+            Video duration in seconds. `viduq3-pro` defaults to 5 and supports
+            1-16 seconds. `viduq2-pro`, `viduq2-turbo`, and `viduq2-pro-fast`
+            default to 5 and support 1-10 seconds.
+        seed:
+          type: integer
+          default: 0
+          description: Random seed. The default value 0 uses a random seed.
+        resolution:
+          type: string
+          default: 720p
+          x-model-constraints:
+            viduq3-pro:
+              default: 720p
+              enum:
+                - 360p
+                - 540p
+                - 720p
+                - 1080p
+                - 2K
+            viduq2-pro:
+              default: 720p
+              enum:
+                - 360p
+                - 540p
+                - 720p
+                - 1080p
+            viduq2-turbo:
+              default: 720p
+              enum:
+                - 360p
+                - 540p
+                - 720p
+                - 1080p
+            viduq2-pro-fast:
+              default: 720p
+              enum:
+                - 720p
+                - 1080p
+          description: |
+            Output resolution. `viduq3-pro` supports 360p, 540p, 720p, 1080p,
+            and 2K for 1-16 second videos. `viduq2-pro`, `viduq2-turbo`, and
+            `viduq2-pro-fast` support documented 1-10 second resolutions, with
+            `viduq2-pro-fast` not supporting 360p or 540p.
+          enum:
+            - 360p
+            - 540p
+            - 720p
+            - 1080p
+            - 2K
+        movement_amplitude:
+          type: string
+          default: auto
+          description: |
+            Motion amplitude. The source documentation notes that this
+            parameter does not take effect for q2 and q3 models.
+          enum:
+            - auto
+            - small
+            - medium
+            - large
+        bgm:
+          type: boolean
+          default: false
+          description: |
+            Whether to add background music. The source documentation notes
+            that this parameter does not take effect for q3 models.
+        audio:
+          type: boolean
+          default: false
+          x-model-constraints:
+            viduq3-pro:
+              default: true
+              enum:
+                - true
+            viduq2-pro:
+              default: false
+              enum:
+                - false
+                - true
+            viduq2-turbo:
+              default: false
+              enum:
+                - false
+                - true
+            viduq2-pro-fast:
+              default: false
+              enum:
+                - false
+                - true
+          description: |
+            Whether to use direct audio/video output. `false` outputs a silent
+            video, while `true` outputs video with dialogue and background
+            audio. When true, `voice_id` may take effect. For q3 models this
+            defaults to true and cannot be disabled.
+        voice_id:
+          type: string
+          description: |
+            Voice ID used to decide the video's voice timbre. If empty, the
+            system automatically recommends a voice. The source documentation
+            notes that this parameter does not take effect for q3 models.
+
+    ViduImg2VideoSubmitResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          type: object
+          additionalProperties: false
+          required:
+            - task_id
+          properties:
+            task_id:
+              type: string
+              description: 异步任务唯一标识。
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    ViduImg2VideoStatusResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/ViduImg2VideoStatusOutput"
+        usage:
+          $ref: "#/components/schemas/ViduImg2VideoUsage"
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    ViduImg2VideoStatusOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+        - task_status
+      properties:
+        task_id:
+          type: string
+          description: 异步任务唯一标识。
+        task_status:
+          $ref: "#/components/schemas/ViduImg2VideoTaskStatus"
+        urls:
+          type: array
+          description: 视频结果 URL 列表。
+          items:
+            type: string
+            format: uri
+        submit_time:
+          type: integer
+          format: int64
+          description: 任务提交时间戳。
+        finish_time:
+          type: integer
+          format: int64
+          description: 任务完成时间戳。
+        error_message:
+          type: string
+          description: 任务失败时返回的错误信息。
+
+    ViduImg2VideoTaskStatus:
+      type: string
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      enum:
+        - Pending
+        - Running
+        - Success
+        - Failure
+
+    ViduImg2VideoUsage:
+      type: object
+      additionalProperties: false
+      properties:
+        duration:
+          type: integer
+          description: 视频时长，单位为秒。
+
+    ViduImg2VideoErrorResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/ViduImg2VideoErrorObject"
+
+    ViduImg2VideoErrorObject:
+      type: object
+      additionalProperties: true
+      required:
+        - message
+        - type
+      properties:
+        message:
+          type: string
+          description: 错误信息。
+        type:
+          type: string
+          description: 错误类型。
+          examples:
+            - invalid_request_error
+        code:
+          type:
+            - string
+            - "null"
+          description: 错误码。
+          examples:
+            - param_error
+        param:
+          type:
+            - string
+            - "null"
+          description: 相关请求参数，如有。
+
+  examples:
+    ViduImg2VideoParamError:
+      summary: 参数错误
+      value:
+        error:
+          message: Invalid param
+          type: invalid_request_error
+          code: param_error
+          param: parameters.duration

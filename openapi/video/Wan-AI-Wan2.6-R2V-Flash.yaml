@@ -1,0 +1,371 @@
+openapi: 3.1.0
+x-language: zh-CN
+info:
+  title: Wan-AI-Wan2.6-R2V-Flash接口文档
+  version: "1.0.0"
+  description: |
+    这是 ModelVerse 上 `Wan-AI-Wan2.6-R2V-Flash` 的视频接口文档，说明如何提交生成任务、查询任务状态、读取视频结果以及处理错误。
+    接口路径包括 `POST /v1/tasks/submit`、`GET /v1/tasks/status`。
+servers:
+  - url: https://api.modelverse.cn
+    description: 该模型文档中使用的 ModelVerse API 端点。
+
+tags:
+  - name: Wan-AI/Wan2.6-R2V-Flash
+    description: Reference-to-video asynchronous task operations.
+
+paths:
+  /v1/tasks/submit:
+    post:
+      tags:
+        - Wan-AI/Wan2.6-R2V-Flash
+      operationId: submitWanAIWan26R2VFlashTask
+      summary: 提交 Wan-AI/Wan2.6-R2V-Flash 参考图生视频任务
+      description: |
+        提交异步任务。请求体中的模型和参数按本模型文档填写，响应会返回任务 ID。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WanAIWan26R2VFlashSubmitRequest"
+            examples:
+              referenceToVideo:
+                summary: 提交 参考图生视频任务
+                value:
+                  model: wan2.6-r2v-flash
+                  input:
+                    prompt: "Character2 坐在靠窗的椅子上，手持 character3，在 character4 旁演奏一首舒缓的美国乡村民谣。Character1 对Character2开口说道：“听起来不错”"
+                    reference_urls:
+                      - https://example.com/wan-r2v-role1.mp4
+                      - https://example.com/wan-r2v-role2.mp4
+                      - https://example.com/wan-r2v-object4.png
+                      - https://example.com/wan-r2v-backgroud5.png
+                  parameters:
+                    size: 1920x1080
+                    duration: 5
+                    audio: true
+                    shot_type: single
+              minimal:
+                summary: 源文档最小请求
+                value:
+                  model: wan2.6-r2v-flash
+                  input:
+                    prompt: Generate a short video matching the referenced character.
+                    reference_urls:
+                      - https://example.com/character.png
+                  parameters:
+                    size: 1280x720
+      responses:
+        "200":
+          description: 任务提交成功。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WanAIWan26R2VFlashSubmitResponse"
+              examples:
+                submitted:
+                  summary: 已提交任务
+                  value:
+                    output:
+                      task_id: task_id
+                    request_id: request_id
+        "400":
+          description: 请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WanAIWan26R2VFlashErrorResponse"
+              examples:
+                invalidParameter:
+                  $ref: "#/components/examples/WanAIWan26R2VFlashInvalidParameterError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WanAIWan26R2VFlashErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/WanAIWan26R2VFlashInvalidParameterError"
+
+  /v1/tasks/status:
+    get:
+      tags:
+        - Wan-AI/Wan2.6-R2V-Flash
+      operationId: getWanAIWan26R2VFlashTaskStatus
+      summary: 查询 Wan-AI/Wan2.6-R2V-Flash 任务状态
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: task_id
+          in: query
+          required: true
+          description: Unique identifier of the asynchronous task returned by `/v1/tasks/submit`.
+          schema:
+            type: string
+          example: task_id
+      responses:
+        "200":
+          description: 任务状态响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WanAIWan26R2VFlashStatusResponse"
+              examples:
+                success:
+                  summary: 成功任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Success
+                      urls:
+                        - https://xxxxx/xxxx.mp4
+                      submit_time: 1756959000
+                      finish_time: 1756959050
+                    usage:
+                      duration: 5
+                    request_id: ""
+                failure:
+                  summary: 失败任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Failure
+                      submit_time: 1756959000
+                      finish_time: 1756959019
+                      error_message: error_message
+                    usage:
+                      duration: 5
+                    request_id: ""
+        "400":
+          description: 任务标识或请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WanAIWan26R2VFlashErrorResponse"
+              examples:
+                invalidParameter:
+                  $ref: "#/components/examples/WanAIWan26R2VFlashInvalidParameterError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WanAIWan26R2VFlashErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/WanAIWan26R2VFlashInvalidParameterError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+  schemas:
+    WanAIWan26R2VFlashSubmitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - input
+        - parameters
+      properties:
+        model:
+          type: string
+          const: wan2.6-r2v-flash
+          description: Model name. This schema is pinned to `wan2.6-r2v-flash`.
+        input:
+          $ref: "#/components/schemas/WanAIWan26R2VFlashInput"
+        parameters:
+          $ref: "#/components/schemas/WanAIWan26R2VFlashParameters"
+
+    WanAIWan26R2VFlashInput:
+      type: object
+      additionalProperties: false
+      required:
+        - prompt
+        - reference_urls
+      properties:
+        prompt:
+          type: string
+          description: 用于指导视频生成的提示词。
+        reference_urls:
+          type: array
+          maxItems: 5
+          description: |
+            Uploaded reference file URL list. Each URL may point to one image or one video, and each
+            reference file should contain one subject. Multiple reference files define character order
+            by array position: the first URL corresponds to character1, the second to character2, and so on.
+
+            Documented limits: images 0 to 5, videos 0 to 3, and images plus videos at most 5.
+            Reference videos support MP4 or MOV, duration 1s to 30s, and file size up to 100 MB.
+            Reference images support JPEG, JPG, PNG without alpha channel, BMP, and WEBP, with width
+            and height each in the range [240, 8000] pixels and file size up to 20 MB.
+          items:
+            type: string
+            format: uri
+
+    WanAIWan26R2VFlashParameters:
+      type: object
+      additionalProperties: false
+      required:
+        - size
+      properties:
+        size:
+          type: string
+          description: Generated video size. The documented choices map to 720P and 1080P landscape or portrait resolutions.
+          enum:
+            - 1280x720
+            - 720x1280
+            - 1920x1080
+            - 1080x1920
+        duration:
+          type: integer
+          description: Generated video duration in seconds.
+          enum:
+            - 5
+            - 10
+          default: 5
+        shot_type:
+          type: string
+          description: |
+            Generated video shot type. This parameter takes precedence over the prompt: for example,
+            `single` produces a single-shot video even when the prompt asks for multiple shots.
+          enum:
+            - single
+            - multi
+          default: single
+        watermark:
+          type: boolean
+          description: Whether to add the fixed "AI生成" watermark in the bottom-right corner of the video.
+          default: false
+        audio:
+          type: boolean
+          description: Whether to output sound.
+          default: false
+
+    WanAIWan26R2VFlashSubmitResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          type: object
+          additionalProperties: false
+          required:
+            - task_id
+          properties:
+            task_id:
+              type: string
+              description: 异步任务唯一标识。
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    WanAIWan26R2VFlashStatusResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          type: object
+          additionalProperties: false
+          required:
+            - task_id
+            - task_status
+          properties:
+            task_id:
+              type: string
+              description: 异步任务唯一标识。
+            task_status:
+              $ref: "#/components/schemas/WanAIWan26R2VFlashTaskStatus"
+            urls:
+              type: array
+              description: 视频结果 URL 列表。
+              items:
+                type: string
+                format: uri
+            submit_time:
+              type: integer
+              format: int64
+              description: 任务提交时间戳。
+            finish_time:
+              type: integer
+              format: int64
+              description: 任务完成时间戳。
+            error_message:
+              type: string
+              description: 任务失败时返回的错误信息。
+        usage:
+          type: object
+          additionalProperties: false
+          properties:
+            duration:
+              type: integer
+              description: 任务执行时长，单位为秒。
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    WanAIWan26R2VFlashTaskStatus:
+      type: string
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      enum:
+        - Pending
+        - Running
+        - Success
+        - Failure
+
+    WanAIWan26R2VFlashErrorResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/WanAIWan26R2VFlashErrorObject"
+        request_id:
+          type: string
+          description: 唯一请求标识，如可用。
+
+    WanAIWan26R2VFlashErrorObject:
+      type: object
+      additionalProperties: true
+      required:
+        - message
+        - type
+      properties:
+        message:
+          type: string
+          description: 错误信息。
+        type:
+          type: string
+          description: 错误类型。
+          examples:
+            - invalid_request_error
+        code:
+          type: string
+          description: 错误码。
+
+  examples:
+    WanAIWan26R2VFlashInvalidParameterError:
+      summary: 参数错误
+      value:
+        error:
+          message: Invalid param
+          type: invalid_request_error
+          code: param_error
+        request_id: request_id

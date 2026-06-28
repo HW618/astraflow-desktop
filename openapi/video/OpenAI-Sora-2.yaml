@@ -1,0 +1,391 @@
+openapi: 3.1.0
+x-language: zh-CN
+info:
+  title: OpenAI-Sora-2接口文档
+  version: "1.0.0"
+  description: |
+    这是 ModelVerse 上 `OpenAI-Sora-2` 的视频接口文档，说明如何创建视频任务、查询任务、下载内容、发起 remix 以及处理错误。
+    接口路径包括 `POST /v1/videos`、`GET /v1/videos/{task_id}`、`GET /v1/videos/{task_id}/content`、`POST /v1/videos/{task_id}/remix`。
+servers:
+  - url: https://api.modelverse.cn
+    description: ModelVerse API endpoint shown in the source document.
+
+tags:
+  - name: OpenAI Sora-2 Videos
+    description: OpenAI-style asynchronous video generation, status, content download, and remix APIs.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/videos:
+    post:
+      tags:
+        - OpenAI Sora-2 Videos
+      operationId: createOpenAISora2Video
+      summary: 创建 Sora-2视频任务
+      description: |
+        创建视频生成任务。响应返回任务 ID，后续可用查询接口获取状态和结果。
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/CreateOpenAISora2VideoMultipartRequest"
+            encoding:
+              input_reference:
+                contentType: image/jpeg
+            examples:
+              image_reference:
+                summary: 根据 a prompt and 首帧图像 生成视频
+                value:
+                  prompt: She turns around and smiles, then slowly walks out of the frame.
+                  model: sora-2
+                  size: 1280x720
+                  seconds: "8"
+                  input_reference: sample_720p.jpeg
+      responses:
+        "200":
+          description: Video task accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAISora2Video"
+              examples:
+                queued:
+                  summary: 已排队的 Sora-2 视频任务
+                  value:
+                    id: video_456
+                    object: video
+                    model: sora-2
+                    status: queued
+                    progress: 0
+                    created_at: 1712698600
+                    size: 720x1280
+                    seconds: "8"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/videos/{task_id}:
+    get:
+      tags:
+        - OpenAI Sora-2 Videos
+      operationId: getOpenAISora2Video
+      summary: 查询 Sora-2视频任务
+      description: |
+        查询视频任务详情。响应包含任务状态、结果地址和错误信息。
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200":
+          description: Video task status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAISora2Video"
+              examples:
+                queued:
+                  summary: 已排队的 Sora-2 视频任务
+                  value:
+                    id: video_456
+                    object: video
+                    model: sora-2
+                    status: queued
+                    progress: 0
+                    created_at: 1712698600
+                    size: 720x1280
+                    seconds: "8"
+        "400":
+          description: 请求无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalid_request:
+                  summary: 无效请求错误
+                  value:
+                    error:
+                      message: error
+                      type: invalid_request_error
+                      param: null
+                      code: null
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/videos/{task_id}/content:
+    get:
+      tags:
+        - OpenAI Sora-2 Videos
+      operationId: downloadOpenAISora2VideoContent
+      summary: 下载 Sora-2视频content
+      description: |
+        下载已完成的视频内容。任务未完成时会返回对应的错误响应。
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      responses:
+        "200":
+          description: Binary video stream.
+          content:
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Video task is not ready or the request is invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                task_not_completed:
+                  summary: 任务尚未完成
+                  value:
+                    error:
+                      message: "task is not completed yet, current status: Pending"
+                      type: invalid_request_error
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/videos/{task_id}/remix:
+    post:
+      tags:
+        - OpenAI Sora-2 Videos
+      operationId: remixOpenAISora2Video
+      summary: 重新混剪 a Sora-2视频task
+      description: |
+        基于已有视频任务发起 remix。请求中提供新的提示词或控制参数，响应返回新的任务 ID。
+      parameters:
+        - $ref: "#/components/parameters/TaskId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RemixOpenAISora2VideoRequest"
+            examples:
+              cyberpunk_style:
+                summary: 重新混剪带a new style prompt
+                value:
+                  prompt: 赛博朋克风格
+      responses:
+        "200":
+          description: Remix video task accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAISora2Video"
+              examples:
+                queued_remix:
+                  summary: 已排队的 remix 任务
+                  value:
+                    id: video_456
+                    object: video
+                    model: sora-2
+                    status: queued
+                    progress: 0
+                    created_at: 1712698600
+                    size: 720x1280
+                    seconds: "8"
+                    remixed_from_video_id: video_123
+        "400":
+          description: Invalid remix request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                prompt_required:
+                  summary: 缺少 prompt
+                  value:
+                    error:
+                      message: "Invalid param: prompt is required"
+                      type: invalid_request_error
+                      param: 6217f8ed-396d-434a-9b78-96775c0d2f99
+                      code: param_error
+        default:
+          $ref: "#/components/responses/Error"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+
+  parameters:
+    TaskId:
+      name: task_id
+      in: path
+      required: true
+      description: |
+        基于已有视频任务发起 remix。请求中提供新的提示词或控制参数，响应返回新的任务 ID。
+      schema:
+        type: string
+      example: video_6982fa1cd4f081908b619dc53cfc2435
+
+  responses:
+    BadRequest:
+      description: |
+        基于已有视频任务发起 remix。请求中提供新的提示词或控制参数，响应返回新的任务 ID。
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            invalid_request:
+              summary: 无效请求错误
+              value:
+                error:
+                  message: error
+                  type: invalid_request_error
+                  param: null
+                  code: null
+    Error:
+      description: |
+        基于已有视频任务发起 remix。请求中提供新的提示词或控制参数，响应返回新的任务 ID。
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  schemas:
+    CreateOpenAISora2VideoMultipartRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - prompt
+      properties:
+        model:
+          type: string
+          const: sora-2
+          description: Model name. This API is pinned to `sora-2`.
+        prompt:
+          type: string
+          description: 用于指导视频生成的提示词。
+        size:
+          type: string
+          enum:
+            - 720x1280
+            - 1280x720
+          description: Output video resolution.
+        seconds:
+          type: string
+          enum:
+            - "4"
+            - "8"
+            - "12"
+          description: |
+            Video duration in seconds. The source parameter table labels this
+            field as `duration`, while its request and response examples use
+            `seconds`.
+        input_reference:
+          type: string
+          format: binary
+          description: Optional first-frame image file.
+
+    RemixOpenAISora2VideoRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - prompt
+      properties:
+        prompt:
+          type: string
+          description: Prompt for remixing the existing video task.
+
+    OpenAISora2Video:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - object
+        - model
+        - status
+        - progress
+        - created_at
+        - size
+        - seconds
+      properties:
+        id:
+          type: string
+          description: 异步任务唯一标识。
+        object:
+          type: string
+          const: video
+          description: Object type.
+        model:
+          type: string
+          const: sora-2
+          description: Model name. This API is pinned to `sora-2`.
+        status:
+          type: string
+          enum:
+            - queued
+            - in_progress
+            - completed
+            - failed
+          description: 任务状态。
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Task progress.
+        created_at:
+          type: integer
+          description: Unix timestamp when the task was created.
+        size:
+          type: string
+          enum:
+            - 720x1280
+            - 1280x720
+          description: Video resolution.
+        seconds:
+          type: string
+          enum:
+            - "4"
+            - "8"
+            - "12"
+          description: 视频时长，单位为秒。
+        remixed_from_video_id:
+          type: string
+          description: Source task ID for remix responses.
+
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorObject"
+
+    ErrorObject:
+      type: object
+      additionalProperties: false
+      required:
+        - message
+        - type
+      properties:
+        message:
+          type: string
+          description: 错误信息。
+        type:
+          type: string
+          description: 错误类型。
+        param:
+          type:
+            - string
+            - "null"
+          description: Parameter related to the error, when provided.
+        code:
+          type:
+            - string
+            - "null"
+          description: Machine-readable error code, when provided.

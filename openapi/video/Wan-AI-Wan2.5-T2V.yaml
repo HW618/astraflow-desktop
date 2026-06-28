@@ -1,0 +1,359 @@
+openapi: 3.1.0
+x-language: zh-CN
+info:
+  title: Wan-AI-Wan2.5-T2V接口文档
+  version: "1.0.0"
+  description: |
+    这是 ModelVerse 上 `Wan-AI-Wan2.5-T2V` 的视频接口文档，说明如何提交生成任务、查询任务状态、读取视频结果以及处理错误。
+    接口路径包括 `POST /v1/tasks/submit`、`GET /v1/tasks/status`。
+servers:
+  - url: https://api.modelverse.cn
+    description: 该模型文档中使用的 ModelVerse API 端点。
+
+tags:
+  - name: Wan-AI/Wan2.5-T2V
+    description: Text-to-video asynchronous task operations.
+
+paths:
+  /v1/tasks/submit:
+    post:
+      tags:
+        - Wan-AI/Wan2.5-T2V
+      operationId: submitWanAIWan25T2VTask
+      summary: 提交 Wan-AI/Wan2.5-T2V 文生视频任务
+      description: |
+        提交异步任务。请求体中的模型和参数按本模型文档填写，响应会返回任务 ID。
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WanAIWan25T2VTaskSubmitRequest"
+            examples:
+              basic:
+                summary: Basic 文生视频 请求
+                value:
+                  model: Wan-AI/Wan2.5-T2V
+                  input:
+                    prompt: A beautiful girl is dancing
+                  parameters:
+                    size: 832x480
+                    duration: 5
+              withAudio:
+                summary: 带音频引导的文生视频请求
+                value:
+                  model: Wan-AI/Wan2.5-T2V
+                  input:
+                    prompt: A beautiful girl is dancing
+                    audio_url: https://example.com/audio.mp3
+                  parameters:
+                    size: 832x480
+                    duration: 5
+      responses:
+        "200":
+          description: 任务提交成功。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskSubmitResponse"
+              examples:
+                submitted:
+                  summary: 已提交任务
+                  value:
+                    output:
+                      task_id: task_id
+                    request_id: request_id
+        "400":
+          description: 请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidParameter:
+                  $ref: "#/components/examples/InvalidParameterError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/InvalidParameterError"
+
+  /v1/tasks/status:
+    get:
+      tags:
+        - Wan-AI/Wan2.5-T2V
+      operationId: getWanAIWan25T2VTaskStatus
+      summary: 查询 Wan-AI/Wan2.5-T2V 任务状态
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - name: task_id
+          in: query
+          required: true
+          description: Asynchronous task identifier returned by `/v1/tasks/submit`.
+          schema:
+            type: string
+          examples:
+            taskId:
+              value: task_id
+      responses:
+        "200":
+          description: 任务状态响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskStatusResponse"
+              examples:
+                success:
+                  summary: 成功任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Success
+                      urls:
+                        - https://xxxxx/xxxx.mp4
+                      submit_time: 1756959000
+                      finish_time: 1756959050
+                    usage:
+                      duration: 5
+                    request_id: ""
+                failure:
+                  summary: 失败任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Failure
+                      submit_time: 1756959000
+                      finish_time: 1756959019
+                      error_message: error_message
+                    usage:
+                      duration: 5
+                    request_id: ""
+        "400":
+          description: 任务标识或请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidParameter:
+                  $ref: "#/components/examples/InvalidParameterError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/InvalidParameterError"
+
+components:
+  securitySchemes:
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+  schemas:
+    WanAIWan25T2VTaskSubmitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - input
+        - parameters
+      properties:
+        model:
+          type: string
+          const: Wan-AI/Wan2.5-T2V
+          description: Model name. Fixed to `Wan-AI/Wan2.5-T2V` for this API document.
+        input:
+          $ref: "#/components/schemas/WanAIWan25T2VInput"
+        parameters:
+          $ref: "#/components/schemas/WanAIWan25T2VParameters"
+
+    WanAIWan25T2VInput:
+      type: object
+      additionalProperties: false
+      required:
+        - prompt
+      properties:
+        prompt:
+          type: string
+          minLength: 1
+          description: 用于指导视频生成的提示词。
+        negative_prompt:
+          type: string
+          description: 用于限制不期望内容的负向提示词。
+        audio_url:
+          type: string
+          format: uri
+          description: Optional audio file URL used to guide generation.
+
+    WanAIWan25T2VParameters:
+      type: object
+      additionalProperties: false
+      required:
+        - size
+      properties:
+        size:
+          type: string
+          description: Generated video size. The documented choices map to 480P, 720P, and 1080P landscape or portrait resolutions.
+          enum:
+            - 832x480
+            - 480x832
+            - 1280x720
+            - 720x1280
+            - 1920x1080
+            - 1080x1920
+        duration:
+          type: integer
+          description: Generated video duration in seconds.
+          enum:
+            - 5
+            - 10
+          default: 5
+        prompt_extend:
+          type: boolean
+          description: Whether to enable intelligent prompt rewriting by a large model. This can improve short prompts but may increase latency.
+          default: false
+        seed:
+          type: integer
+          minimum: -1
+          maximum: 2147483647
+          description: Random seed. `-1` means random.
+
+    TaskSubmitResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          type: object
+          additionalProperties: false
+          required:
+            - task_id
+          properties:
+            task_id:
+              type: string
+              description: 异步任务唯一标识。
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    TaskStatusResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          type: object
+          additionalProperties: false
+          required:
+            - task_id
+            - task_status
+          properties:
+            task_id:
+              type: string
+              description: 异步任务唯一标识。
+            task_status:
+              $ref: "#/components/schemas/TaskStatus"
+            urls:
+              type: array
+              description: 视频结果 URL 列表。
+              items:
+                type: string
+                format: uri
+            submit_time:
+              type: integer
+              format: int64
+              description: 任务提交时间的 Unix 秒级时间戳。
+            finish_time:
+              type: integer
+              format: int64
+              description: 任务完成时间的 Unix 秒级时间戳。
+            error_message:
+              type: string
+              description: 任务失败时返回的错误信息。
+        usage:
+          type: object
+          additionalProperties: false
+          properties:
+            duration:
+              type: integer
+              description: 任务执行时长，单位为秒。
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    TaskStatus:
+      type: string
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      enum:
+        - Pending
+        - Running
+        - Success
+        - Failure
+
+    ErrorResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorObject"
+
+    ErrorObject:
+      type: object
+      additionalProperties: true
+      required:
+        - message
+        - type
+      properties:
+        message:
+          type: string
+          description: 错误信息。
+        type:
+          type: string
+          description: 错误类型。
+          enum:
+            - invalid_request_error
+            - timeout
+            - rate_limit_error
+            - internal_error
+        code:
+          type:
+            - string
+            - "null"
+          description: 错误码。
+        param:
+          type:
+            - string
+            - "null"
+          description: Request id or parameter name related to the error.
+
+  examples:
+    InvalidParameterError:
+      summary: 参数错误
+      value:
+        error:
+          message: Invalid param
+          type: invalid_request_error
+          code: param_error
+          param: request_id

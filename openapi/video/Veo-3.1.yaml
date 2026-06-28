@@ -1,0 +1,407 @@
+openapi: 3.1.0
+x-language: zh-CN
+info:
+  title: Veo-3.1接口文档
+  version: "1.0.0"
+  description: |
+    这是 ModelVerse 上 `Veo-3.1` 的视频接口文档，说明如何提交生成任务、查询任务状态、读取视频结果以及处理错误。
+    接口路径包括 `POST /v1/tasks/submit`、`GET /v1/tasks/status`。
+servers:
+  - url: https://api.modelverse.cn
+    description: 该模型文档中使用的 ModelVerse API 端点。
+
+tags:
+  - name: Veo 3.1
+    description: Veo 3.1 asynchronous video generation operations.
+
+paths:
+  /v1/tasks/submit:
+    post:
+      tags:
+        - Veo 3.1
+      operationId: submitVeo31Task
+      summary: 提交 Veo 3.1视频generation 任务
+      description: |
+        提交异步任务。请求体中的模型和参数按本模型文档填写，响应会返回任务 ID。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Veo31SubmitRequest"
+            examples:
+              firstAndLastFrame:
+                summary: 根据 prompt, 首帧, and 尾帧 生成视频
+                value:
+                  model: veo-3.1-generate-001
+                  input:
+                    prompt: make it run
+                    image:
+                      bytesBase64Encoded: xxxxx
+                      mimeType: image/jpeg
+                    last_frame:
+                      bytesBase64Encoded: xxxxx
+                      mimeType: image/jpeg
+                  parameters:
+                    duration: 6
+                    aspect_ratio: "16:9"
+                    resolution: 1080p
+                    generate_audio: true
+              textToVideoFast:
+                summary: 根据 prompt带the fast model 生成视频
+                value:
+                  model: veo-3.1-fast-generate-001
+                  input:
+                    prompt: a cinematic shot of waves rolling onto a moonlit beach
+                    negative_prompt: blurry, low quality
+                  parameters:
+                    duration: 8
+                    aspect_ratio: "9:16"
+                    resolution: 720p
+                    generate_audio: false
+                    person_generation: dont_allow
+      responses:
+        "200":
+          description: 任务提交成功。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Veo31SubmitResponse"
+              examples:
+                submitted:
+                  summary: 已提交任务
+                  value:
+                    output:
+                      task_id: task_id
+                    request_id: request_id
+        "400":
+          description: 请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Veo31ErrorResponse"
+              examples:
+                paramError:
+                  $ref: "#/components/examples/Veo31ParamError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Veo31ErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/Veo31ParamError"
+
+  /v1/tasks/status:
+    get:
+      tags:
+        - Veo 3.1
+      operationId: getVeo31TaskStatus
+      summary: 查询 Veo 3.1 任务状态
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: task_id
+          in: query
+          required: true
+          description: Asynchronous task identifier returned by `/v1/tasks/submit`.
+          schema:
+            type: string
+          examples:
+            placeholder:
+              summary: 源文档占位值
+              value: task_id
+      responses:
+        "200":
+          description: 任务状态响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Veo31StatusResponse"
+              examples:
+                success:
+                  summary: 成功任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Success
+                      urls:
+                        - https://xxxxx/xxxx.mp4
+                      submit_time: 1756959000
+                      finish_time: 1756959050
+                    usage:
+                      duration: 5
+                    request_id: ""
+                failure:
+                  summary: 失败任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Failure
+                      submit_time: 1756959000
+                      finish_time: 1756959019
+                      error_message: error_message
+                    usage:
+                      duration: 5
+                    request_id: ""
+        "400":
+          description: 请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Veo31ErrorResponse"
+              examples:
+                paramError:
+                  $ref: "#/components/examples/Veo31ParamError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Veo31ErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/Veo31ParamError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+  schemas:
+    Veo31SubmitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - input
+        - parameters
+      properties:
+        model:
+          $ref: "#/components/schemas/Veo31Model"
+        input:
+          $ref: "#/components/schemas/Veo31Input"
+        parameters:
+          $ref: "#/components/schemas/Veo31Parameters"
+
+    Veo31Model:
+      type: string
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      enum:
+        - veo-3.1-generate-001
+        - veo-3.1-fast-generate-001
+
+    Veo31Input:
+      type: object
+      additionalProperties: false
+      required:
+        - prompt
+      properties:
+        prompt:
+          type: string
+          minLength: 1
+          description: 用于指导视频生成的提示词。
+        negative_prompt:
+          type: string
+          description: 用于限制不期望内容的负向提示词。
+        image:
+          $ref: "#/components/schemas/Veo31Image"
+        last_frame:
+          $ref: "#/components/schemas/Veo31Image"
+
+    Veo31Image:
+      type: object
+      additionalProperties: false
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      properties:
+        bytesBase64Encoded:
+          type: string
+          description: |
+            Pure Base64-encoded image bytes. Do not include a data URL prefix
+            such as `data:image/jpeg;base64,`.
+        mimeType:
+          type: string
+          description: Image MIME type accepted by the API.
+          enum:
+            - image/jpeg
+            - image/png
+            - image/webp
+
+    Veo31Parameters:
+      type: object
+      additionalProperties: false
+      required:
+        - generate_audio
+      properties:
+        resolution:
+          type: string
+          description: Generated video resolution.
+          enum:
+            - 720p
+            - 1080p
+          default: 720p
+        duration:
+          type: integer
+          description: Generated video duration in seconds.
+          enum:
+            - 4
+            - 6
+            - 8
+          default: 8
+        aspect_ratio:
+          type: string
+          description: Generated video aspect ratio.
+          enum:
+            - "16:9"
+            - "9:16"
+          default: "16:9"
+        generate_audio:
+          type: boolean
+          description: Whether to generate audio for the video.
+        person_generation:
+          type: string
+          description: Safety setting for whether people or faces may be generated.
+          enum:
+            - allow_adult
+            - dont_allow
+          default: allow_adult
+
+    Veo31SubmitResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          type: object
+          additionalProperties: false
+          required:
+            - task_id
+          properties:
+            task_id:
+              type: string
+              description: 异步任务唯一标识。
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    Veo31StatusResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/Veo31StatusOutput"
+        usage:
+          $ref: "#/components/schemas/Veo31Usage"
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    Veo31StatusOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+        - task_status
+      properties:
+        task_id:
+          type: string
+          description: 异步任务唯一标识。
+        task_status:
+          $ref: "#/components/schemas/Veo31TaskStatus"
+        urls:
+          type: array
+          description: Video result URL list. URLs are retained for 24 hours by default.
+          items:
+            type: string
+            format: uri
+        submit_time:
+          type: integer
+          format: int64
+          description: 任务提交时间戳。
+        finish_time:
+          type: integer
+          format: int64
+          description: 任务完成时间戳。
+        error_message:
+          type: string
+          description: 任务失败时返回的错误信息。
+
+    Veo31TaskStatus:
+      type: string
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      enum:
+        - Pending
+        - Running
+        - Success
+        - Failure
+
+    Veo31Usage:
+      type: object
+      additionalProperties: false
+      properties:
+        duration:
+          type: integer
+          description: 任务执行时长，单位为秒。
+
+    Veo31ErrorResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/Veo31ErrorObject"
+
+    Veo31ErrorObject:
+      type: object
+      additionalProperties: true
+      required:
+        - message
+        - type
+      properties:
+        message:
+          type: string
+          description: 错误信息。
+        type:
+          type: string
+          description: 错误类型。
+          examples:
+            - invalid_request_error
+        code:
+          type:
+            - string
+            - "null"
+          description: 错误码。
+          examples:
+            - param_error
+        param:
+          type:
+            - string
+            - "null"
+          description: 相关请求参数，如有。
+
+  examples:
+    Veo31ParamError:
+      summary: 参数错误
+      value:
+        error:
+          message: Invalid param
+          type: invalid_request_error
+          code: param_error
+          param: task_id

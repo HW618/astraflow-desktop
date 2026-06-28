@@ -1,0 +1,337 @@
+openapi: 3.1.0
+x-language: zh-CN
+info:
+  title: Wan-AI-Wan2.2-T2V接口文档
+  version: "1.0.0"
+  description: |
+    这是 ModelVerse 上 `Wan-AI-Wan2.2-T2V` 的视频接口文档，说明如何提交生成任务、查询任务状态、读取视频结果以及处理错误。
+    接口路径包括 `POST /v1/tasks/submit`、`GET /v1/tasks/status`。
+servers:
+  - url: https://api.modelverse.cn
+    description: ModelVerse API endpoint.
+
+tags:
+  - name: Wan-AI/Wan2.2-T2V
+    description: Text-to-video async task operations for Wan-AI/Wan2.2-T2V.
+
+paths:
+  /v1/tasks/submit:
+    post:
+      tags:
+        - Wan-AI/Wan2.2-T2V
+      operationId: submitWanAIWan22T2VTask
+      summary: 提交 Wan-AI/Wan2.2-T2V 任务
+      description: |
+        提交异步任务。请求体中的模型和参数按本模型文档填写，响应会返回任务 ID。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WanAIWan22T2VSubmitRequest"
+            examples:
+              basic:
+                summary: 根据 text 生成视频
+                value:
+                  model: Wan-AI/Wan2.2-T2V
+                  input:
+                    prompt: a beautiful flower
+                    negative_prompt: low quality
+                  parameters:
+                    resolution: 720P
+                    seed: 12345
+      responses:
+        "200":
+          description: Task submission response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskSubmitResponse"
+              examples:
+                submitted:
+                  summary: 已提交任务
+                  value:
+                    output:
+                      task_id: task_id
+                    request_id: request_id
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidRequest:
+                  $ref: "#/components/examples/ErrorResponse"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/ErrorResponse"
+
+  /v1/tasks/status:
+    get:
+      tags:
+        - Wan-AI/Wan2.2-T2V
+      operationId: getWanAIWan22T2VTaskStatus
+      summary: 查询 Wan-AI/Wan2.2-T2V 任务
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: task_id
+          in: query
+          required: true
+          description: 异步任务唯一标识。
+          schema:
+            type: string
+          example: task_id
+      responses:
+        "200":
+          description: 任务状态响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskStatusResponse"
+              examples:
+                success:
+                  summary: 成功任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Success
+                      urls:
+                        - https://xxxxx/xxxx.mp4
+                      submit_time: 1756958375
+                      finish_time: 1756958428
+                    usage:
+                      duration: 5
+                    request_id: request_id
+                failure:
+                  summary: 失败任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Failure
+                      submit_time: 1756958375
+                      finish_time: 1756958380
+                      error_message: error_message
+                    usage:
+                      duration: 5
+                    request_id: ""
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidRequest:
+                  $ref: "#/components/examples/ErrorResponse"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/ErrorResponse"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+
+  schemas:
+    WanAIWan22T2VSubmitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - input
+      properties:
+        model:
+          type: string
+          const: Wan-AI/Wan2.2-T2V
+          description: Model name. This schema only accepts Wan-AI/Wan2.2-T2V.
+        input:
+          $ref: "#/components/schemas/WanAIWan22T2VInput"
+        parameters:
+          $ref: "#/components/schemas/WanAIWan22T2VParameters"
+
+    WanAIWan22T2VInput:
+      type: object
+      additionalProperties: false
+      required:
+        - prompt
+      properties:
+        prompt:
+          type: string
+          description: Text prompt describing the video content to generate.
+        negative_prompt:
+          type: string
+          description: Negative prompt describing content to avoid.
+
+    WanAIWan22T2VParameters:
+      type: object
+      additionalProperties: false
+      properties:
+        size:
+          type: string
+          enum:
+            - 832x480
+            - 480x832
+            - 1280x720
+            - 720x1280
+          description: |
+            Output size. For 480P, supported values are 832x480 and 480x832.
+            For 720P, supported values are 1280x720 and 720x1280.
+        resolution:
+          type: string
+          enum:
+            - 720P
+            - 480P
+          description: Video resolution tier.
+        duration:
+          type: integer
+          enum:
+            - 5
+            - 8
+          description: 视频时长，单位为秒。
+        seed:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+          description: 随机种子。
+
+    TaskSubmitResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          type: object
+          additionalProperties: true
+          required:
+            - task_id
+          properties:
+            task_id:
+              type: string
+              description: 异步任务唯一标识。
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    TaskStatusResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          type: object
+          additionalProperties: true
+          required:
+            - task_id
+            - task_status
+          properties:
+            task_id:
+              type: string
+              description: 异步任务唯一标识。
+            task_status:
+              $ref: "#/components/schemas/TaskStatus"
+            urls:
+              type: array
+              description: 视频结果 URL 列表。
+              items:
+                type: string
+                format: uri
+            submit_time:
+              type: integer
+              format: int64
+              description: 任务提交时间戳。
+            finish_time:
+              type: integer
+              format: int64
+              description: 任务完成时间戳。
+            error_message:
+              type: string
+              description: 任务失败时返回的错误信息。
+        usage:
+          type: object
+          additionalProperties: true
+          properties:
+            duration:
+              type: integer
+              description: 任务执行时长，单位为秒。
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    TaskStatus:
+      type: string
+      enum:
+        - Pending
+        - Running
+        - Success
+        - Failure
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+    ErrorResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorObject"
+        request_id:
+          type: string
+          description: 唯一请求标识，如可用。
+
+    ErrorObject:
+      type: object
+      additionalProperties: true
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          description: 错误信息。
+        type:
+          type: string
+          description: 错误类型。
+        param:
+          type:
+            - string
+            - "null"
+          description: 与错误相关的请求参数。
+        code:
+          type:
+            - string
+            - "null"
+          description: 错误码。
+
+  examples:
+    ErrorResponse:
+      summary: 错误响应
+      value:
+        error:
+          message: Invalid request.
+          type: invalid_request_error
+          param: input.prompt
+          code: invalid_parameter
+        request_id: request_id

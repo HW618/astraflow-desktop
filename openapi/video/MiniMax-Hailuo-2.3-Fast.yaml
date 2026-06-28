@@ -1,0 +1,387 @@
+openapi: 3.1.0
+x-language: zh-CN
+info:
+  title: MiniMax-Hailuo-2.3-Fast接口文档
+  version: "1.0.0"
+  description: |
+    这是 ModelVerse 上 `MiniMax-Hailuo-2.3-Fast` 的视频接口文档，说明如何提交生成任务、查询任务状态、读取视频结果以及处理错误。
+    接口路径包括 `POST /v1/tasks/submit`、`GET /v1/tasks/status`。
+servers:
+  - url: https://api.modelverse.cn
+    description: 该模型文档中使用的 ModelVerse API 端点。
+
+tags:
+  - name: MiniMax-Hailuo-2.3-Fast
+    description: Image-to-video asynchronous task operations for MiniMax-Hailuo-2.3-Fast.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/tasks/submit:
+    post:
+      tags:
+        - MiniMax-Hailuo-2.3-Fast
+      operationId: submitMiniMaxHailuo23FastTask
+      summary: 提交 MiniMax-Hailuo-2.3-Fast 图生视频任务
+      description: |
+        提交异步任务。请求体中的模型和参数按本模型文档填写，响应会返回任务 ID。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MiniMaxHailuo23FastSubmitRequest"
+            examples:
+              documented:
+                summary: 源文档 图生视频 请求
+                value:
+                  model: MiniMax-Hailuo-2.3-Fast
+                  input:
+                    prompt: "A beautiful sunset over the ocean with waves gently crashing on the shore. [推进, 跟随]"
+                    first_frame_image: https://umodelverse-inference.cn-wlcb.ufileos.com/ucloud-maxcot.jpg
+                  parameters:
+                    duration: 6
+                    resolution: 1080P
+                    prompt_optimizer: true
+                    fast_pretreatment: false
+                    aigc_watermark: false
+              base64FirstFrame:
+                summary: 提交with a Base64 data URL 首帧
+                value:
+                  model: MiniMax-Hailuo-2.3-Fast
+                  input:
+                    prompt: "A red sports car drives along a coastal highway. [推进]"
+                    first_frame_image: data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD...
+                  parameters:
+                    duration: 10
+                    resolution: 768P
+                    prompt_optimizer: true
+      responses:
+        "200":
+          description: 任务提交成功。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniMaxHailuo23FastSubmitResponse"
+              examples:
+                submitted:
+                  summary: 已提交任务
+                  value:
+                    output:
+                      task_id: "106916112212032"
+                    request_id: request_id
+        "400":
+          description: 请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniMaxHailuo23FastErrorResponse"
+              examples:
+                paramError:
+                  $ref: "#/components/examples/MiniMaxHailuo23FastParamError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniMaxHailuo23FastErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/MiniMaxHailuo23FastParamError"
+
+  /v1/tasks/status:
+    get:
+      tags:
+        - MiniMax-Hailuo-2.3-Fast
+      operationId: getMiniMaxHailuo23FastTaskStatus
+      summary: 查询 MiniMax-Hailuo-2.3-Fast 任务状态
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      parameters:
+        - name: task_id
+          in: query
+          required: true
+          description: Asynchronous task identifier returned by `/v1/tasks/submit`.
+          schema:
+            type: string
+          examples:
+            placeholder:
+              summary: 源文档占位值
+              value: task_id
+      responses:
+        "200":
+          description: 任务状态响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniMaxHailuo23FastStatusResponse"
+              examples:
+                success:
+                  summary: 成功任务
+                  value:
+                    output:
+                      task_id: "176843862716480"
+                      task_status: Success
+                      urls:
+                        - https://xxxxx/xxxx.mp4
+                      submit_time: 1756959000
+                      finish_time: 1756959050
+                    usage:
+                      duration: 6
+                    request_id: ""
+                failure:
+                  summary: 失败任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Failure
+                      submit_time: 1756959000
+                      finish_time: 1756959019
+                      error_message: error_message
+                    usage:
+                      duration: 6
+                    request_id: ""
+        "400":
+          description: 任务标识或请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniMaxHailuo23FastErrorResponse"
+              examples:
+                paramError:
+                  $ref: "#/components/examples/MiniMaxHailuo23FastParamError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MiniMaxHailuo23FastErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/MiniMaxHailuo23FastParamError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+  schemas:
+    MiniMaxHailuo23FastSubmitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - input
+      properties:
+        model:
+          type: string
+          const: MiniMax-Hailuo-2.3-Fast
+          description: Model name. This schema is pinned to `MiniMax-Hailuo-2.3-Fast`.
+        input:
+          $ref: "#/components/schemas/MiniMaxHailuo23FastInput"
+        parameters:
+          $ref: "#/components/schemas/MiniMaxHailuo23FastParameters"
+
+    MiniMaxHailuo23FastInput:
+      type: object
+      additionalProperties: false
+      required:
+        - first_frame_image
+        - prompt
+      properties:
+        first_frame_image:
+          type: string
+          description: |
+            Video first-frame image as a public URL or Base64-encoded data URL
+            in the form `data:image/jpeg;base64,...`. Supported formats are
+            JPG, JPEG, PNG, and WebP. The image must be no larger than 20 MB,
+            the short side must be greater than 300 px, and the aspect ratio
+            must be between 2:5 and 5:2.
+          examples:
+            - https://umodelverse-inference.cn-wlcb.ufileos.com/ucloud-maxcot.jpg
+            - data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD...
+        prompt:
+          type: string
+          maxLength: 2000
+          description: |
+            Text prompt describing the desired generated video. Camera movement
+            directives can be embedded in square brackets, including left/right
+            movement, pan, push/pull, rise/fall, tilt, zoom, shake, follow, and
+            fixed-camera instructions.
+          examples:
+            - "A beautiful sunset over the ocean with waves gently crashing on the shore. [推进, 跟随]"
+
+    MiniMaxHailuo23FastParameters:
+      type: object
+      additionalProperties: false
+      properties:
+        duration:
+          type: integer
+          enum:
+            - 6
+            - 10
+          default: 6
+          description: |
+            Generated video duration in seconds. The model supports 6 seconds at
+            768P or 1080P and 10 seconds at 768P.
+        resolution:
+          type: string
+          enum:
+            - 768P
+            - 1080P
+          default: 768P
+          description: |
+            Generated video resolution. 768P is supported for 6-second and
+            10-second videos; 1080P is supported for 6-second videos only.
+        prompt_optimizer:
+          type: boolean
+          default: true
+          description: Whether to automatically optimize the text prompt.
+        fast_pretreatment:
+          type: boolean
+          default: false
+          description: Whether to shorten text optimization latency for MiniMax-Hailuo-2.3 models.
+        aigc_watermark:
+          type: boolean
+          default: false
+          description: 是否为生成视频添加水印。
+
+    MiniMaxHailuo23FastSubmitResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/MiniMaxHailuo23FastSubmitOutput"
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    MiniMaxHailuo23FastSubmitOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+      properties:
+        task_id:
+          type: string
+          description: 异步任务唯一标识。
+
+    MiniMaxHailuo23FastStatusResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/MiniMaxHailuo23FastStatusOutput"
+        usage:
+          $ref: "#/components/schemas/MiniMaxHailuo23FastUsage"
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    MiniMaxHailuo23FastStatusOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+        - task_status
+      properties:
+        task_id:
+          type: string
+          description: 异步任务唯一标识。
+        task_status:
+          $ref: "#/components/schemas/MiniMaxHailuo23FastTaskStatus"
+        urls:
+          type: array
+          description: 视频结果 URL 列表。
+          items:
+            type: string
+            format: uri
+        submit_time:
+          type: integer
+          format: int64
+          description: 任务提交时间戳。
+        finish_time:
+          type: integer
+          format: int64
+          description: 任务完成时间戳。
+        error_message:
+          type: string
+          description: 任务失败时返回的错误信息。
+
+    MiniMaxHailuo23FastTaskStatus:
+      type: string
+      enum:
+        - Pending
+        - Running
+        - Success
+        - Failure
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+    MiniMaxHailuo23FastUsage:
+      type: object
+      additionalProperties: false
+      properties:
+        duration:
+          type: integer
+          description: 视频时长，单位为秒。
+
+    MiniMaxHailuo23FastErrorResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/MiniMaxHailuo23FastErrorObject"
+        request_id:
+          type: string
+          description: 唯一请求标识，如可用。
+
+    MiniMaxHailuo23FastErrorObject:
+      type: object
+      additionalProperties: true
+      required:
+        - message
+        - type
+      properties:
+        message:
+          type: string
+          description: 错误信息。
+        type:
+          type: string
+          description: 错误类型。
+          examples:
+            - invalid_request_error
+        code:
+          type:
+            - string
+            - "null"
+          description: 错误码。
+          examples:
+            - param_error
+        param:
+          type:
+            - string
+            - "null"
+          description: 相关请求参数，如有。
+
+  examples:
+    MiniMaxHailuo23FastParamError:
+      summary: 参数错误
+      value:
+        error:
+          message: Invalid param
+          type: invalid_request_error
+          code: param_error
+          param: input.first_frame_image
+        request_id: request_id

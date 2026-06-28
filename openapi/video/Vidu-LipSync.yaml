@@ -1,0 +1,426 @@
+openapi: 3.1.0
+x-language: zh-CN
+info:
+  title: Vidu-LipSync接口文档
+  version: "1.0.0"
+  description: |
+    这是 ModelVerse 上 `Vidu-LipSync` 的视频接口文档，说明如何提交生成任务、查询任务状态、读取视频结果以及处理错误。
+    接口路径包括 `POST /v1/tasks/submit`、`GET /v1/tasks/status`。
+servers:
+  - url: https://api.modelverse.cn
+    description: 该模型文档中使用的 ModelVerse API 端点。
+
+tags:
+  - name: Vidu/LipSync
+    description: Lip-sync video generation task operations for Vidu/LipSync.
+
+paths:
+  /v1/tasks/submit:
+    post:
+      tags:
+        - Vidu/LipSync
+      operationId: submitViduLipSyncTask
+      summary: 提交 Vidu/LipSync 任务
+      description: |
+        提交异步任务。请求体中的模型和参数按本模型文档填写，响应会返回任务 ID。
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ViduLipSyncSubmitRequest"
+            examples:
+              audioDriven:
+                summary: 提交 音频驱动对口型 任务
+                value:
+                  model: vidu-lip-sync
+                  input:
+                    video_url: https://umodelverse-inference.cn-wlcb.ufileos.com/maxcot-dance.mp4
+                    audio_url: https://umodelverse-inference.cn-wlcb.ufileos.com/%E6%AC%A2%E8%BF%8E%E4%BD%BF%E7%94%A8Modelverse_API.mp3
+                  parameters:
+                    vidu_type: lip-sync
+              textDriven:
+                summary: 提交 文本驱动对口型 任务
+                value:
+                  model: vidu-lip-sync
+                  input:
+                    video_url: https://umodelverse-inference.cn-wlcb.ufileos.com/maxcot-dance.mp4
+                    text: Hello, welcome to the ModelVerse lip sync feature.
+                  parameters:
+                    vidu_type: lip-sync
+                    voice_id: your_voice_id
+                    speed: 1.0
+                    volume: 4
+      responses:
+        "200":
+          description: 任务提交成功。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ViduLipSyncSubmitResponse"
+              examples:
+                submitted:
+                  summary: 已提交任务
+                  value:
+                    output:
+                      task_id: task_id
+                    request_id: request_id
+        "400":
+          description: 请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ViduLipSyncErrorResponse"
+              examples:
+                paramError:
+                  $ref: "#/components/examples/ViduLipSyncParamError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ViduLipSyncErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/ViduLipSyncParamError"
+
+  /v1/tasks/status:
+    get:
+      tags:
+        - Vidu/LipSync
+      operationId: getViduLipSyncTaskStatus
+      summary: 查询 Vidu/LipSync 任务状态
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: task_id
+          in: query
+          required: true
+          description: Asynchronous task identifier returned by `/v1/tasks/submit`.
+          schema:
+            type: string
+          example: task_id
+      responses:
+        "200":
+          description: 任务状态响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ViduLipSyncStatusResponse"
+              examples:
+                success:
+                  summary: 成功任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Success
+                      urls:
+                        - https://xxxxx/xxxx-lipsync.mp4
+                      submit_time: 1756959000
+                      finish_time: 1756959050
+                    usage:
+                      duration: 30
+                    request_id: ""
+                failure:
+                  summary: 失败任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Failure
+                      submit_time: 1756959000
+                      finish_time: 1756959019
+                      error_message: error_message
+                    usage:
+                      duration: 5
+                    request_id: ""
+        "400":
+          description: 任务标识或请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ViduLipSyncErrorResponse"
+              examples:
+                paramError:
+                  $ref: "#/components/examples/ViduLipSyncParamError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ViduLipSyncErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/ViduLipSyncParamError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+  schemas:
+    ViduLipSyncSubmitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - input
+        - parameters
+      properties:
+        model:
+          type: string
+          const: vidu-lip-sync
+          description: Model name. This schema is pinned to `vidu-lip-sync`.
+        input:
+          $ref: "#/components/schemas/ViduLipSyncInput"
+        parameters:
+          $ref: "#/components/schemas/ViduLipSyncParameters"
+
+    ViduLipSyncInput:
+      type: object
+      additionalProperties: false
+      required:
+        - video_url
+      anyOf:
+        - required:
+            - audio_url
+        - required:
+            - text
+      properties:
+        video_url:
+          type: string
+          format: uri
+          x-supported-formats:
+            - mp4
+            - mov
+            - avi
+          x-min-duration-seconds: 1
+          x-max-duration-seconds: 600
+          x-recommended-duration-seconds: "10-120"
+          x-max-file-size-gb: 5
+          x-min-side-px: 360
+          x-max-side-px: 4096
+          x-required-codec: H.264
+          description: |
+            Source video URL used as the visual reference for lip-sync matching.
+            Supported formats are mp4, mov, and avi. Duration must be 1-600
+            seconds, with 10-120 seconds recommended. File size must not exceed
+            5 GB. Each side of the video must be between 360p and 4096p, and
+            the video codec must be H.264. The video must contain a target face
+            suitable for lip-sync generation.
+        audio_url:
+          type: string
+          format: uri
+          description: |
+            Audio file URL used to drive lip-sync speech. Provide either
+            `audio_url` or `text`. If both are provided, `audio_url` takes
+            priority. Supported formats are wav, mp3, wma, m4a, aac, and ogg.
+            Duration must be greater than 1 second and less than 600 seconds.
+            File size must not exceed 100 MB.
+        text:
+          type: string
+          maxLength: 2000
+          x-min-chinese-chars: 2
+          x-max-chinese-chars: 1000
+          x-min-english-chars: 4
+          x-max-english-chars: 2000
+          x-pause-marker-seconds:
+            minimum: 0.01
+            maximum: 99.99
+          description: |
+            Text content used for text-driven lip-sync generation. Provide
+            either `text` or `audio_url`. Paragraph changes can be marked with
+            newlines. Pause control is supported with `<#x#>` markers, where x
+            is a pause in seconds in the range [0.01, 99.99] with at most two
+            decimal places, placed between pronounceable text segments.
+        ref_photo_url:
+          type: string
+          format: uri
+          x-supported-formats:
+            - jpg
+            - jpeg
+            - png
+            - bmp
+            - webp
+          x-min-side-px: 192
+          x-max-side-px: 4096
+          x-max-file-size-mb: 10
+          description: |
+            Optional face reference image URL used to select the target person
+            when the video contains multiple faces. Supported formats are jpg,
+            jpeg, png, bmp, and webp. Each side must be 192-4096 px, size must
+            not exceed 10 MB, and the image must contain one clear frontal face
+            that appears in the video.
+
+    ViduLipSyncParameters:
+      type: object
+      additionalProperties: false
+      required:
+        - vidu_type
+      properties:
+        vidu_type:
+          type: string
+          const: lip-sync
+          description: Vidu API type. This schema is pinned to `lip-sync`.
+        speed:
+          type: number
+          format: double
+          minimum: 0.5
+          maximum: 2
+          default: 1.0
+          description: |
+            Speech speed for text-driven generation only. `0.5` is the slowest
+            speed and `2` is the fastest.
+        voice_id:
+          type: string
+          description: Voice ID for text-driven generation only.
+        volume:
+          type: integer
+          minimum: 0
+          maximum: 10
+          default: 0
+          description: |
+            Volume for text-driven generation only. `0` is normal volume; larger
+            values increase the volume.
+
+    ViduLipSyncSubmitResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/ViduLipSyncSubmitOutput"
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    ViduLipSyncSubmitOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+      properties:
+        task_id:
+          type: string
+          description: 异步任务唯一标识。
+
+    ViduLipSyncStatusResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/ViduLipSyncStatusOutput"
+        usage:
+          $ref: "#/components/schemas/ViduLipSyncUsage"
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    ViduLipSyncStatusOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+        - task_status
+      properties:
+        task_id:
+          type: string
+          description: 异步任务唯一标识。
+        task_status:
+          $ref: "#/components/schemas/ViduLipSyncTaskStatus"
+        urls:
+          type: array
+          description: 视频结果 URL 列表。
+          items:
+            type: string
+            format: uri
+        submit_time:
+          type: integer
+          format: int64
+          description: 任务提交时间戳。
+        finish_time:
+          type: integer
+          format: int64
+          description: 任务完成时间戳。
+        error_message:
+          type: string
+          description: 任务失败时返回的错误信息。
+
+    ViduLipSyncTaskStatus:
+      type: string
+      enum:
+        - Pending
+        - Running
+        - Success
+        - Failure
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+    ViduLipSyncUsage:
+      type: object
+      additionalProperties: false
+      properties:
+        duration:
+          type: integer
+          description: 视频时长，单位为秒。
+
+    ViduLipSyncErrorResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/ViduLipSyncErrorObject"
+        request_id:
+          type: string
+          description: 唯一请求标识，如可用。
+
+    ViduLipSyncErrorObject:
+      type: object
+      additionalProperties: true
+      required:
+        - message
+        - type
+      properties:
+        message:
+          type: string
+          description: 错误信息。
+        type:
+          type: string
+          description: 错误类型。
+          examples:
+            - invalid_request_error
+        code:
+          type:
+            - string
+            - "null"
+          description: 错误码。
+          examples:
+            - param_error
+        param:
+          type:
+            - string
+            - "null"
+          description: 与错误相关的请求参数。
+
+  examples:
+    ViduLipSyncParamError:
+      summary: 参数错误
+      value:
+        error:
+          message: Invalid param
+          type: invalid_request_error
+          code: param_error
+          param: input.video_url
+        request_id: request_id

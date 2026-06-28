@@ -1,0 +1,400 @@
+openapi: 3.1.0
+x-language: zh-CN
+info:
+  title: HappyHorse-1.0-Video-Edit接口文档
+  version: "1.0.0"
+  description: |
+    这是 ModelVerse 上 `HappyHorse-1.0-Video-Edit` 的视频接口文档，说明如何提交生成任务、查询任务状态、读取视频结果以及处理错误。
+    接口路径包括 `POST /v1/tasks/submit`、`GET /v1/tasks/status`。
+servers:
+  - url: https://api.modelverse.cn
+    description: 该模型文档中使用的 ModelVerse API 端点。
+
+tags:
+  - name: HappyHorse-1.0-Video-Edit
+    description: Video editing asynchronous task operations for HappyHorse-1.0-Video-Edit.
+
+paths:
+  /v1/tasks/submit:
+    post:
+      tags:
+        - HappyHorse-1.0-Video-Edit
+      operationId: submitHappyHorse10VideoEditTask
+      summary: 提交 HappyHorse-1.0-Video-编辑任务
+      description: |
+        提交异步任务。请求体中的模型和参数按本模型文档填写，响应会返回任务 ID。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-DashScope-Async
+          in: header
+          required: true
+          description: Enables asynchronous task submission as shown in the source request example.
+          schema:
+            type: string
+            const: enable
+          example: enable
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HappyHorse10VideoEditSubmitRequest"
+            examples:
+              documented:
+                summary: 源文档 视频编辑 请求
+                value:
+                  model: happyhorse-1.0-video-edit
+                  input:
+                    prompt: 让视频中的角色穿上参考图中的条纹毛衣
+                    video_url: https://example.com/input.mp4
+                    images:
+                      - https://example.com/reference.webp
+                  parameters:
+                    resolution: 720P
+                    audio_setting: origin
+              withOptionalControls:
+                summary: Video edit请求带可选控制参数
+                value:
+                  model: happyhorse-1.0-video-edit
+                  input:
+                    prompt: Replace the actor's jacket with the striped sweater in the reference image.
+                    video_url: https://example.com/input.mp4
+                    images:
+                      - https://example.com/reference-1.webp
+                      - https://example.com/reference-2.webp
+                  parameters:
+                    resolution: 1080P
+                    watermark: false
+                    audio_setting: auto
+                    seed: 12345
+      responses:
+        "200":
+          description: 任务提交成功。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HappyHorse10VideoEditSubmitResponse"
+              examples:
+                submitted:
+                  summary: 已提交任务
+                  value:
+                    output:
+                      task_id: task_id
+                    request_id: request_id
+        "400":
+          description: 请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HappyHorse10VideoEditErrorResponse"
+              examples:
+                paramError:
+                  $ref: "#/components/examples/HappyHorse10VideoEditParamError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HappyHorse10VideoEditErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/HappyHorse10VideoEditParamError"
+
+  /v1/tasks/status:
+    get:
+      tags:
+        - HappyHorse-1.0-Video-Edit
+      operationId: getHappyHorse10VideoEditTaskStatus
+      summary: 查询 HappyHorse-1.0-Video-编辑任务状态
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: task_id
+          in: query
+          required: true
+          description: Asynchronous task identifier returned by `/v1/tasks/submit`.
+          schema:
+            type: string
+          example: task_id
+      responses:
+        "200":
+          description: 任务状态响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HappyHorse10VideoEditStatusResponse"
+              examples:
+                success:
+                  summary: 成功任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Success
+                      urls:
+                        - https://xxxxx/edited-video.mp4
+                      submit_time: 1756959000
+                      finish_time: 1756959050
+                    usage:
+                      duration: 5
+                      input_video_duration: 5.2
+                      output_video_duration: 5
+                      video_count: 1
+                      SR: 720
+                    request_id: request_id
+                failure:
+                  summary: 失败任务
+                  value:
+                    output:
+                      task_id: task_id
+                      task_status: Failure
+                      submit_time: 1756959000
+                      finish_time: 1756959019
+                      error_message: error_message
+                    usage:
+                      duration: 0
+                      input_video_duration: 5.2
+                      output_video_duration: 0
+                      video_count: 0
+                      SR: 720
+                    request_id: request_id
+        "400":
+          description: 任务标识或请求参数无效。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HappyHorse10VideoEditErrorResponse"
+              examples:
+                paramError:
+                  $ref: "#/components/examples/HappyHorse10VideoEditParamError"
+        default:
+          description: 错误响应。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HappyHorse10VideoEditErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/HappyHorse10VideoEditParamError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+  schemas:
+    HappyHorse10VideoEditSubmitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - input
+      properties:
+        model:
+          type: string
+          const: happyhorse-1.0-video-edit
+          description: Model name. This schema is pinned to `happyhorse-1.0-video-edit`.
+        input:
+          $ref: "#/components/schemas/HappyHorse10VideoEditInput"
+        parameters:
+          $ref: "#/components/schemas/HappyHorse10VideoEditParameters"
+
+    HappyHorse10VideoEditInput:
+      type: object
+      additionalProperties: false
+      required:
+        - prompt
+        - video_url
+      properties:
+        prompt:
+          type: string
+          minLength: 1
+          description: Text instruction describing the intended video edit.
+        video_url:
+          type: string
+          format: uri
+          description: URL of the video to edit.
+        images:
+          type: array
+          description: Reference image URL list.
+          maxItems: 5
+          items:
+            type: string
+            format: uri
+
+    HappyHorse10VideoEditParameters:
+      type: object
+      additionalProperties: false
+      properties:
+        resolution:
+          type: string
+          enum:
+            - 720P
+            - 1080P
+          default: 1080P
+          description: Generated video resolution tier.
+        watermark:
+          type: boolean
+          default: true
+          description: 是否为生成视频添加水印。
+        audio_setting:
+          type: string
+          enum:
+            - auto
+            - origin
+          default: auto
+          description: Audio control setting.
+        seed:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+          description: 随机种子。
+
+    HappyHorse10VideoEditSubmitResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/HappyHorse10VideoEditSubmitOutput"
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    HappyHorse10VideoEditSubmitOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+      properties:
+        task_id:
+          type: string
+          description: 异步任务唯一标识。
+
+    HappyHorse10VideoEditStatusResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+        - request_id
+      properties:
+        output:
+          $ref: "#/components/schemas/HappyHorse10VideoEditStatusOutput"
+        usage:
+          $ref: "#/components/schemas/HappyHorse10VideoEditUsage"
+        request_id:
+          type: string
+          description: 唯一请求标识。
+
+    HappyHorse10VideoEditStatusOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+        - task_status
+      properties:
+        task_id:
+          type: string
+          description: 异步任务唯一标识。
+        task_status:
+          $ref: "#/components/schemas/HappyHorse10VideoEditTaskStatus"
+        urls:
+          type: array
+          description: 视频结果 URL 列表。
+          items:
+            type: string
+            format: uri
+        submit_time:
+          type: integer
+          format: int64
+          description: 任务提交时间戳。
+        finish_time:
+          type: integer
+          format: int64
+          description: 任务完成时间戳。
+        error_message:
+          type: string
+          description: 任务失败时返回的错误信息。
+
+    HappyHorse10VideoEditTaskStatus:
+      type: string
+      enum:
+        - Pending
+        - Running
+        - Success
+        - Failure
+      description: |
+        查询异步任务状态。任务完成后，响应中会包含结果 URL、用量信息或错误信息。
+    HappyHorse10VideoEditUsage:
+      type: object
+      additionalProperties: false
+      properties:
+        duration:
+          type: integer
+          description: 计费视频时长，单位为秒。
+        input_video_duration:
+          type: number
+          description: Input video duration in seconds.
+        output_video_duration:
+          type: number
+          description: 输出视频时长，单位为秒。
+        video_count:
+          type: integer
+          description: 输出视频数量。
+        SR:
+          type: integer
+          description: 输出视频分辨率高度，例如 `720` 或 `1080`。
+
+    HappyHorse10VideoEditErrorResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/HappyHorse10VideoEditErrorObject"
+        request_id:
+          type: string
+          description: 唯一请求标识，如可用。
+
+    HappyHorse10VideoEditErrorObject:
+      type: object
+      additionalProperties: true
+      required:
+        - message
+        - type
+      properties:
+        message:
+          type: string
+          description: 错误信息。
+        type:
+          type: string
+          description: 错误类型。
+        code:
+          type:
+            - string
+            - "null"
+          description: 错误码。
+        param:
+          type:
+            - string
+            - "null"
+          description: 相关请求参数，如有。
+
+  examples:
+    HappyHorse10VideoEditParamError:
+      summary: 参数错误
+      value:
+        error:
+          message: Invalid param
+          type: invalid_request_error
+          code: param_error
+          param: input.video_url
+        request_id: request_id
