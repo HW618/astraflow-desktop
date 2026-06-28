@@ -6,32 +6,32 @@ import {
   RiChat3Line,
   RiImageLine,
   RiMicLine,
-  RiTimeLine,
   RiVideoLine,
 } from "@remixicon/react"
 import type { RemixiconComponentType } from "@remixicon/react"
 
 import { Button } from "@/components/ui/button"
 import { useI18n } from "@/components/i18n-provider"
+import { StudioChatWorkbench } from "@/components/studio-chat-workbench"
 import { cn } from "@/lib/utils"
-import type { Locale } from "@/lib/i18n"
+import type { StudioMode, StudioSession } from "@/lib/studio-types"
 
-type StudioMode = "chat" | "image" | "video" | "audio"
+type SessionsResponse =
+  | {
+      ok: true
+      data: StudioSession[]
+    }
+  | {
+      ok: false
+      error: unknown
+    }
 
 type StudioModeDefinition = {
   id: StudioMode
   icon: RemixiconComponentType
 }
 
-type LocalizedText = Record<Locale, string>
-
-type StudioSession = {
-  id: string
-  mode: StudioMode
-  title: LocalizedText
-  description: LocalizedText
-  time: LocalizedText
-}
+type SessionGroupKey = "today" | "yesterday" | "last-7-days" | "earlier"
 
 const studioModes: StudioModeDefinition[] = [
   { id: "chat", icon: RiChat3Line },
@@ -40,148 +40,106 @@ const studioModes: StudioModeDefinition[] = [
   { id: "audio", icon: RiMicLine },
 ]
 
-const studioSessions: StudioSession[] = [
-  {
-    id: "chat-market-copy",
-    mode: "chat",
-    title: {
-      en: "Model launch talking points",
-      zh: "模型发布沟通要点",
-    },
-    description: {
-      en: "8 messages · Drafting",
-      zh: "8 条消息 · 草稿中",
-    },
-    time: {
-      en: "Just now",
-      zh: "刚刚",
-    },
-  },
-  {
-    id: "image-hero-visual",
-    mode: "image",
-    title: {
-      en: "Landing hero visual",
-      zh: "首页主视觉",
-    },
-    description: {
-      en: "4 images · 16:9",
-      zh: "4 张图像 · 16:9",
-    },
-    time: {
-      en: "12 min",
-      zh: "12 分钟",
-    },
-  },
-  {
-    id: "video-product-demo",
-    mode: "video",
-    title: {
-      en: "Product demo sequence",
-      zh: "产品演示分镜",
-    },
-    description: {
-      en: "2 clips · 6 seconds",
-      zh: "2 段视频 · 6 秒",
-    },
-    time: {
-      en: "Today",
-      zh: "今天",
-    },
-  },
-  {
-    id: "audio-narration",
-    mode: "audio",
-    title: {
-      en: "Narration voiceover",
-      zh: "旁白配音",
-    },
-    description: {
-      en: "3 takes · Mandarin",
-      zh: "3 个版本 · 中文",
-    },
-    time: {
-      en: "Today",
-      zh: "今天",
-    },
-  },
-  {
-    id: "chat-eval-notes",
-    mode: "chat",
-    title: {
-      en: "Evaluation notes",
-      zh: "模型评测记录",
-    },
-    description: {
-      en: "15 messages · Comparison",
-      zh: "15 条消息 · 对比分析",
-    },
-    time: {
-      en: "Yesterday",
-      zh: "昨天",
-    },
-  },
-  {
-    id: "image-icon-set",
-    mode: "image",
-    title: {
-      en: "Feature icon set",
-      zh: "功能图标组",
-    },
-    description: {
-      en: "12 images · Transparent",
-      zh: "12 张图像 · 透明底",
-    },
-    time: {
-      en: "Yesterday",
-      zh: "昨天",
-    },
-  },
-  {
-    id: "video-social-cut",
-    mode: "video",
-    title: {
-      en: "Social teaser cut",
-      zh: "社媒预告短片",
-    },
-    description: {
-      en: "1 clip · Vertical",
-      zh: "1 段视频 · 竖屏",
-    },
-    time: {
-      en: "Jun 26",
-      zh: "6月26日",
-    },
-  },
-  {
-    id: "audio-brand-sound",
-    mode: "audio",
-    title: {
-      en: "Brand sound mark",
-      zh: "品牌提示音",
-    },
-    description: {
-      en: "5 variants · WAV",
-      zh: "5 个变体 · WAV",
-    },
-    time: {
-      en: "Jun 25",
-      zh: "6月25日",
-    },
-  },
-]
+async function fetchStudioSessions() {
+  const response = await fetch("/api/studio/sessions")
+  const payload = (await response.json()) as SessionsResponse
 
-function StudioShell() {
-  const { locale, t } = useI18n()
-  const [selectedMode, setSelectedMode] = React.useState<StudioMode>("chat")
-  const [selectedSessionId, setSelectedSessionId] = React.useState<string>(
-    studioSessions[0]?.id ?? ""
+  if (!response.ok || !payload.ok) {
+    throw new Error("Failed to load sessions")
+  }
+
+  return payload.data
+}
+
+function getStartOfDay(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate())
+}
+
+function getSessionGroupKey(value: string): SessionGroupKey {
+  const date = new Date(value)
+
+  if (Number.isNaN(date.getTime())) {
+    return "earlier"
+  }
+
+  const now = getStartOfDay(new Date())
+  const sessionDate = getStartOfDay(date)
+  const diffInDays = Math.floor(
+    (now.getTime() - sessionDate.getTime()) / 86_400_000
   )
 
-  const selectedSession = studioSessions.find(
+  if (diffInDays <= 0) {
+    return "today"
+  }
+
+  if (diffInDays === 1) {
+    return "yesterday"
+  }
+
+  if (diffInDays <= 7) {
+    return "last-7-days"
+  }
+
+  return "earlier"
+}
+
+function StudioShell() {
+  const { t } = useI18n()
+  const [selectedMode, setSelectedMode] = React.useState<StudioMode>("chat")
+  const [selectedSessionId, setSelectedSessionId] = React.useState("")
+  const [sessions, setSessions] = React.useState<StudioSession[]>([])
+  const [loadFailed, setLoadFailed] = React.useState(false)
+
+  const selectedSession = sessions.find(
     (session) => session.id === selectedSessionId
   )
   const activeMode = selectedSession?.mode ?? selectedMode
+  const groupedSessions = React.useMemo(() => {
+    const groups: Record<SessionGroupKey, StudioSession[]> = {
+      today: [],
+      yesterday: [],
+      "last-7-days": [],
+      earlier: [],
+    }
+
+    for (const session of sessions) {
+      groups[getSessionGroupKey(session.updatedAt)].push(session)
+    }
+
+    return [
+      { key: "today", label: t.studioHistoryToday, sessions: groups.today },
+      {
+        key: "yesterday",
+        label: t.studioHistoryYesterday,
+        sessions: groups.yesterday,
+      },
+      {
+        key: "last-7-days",
+        label: t.studioHistoryLast7Days,
+        sessions: groups["last-7-days"],
+      },
+      {
+        key: "earlier",
+        label: t.studioHistoryEarlier,
+        sessions: groups.earlier,
+      },
+    ].filter((group) => group.sessions.length > 0)
+  }, [sessions, t])
+
+  const reloadSessions = React.useCallback(async () => {
+    try {
+      setLoadFailed(false)
+      setSessions(await fetchStudioSessions())
+    } catch {
+      setLoadFailed(true)
+    }
+  }, [])
+
+  React.useEffect(() => {
+    queueMicrotask(() => {
+      void reloadSessions()
+    })
+  }, [reloadSessions])
 
   function getModeLabel(mode: StudioMode) {
     switch (mode) {
@@ -197,13 +155,16 @@ function StudioShell() {
   }
 
   return (
-    <main className="flex h-[calc(100svh-4rem)] min-h-0 gap-4 overflow-hidden bg-background p-4">
-      <aside className="flex w-full min-w-0 flex-col gap-4 md:w-[280px] md:shrink-0 lg:w-[300px]">
-        <section className="shrink-0 rounded-4xl border bg-card p-3 shadow-sm">
+    <main className="flex h-[calc(100svh-4rem)] min-h-0 overflow-hidden bg-background">
+      <aside className="flex w-full min-w-0 flex-col border-r bg-sidebar p-2 text-sidebar-foreground md:w-[168px] md:shrink-0 lg:w-[180px]">
+        <div className="shrink-0">
           <Button
             type="button"
-            className="mb-3 h-10 w-full justify-start"
-            onClick={() => setSelectedSessionId("")}
+            className="mb-2 h-9 w-full justify-start text-sm"
+            onClick={() => {
+              setSelectedMode("chat")
+              setSelectedSessionId("")
+            }}
           >
             <RiAddLine data-icon="inline-start" aria-hidden />
             <span>{t.studioNewSession}</span>
@@ -219,7 +180,7 @@ function StudioShell() {
                   key={mode.id}
                   type="button"
                   variant={isActive ? "secondary" : "ghost"}
-                  className="h-10 justify-start gap-2 px-3 text-base font-normal"
+                  className="h-8 justify-start gap-2 rounded-md px-2 text-sm font-normal"
                   aria-pressed={isActive}
                   onClick={() => {
                     setSelectedMode(mode.id)
@@ -232,68 +193,82 @@ function StudioShell() {
               )
             })}
           </nav>
-        </section>
+        </div>
 
-        <section className="flex min-h-0 flex-1 flex-col rounded-4xl border bg-card p-3 shadow-sm">
-          <div className="mb-3 pl-3 text-sm font-medium">
-            {t.studioSessions}
-          </div>
+        <div className="mt-4 min-h-0 flex-1 overflow-y-auto pt-1">
+          {groupedSessions.length > 0 ? (
+            <div className="flex flex-col gap-2">
+              {groupedSessions.map((group) => (
+                <section
+                  key={group.key}
+                  className="flex min-w-0 flex-col gap-1"
+                >
+                  <div className="flex h-8 shrink-0 items-center rounded-md px-2 text-xs font-medium text-sidebar-foreground/70">
+                    {group.label}
+                  </div>
+                  <div className="flex min-w-0 flex-col gap-1">
+                    {group.sessions.map((session) => {
+                      const isActive = session.id === selectedSessionId
 
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <div className="flex flex-col gap-1">
-              {studioSessions.map((session) => {
-                const mode = studioModes.find(
-                  (item) => item.id === session.mode
-                )
-                const Icon = mode?.icon ?? RiChat3Line
-                const isActive = session.id === selectedSessionId
-
-                return (
-                  <button
-                    key={session.id}
-                    type="button"
-                    className={cn(
-                      "flex h-11 w-full items-center gap-2 rounded-4xl px-3 text-left text-base transition-colors hover:bg-muted hover:text-foreground",
-                      isActive && "bg-secondary text-secondary-foreground"
-                    )}
-                    onClick={() => {
-                      setSelectedSessionId(session.id)
-                      setSelectedMode(session.mode)
-                    }}
-                  >
-                    <span className="flex size-7 shrink-0 items-center justify-center text-muted-foreground">
-                      <Icon data-icon="inline-start" aria-hidden />
-                    </span>
-                    <span className="min-w-0 flex-1 truncate">
-                      {session.title[locale]}
-                    </span>
-                    <span className="shrink-0 text-xs text-muted-foreground">
-                      {session.time[locale]}
-                    </span>
-                  </button>
-                )
-              })}
+                      return (
+                        <button
+                          key={session.id}
+                          type="button"
+                          className={cn(
+                            "flex h-8 w-full items-center overflow-hidden rounded-md px-2 text-left text-sm transition-colors outline-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+                            isActive &&
+                              "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+                          )}
+                          onClick={() => {
+                            setSelectedSessionId(session.id)
+                            setSelectedMode(session.mode)
+                          }}
+                        >
+                          <span className="min-w-0 flex-1 truncate">
+                            {session.title}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </section>
+              ))}
             </div>
-          </div>
-        </section>
+          ) : (
+            <p className="px-2 py-2 text-sm text-muted-foreground">
+              {loadFailed ? t.studioLoadFailed : t.studioNoSessions}
+            </p>
+          )}
+        </div>
       </aside>
 
-      <section className="hidden min-w-0 flex-1 flex-col rounded-4xl border bg-card shadow-sm md:flex">
-        <div className="flex h-full min-h-0 items-center justify-center px-10">
-          <div className="flex max-w-md flex-col items-center gap-3 text-center">
-            <div className="flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
-              <RiTimeLine aria-hidden />
-            </div>
-            <div className="flex flex-col gap-1">
-              <h2 className="font-heading text-2xl font-semibold">
-                {selectedSession?.title[locale] ?? t.studioWorkspace}
-              </h2>
-              <p className="text-sm text-muted-foreground">
-                {t.studioWorkspaceHint}
-              </p>
+      <section className="hidden min-w-0 flex-1 flex-col overflow-hidden bg-background md:flex">
+        {activeMode === "chat" ? (
+          <StudioChatWorkbench
+            sessionId={selectedSessionId}
+            onSessionChange={(nextSessionId) => {
+              setSelectedMode("chat")
+              setSelectedSessionId(nextSessionId)
+            }}
+            onSessionsChange={reloadSessions}
+          />
+        ) : (
+          <div className="flex h-full min-h-0 items-center justify-center px-10">
+            <div className="flex max-w-md flex-col items-center gap-3 text-center">
+              <div className="flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                <RiChat3Line aria-hidden />
+              </div>
+              <div className="flex flex-col gap-1">
+                <h2 className="font-heading text-2xl font-semibold">
+                  {getModeLabel(activeMode)}
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  {t.studioModePending}
+                </p>
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </section>
     </main>
   )
