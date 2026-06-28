@@ -19,6 +19,7 @@ import type { RemixiconComponentType } from "@remixicon/react"
 
 import { useI18n } from "@/components/i18n-provider"
 import { StudioChatWorkbench } from "@/components/studio-chat-workbench"
+import { StudioImageWorkbench } from "@/components/studio-image-workbench"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -142,6 +143,31 @@ const studioModes: StudioModeDefinition[] = [
   { id: "audio", icon: RiMicLine },
 ]
 
+const STUDIO_MODE_STORAGE_KEY = "astraflow:studio-mode"
+const STUDIO_SESSION_STORAGE_KEY = "astraflow:studio-session"
+
+function isStudioMode(value: unknown): value is StudioMode {
+  return (
+    typeof value === "string" &&
+    studioModes.some((mode) => mode.id === value)
+  )
+}
+
+function readStoredStudioMode(): StudioMode {
+  if (typeof window === "undefined") {
+    return "chat"
+  }
+  const stored = window.localStorage.getItem(STUDIO_MODE_STORAGE_KEY)
+  return isStudioMode(stored) ? stored : "chat"
+}
+
+function readStoredStudioSessionId(): string {
+  if (typeof window === "undefined") {
+    return ""
+  }
+  return window.localStorage.getItem(STUDIO_SESSION_STORAGE_KEY) ?? ""
+}
+
 async function fetchStudioSessions() {
   const response = await fetch("/api/studio/sessions")
   const payload = (await response.json()) as SessionsResponse
@@ -255,6 +281,8 @@ function formatExpiry(expiresAt: number | null) {
 function StudioShell() {
   const { t } = useI18n()
   const [selectedMode, setSelectedMode] = React.useState<StudioMode>("chat")
+  const modeHydratedRef = React.useRef(false)
+  const sessionHydratedRef = React.useRef(false)
   const [selectedSessionId, setSelectedSessionId] = React.useState("")
   const [sessions, setSessions] = React.useState<StudioSession[]>([])
   const [loadFailed, setLoadFailed] = React.useState(false)
@@ -373,8 +401,45 @@ function StudioShell() {
     queueMicrotask(() => {
       void reloadSessions()
       void reloadOAuthStatus()
+      const storedMode = readStoredStudioMode()
+      setSelectedMode(storedMode)
+      modeHydratedRef.current = true
     })
   }, [reloadOAuthStatus, reloadSessions])
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") return
+    if (!modeHydratedRef.current) return
+    window.localStorage.setItem(STUDIO_MODE_STORAGE_KEY, selectedMode)
+  }, [selectedMode])
+
+  React.useEffect(() => {
+    if (sessionHydratedRef.current) return
+    if (sessions.length === 0) return
+
+    const storedSessionId = readStoredStudioSessionId()
+    sessionHydratedRef.current = true
+
+    if (!storedSessionId) return
+
+    const stored = sessions.find((session) => session.id === storedSessionId)
+    if (!stored) return
+
+    queueMicrotask(() => {
+      setSelectedSessionId(stored.id)
+      setSelectedMode(stored.mode)
+    })
+  }, [sessions])
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") return
+    if (!sessionHydratedRef.current) return
+    if (selectedSessionId) {
+      window.localStorage.setItem(STUDIO_SESSION_STORAGE_KEY, selectedSessionId)
+    } else {
+      window.localStorage.removeItem(STUDIO_SESSION_STORAGE_KEY)
+    }
+  }, [selectedSessionId])
 
   React.useEffect(() => {
     if (oauthStatus.configured) {
@@ -678,6 +743,15 @@ function StudioShell() {
             sessionId={selectedSessionId}
             onSessionChange={(nextSessionId) => {
               setSelectedMode("chat")
+              setSelectedSessionId(nextSessionId)
+            }}
+            onSessionsChange={reloadSessions}
+          />
+        ) : activeMode === "image" ? (
+          <StudioImageWorkbench
+            sessionId={selectedSessionId}
+            onSessionChange={(nextSessionId) => {
+              setSelectedMode("image")
               setSelectedSessionId(nextSessionId)
             }}
             onSessionsChange={reloadSessions}

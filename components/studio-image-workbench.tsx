@@ -1,0 +1,1063 @@
+"use client"
+
+import * as React from "react"
+import {
+  RiAddLine,
+  RiCloseLine,
+  RiDownloadLine,
+  RiLoader4Line,
+  RiSaveLine,
+} from "@remixicon/react"
+
+import { useI18n } from "@/components/i18n-provider"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Slider } from "@/components/ui/slider"
+import { Textarea } from "@/components/ui/textarea"
+import { Toggle } from "@/components/ui/toggle"
+import { cn } from "@/lib/utils"
+import type {
+  StudioImageGeneration,
+  StudioImageModelOption,
+  StudioImageOutput,
+  StudioImageParameterField,
+  StudioSession,
+} from "@/lib/studio-types"
+
+type StudioImageWorkbenchProps = {
+  sessionId: string
+  onSessionChange: (sessionId: string) => void
+  onSessionsChange: () => void
+}
+
+type ApiOk<T> = { ok: true; data: T }
+type ApiErr = { ok: false; error?: unknown; message?: string }
+type ApiResponse<T> = ApiOk<T> | ApiErr
+
+const MAX_REFERENCE_IMAGES = 6
+const MAX_REFERENCE_BYTES = 12 * 1024 * 1024
+const PARAM_STORAGE_KEY = "astraflow:image-model"
+
+function isOk<T>(payload: ApiResponse<T>): payload is ApiOk<T> {
+  return payload.ok === true
+}
+
+async function readJson<T>(response: Response): Promise<T> {
+  const payload = (await response.json()) as ApiResponse<T>
+
+  if (!response.ok || !isOk(payload)) {
+    const message =
+      (!isOk(payload) &&
+        (payload.message ||
+          (typeof payload.error === "string" ? payload.error : ""))) ||
+      `Request failed (${response.status})`
+    throw new Error(message)
+  }
+
+  return payload.data
+}
+
+async function fetchImageModels() {
+  const response = await fetch("/api/studio/image/models")
+  return readJson<{
+    supported: StudioImageModelOption[]
+    disabled: StudioImageModelOption[]
+  }>(response)
+}
+
+async function fetchImageGenerations(sessionId: string) {
+  const response = await fetch(
+    `/api/studio/sessions/${sessionId}/image-generations`
+  )
+  return readJson<StudioImageGeneration[]>(response)
+}
+
+async function createImageSession() {
+  const response = await fetch("/api/studio/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode: "image", title: "New image" }),
+  })
+  return readJson<StudioSession>(response)
+}
+
+async function submitImageGeneration({
+  sessionId,
+  modelId,
+  modelName,
+  prompt,
+  params,
+  attachments,
+}: {
+  sessionId: string
+  modelId: string
+  modelName: string
+  prompt: string
+  params: Record<string, unknown>
+  attachments: PendingReferenceImage[]
+}) {
+  const response = await fetch(
+    `/api/studio/sessions/${sessionId}/image-generations`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        modelId,
+        modelName,
+        prompt,
+        params,
+        attachments: attachments.map((attachment) => ({
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          dataUrl: attachment.dataUrl,
+          url: attachment.url,
+        })),
+      }),
+    }
+  )
+  return readJson<StudioImageGeneration>(response)
+}
+
+async function saveImageOutput(outputId: string) {
+  const response = await fetch(
+    `/api/studio/image-outputs/${outputId}/save`,
+    { method: "POST" }
+  )
+  return readJson<StudioImageOutput>(response)
+}
+
+type PendingReferenceImage = {
+  id: string
+  name: string
+  mimeType: string
+  dataUrl?: string
+  url?: string
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
+}
+
+function getInitialParamsForFields(fields: StudioImageParameterField[]) {
+  const initial: Record<string, unknown> = {}
+
+  for (const field of fields) {
+    if (field.defaultValue !== undefined) {
+      initial[field.name] = field.defaultValue
+    }
+  }
+
+  return initial
+}
+
+function getStoredModelId(supported: StudioImageModelOption[]) {
+  if (typeof window === "undefined") return ""
+  const stored = window.localStorage.getItem(PARAM_STORAGE_KEY)
+  if (stored && supported.some((option) => option.id === stored)) {
+    return stored
+  }
+  return supported[0]?.id ?? ""
+}
+
+function StudioImageWorkbench({
+  sessionId,
+  onSessionChange,
+  onSessionsChange,
+}: StudioImageWorkbenchProps) {
+  const { t } = useI18n()
+  const [models, setModels] = React.useState<{
+    supported: StudioImageModelOption[]
+    disabled: StudioImageModelOption[]
+  }>({ supported: [], disabled: [] })
+  const [modelsLoading, setModelsLoading] = React.useState(true)
+  const [modelsError, setModelsError] = React.useState("")
+  const [selectedModelId, setSelectedModelId] = React.useState("")
+  const [prompt, setPrompt] = React.useState("")
+  const [paramValues, setParamValues] = React.useState<Record<string, unknown>>(
+    {}
+  )
+  const [attachments, setAttachments] = React.useState<PendingReferenceImage[]>(
+    []
+  )
+  const [referenceUrl, setReferenceUrl] = React.useState("")
+  const [showAdvanced, setShowAdvanced] = React.useState(false)
+  const [submitError, setSubmitError] = React.useState("")
+  const [generations, setGenerations] = React.useState<StudioImageGeneration[]>(
+    []
+  )
+  const [savingOutputId, setSavingOutputId] = React.useState<string | null>(
+    null
+  )
+
+  const selectedModel = React.useMemo(
+    () => models.supported.find((option) => option.id === selectedModelId),
+    [models.supported, selectedModelId]
+  )
+
+  const fields = selectedModel?.fields ?? []
+  const hasImageField = fields.some((field) => field.kind === "image")
+
+  React.useEffect(() => {
+    let cancelled = false
+
+    queueMicrotask(() => {
+      if (cancelled) return
+      setModelsLoading(true)
+      setModelsError("")
+
+      fetchImageModels()
+        .then((data) => {
+          if (cancelled) return
+          setModels(data)
+          const next = getStoredModelId(data.supported)
+          setSelectedModelId(next)
+        })
+        .catch((error: unknown) => {
+          if (cancelled) return
+          setModelsError(
+            error instanceof Error ? error.message : t.studioImageModelsFailed
+          )
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setModelsLoading(false)
+          }
+        })
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [t.studioImageModelsFailed])
+
+  React.useEffect(() => {
+    if (!selectedModel) {
+      queueMicrotask(() => setParamValues({}))
+      return
+    }
+    const next = getInitialParamsForFields(selectedModel.fields)
+    queueMicrotask(() => setParamValues(next))
+  }, [selectedModel])
+
+  React.useEffect(() => {
+    if (typeof window === "undefined" || !selectedModelId) return
+    window.localStorage.setItem(PARAM_STORAGE_KEY, selectedModelId)
+  }, [selectedModelId])
+
+  const reloadGenerations = React.useCallback(
+    async (activeSessionId: string) => {
+      try {
+        const next = await fetchImageGenerations(activeSessionId)
+        setGenerations(next)
+      } catch {
+        setGenerations([])
+      }
+    },
+    []
+  )
+
+  React.useEffect(() => {
+    if (!sessionId) {
+      queueMicrotask(() => setGenerations([]))
+      return
+    }
+    queueMicrotask(() => {
+      void reloadGenerations(sessionId)
+    })
+  }, [sessionId, reloadGenerations])
+
+  function updateParam(name: string, value: unknown) {
+    setParamValues((current) => ({ ...current, [name]: value }))
+  }
+
+  async function addLocalFiles(files: FileList | null) {
+    if (!files || files.length === 0) return
+    const imageFiles = Array.from(files).filter(
+      (file) =>
+        file.type.startsWith("image/") && file.size <= MAX_REFERENCE_BYTES
+    )
+
+    if (imageFiles.length === 0) return
+
+    const next: PendingReferenceImage[] = await Promise.all(
+      imageFiles.map(async (file) => ({
+        id: crypto.randomUUID(),
+        name: file.name,
+        mimeType: file.type,
+        dataUrl: await readFileAsDataUrl(file),
+      }))
+    )
+
+    setAttachments((current) =>
+      [...current, ...next].slice(0, MAX_REFERENCE_IMAGES)
+    )
+  }
+
+  function addUrlAttachment() {
+    const trimmed = referenceUrl.trim()
+    if (!trimmed) return
+    setAttachments((current) =>
+      [
+        ...current,
+        {
+          id: crypto.randomUUID(),
+          name: trimmed,
+          mimeType: "image/url",
+          url: trimmed,
+        },
+      ].slice(0, MAX_REFERENCE_IMAGES)
+    )
+    setReferenceUrl("")
+  }
+
+  function removeAttachment(id: string) {
+    setAttachments((current) =>
+      current.filter((attachment) => attachment.id !== id)
+    )
+  }
+
+  async function handleSubmit() {
+    if (!selectedModel || !prompt.trim()) return
+
+    setSubmitError("")
+
+    const optimisticId = `pending-${crypto.randomUUID()}`
+    const promptText = prompt.trim()
+    const promptModel = selectedModel
+    const promptParams = paramValues
+    const promptAttachments = attachments
+
+    const optimistic: StudioImageGeneration = {
+      id: optimisticId,
+      sessionId,
+      modelSquareId: promptModel.id,
+      modelName: promptModel.name,
+      manufacturer: promptModel.manufacturer,
+      openapiFile: promptModel.openapi?.file ?? null,
+      operationId: promptModel.openapi?.operationId ?? null,
+      prompt: promptText,
+      params: promptParams,
+      status: "running",
+      errorMessage: null,
+      createdAt: new Date().toISOString(),
+      completedAt: null,
+      outputs: [],
+    }
+
+    setGenerations((current) => [...current, optimistic])
+    setAttachments([])
+
+    void (async () => {
+      try {
+        let activeSessionId = sessionId
+        if (!activeSessionId) {
+          const session = await createImageSession()
+          activeSessionId = session.id
+          onSessionChange(activeSessionId)
+        }
+
+        const result = await submitImageGeneration({
+          sessionId: activeSessionId,
+          modelId: promptModel.id,
+          modelName: promptModel.name,
+          prompt: promptText,
+          params: promptParams,
+          attachments: promptAttachments,
+        })
+
+        setGenerations((current) =>
+          current.map((generation) =>
+            generation.id === optimisticId ? result : generation
+          )
+        )
+        onSessionsChange()
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : t.studioImageSubmitFailed
+        setSubmitError(message)
+        setGenerations((current) =>
+          current.map((generation) =>
+            generation.id === optimisticId
+              ? { ...generation, status: "error", errorMessage: message }
+              : generation
+          )
+        )
+      }
+    })()
+  }
+
+  function loadOutputIntoForm(generation: StudioImageGeneration) {
+    if (!models.supported.some((option) => option.id === generation.modelSquareId)) {
+      return
+    }
+    setSelectedModelId(generation.modelSquareId)
+    setPrompt(generation.prompt)
+    setParamValues(generation.params ?? {})
+  }
+
+  async function handleSave(outputId: string) {
+    setSavingOutputId(outputId)
+    try {
+      const saved = await saveImageOutput(outputId)
+      setGenerations((current) =>
+        current.map((generation) => ({
+          ...generation,
+          outputs: generation.outputs.map((output) =>
+            output.id === outputId ? saved : output
+          ),
+        }))
+      )
+    } catch {
+      // ignore save error silently — user can retry
+    } finally {
+      setSavingOutputId(null)
+    }
+  }
+
+  function downloadOutput(output: StudioImageOutput) {
+    const href = output.dataUrl ?? output.url
+    if (!href) return
+    const anchor = document.createElement("a")
+    anchor.href = href
+    anchor.download = `image-${output.id}.png`
+    anchor.rel = "noreferrer"
+    document.body.appendChild(anchor)
+    anchor.click()
+    document.body.removeChild(anchor)
+  }
+
+  return (
+    <section className="flex h-full min-h-0 flex-1 overflow-hidden bg-background">
+      <aside className="flex w-[340px] shrink-0 flex-col overflow-y-auto border-r bg-background px-4 py-4 lg:w-[380px]">
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-medium text-muted-foreground">
+            {t.studioImageModel}
+          </label>
+          <Select
+            value={selectedModelId}
+            onValueChange={(value) => setSelectedModelId(value)}
+            disabled={modelsLoading || models.supported.length === 0}
+          >
+            <SelectTrigger className="w-full rounded-2xl">
+              <SelectValue
+                placeholder={
+                  modelsLoading
+                    ? t.studioImageModelsLoading
+                    : t.studioImageModelPlaceholder
+                }
+              />
+            </SelectTrigger>
+            <SelectContent>
+              {models.supported.map((option) => (
+                <SelectItem key={option.id} value={option.id}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {modelsError ? (
+            <p className="text-xs text-destructive">{modelsError}</p>
+          ) : null}
+        </div>
+
+        <div className="mt-4 flex flex-col gap-1.5">
+          <label className="text-xs font-medium text-muted-foreground">
+            {t.studioImagePrompt}
+          </label>
+          <Textarea
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            placeholder={t.studioImagePromptPlaceholder}
+            className="min-h-24 resize-none rounded-2xl"
+          />
+        </div>
+
+        {hasImageField ? (
+          <ReferenceImagesField
+            attachments={attachments}
+            referenceUrl={referenceUrl}
+            onUrlChange={setReferenceUrl}
+            onAddUrl={addUrlAttachment}
+            onAddFiles={addLocalFiles}
+            onRemove={removeAttachment}
+          />
+        ) : null}
+
+        <div className="mt-4 flex flex-col gap-3">
+          {fields
+            .filter((field) => !field.advanced && !field.hidden)
+            .filter(
+              (field) =>
+                field.name !== "prompt" && field.name !== "model" &&
+                field.kind !== "image"
+            )
+            .map((field) => (
+              <ParameterControl
+                key={field.name}
+                field={field}
+                value={paramValues[field.name]}
+                onChange={(value) => updateParam(field.name, value)}
+              />
+            ))}
+        </div>
+
+        {fields.some((field) => field.advanced && !field.hidden) ? (
+          <div className="mt-3 flex flex-col gap-3 border-t pt-3">
+            <button
+              type="button"
+              onClick={() => setShowAdvanced((current) => !current)}
+              className="text-left text-xs font-medium text-muted-foreground hover:text-foreground"
+            >
+              {showAdvanced ? t.studioImageAdvancedHide : t.studioImageAdvanced}
+            </button>
+            {showAdvanced
+              ? fields
+                  .filter((field) => field.advanced && !field.hidden)
+                  .filter((field) => field.kind !== "image")
+                  .map((field) => (
+                    <ParameterControl
+                      key={field.name}
+                      field={field}
+                      value={paramValues[field.name]}
+                      onChange={(value) => updateParam(field.name, value)}
+                    />
+                  ))
+              : null}
+          </div>
+        ) : null}
+
+        {submitError ? (
+          <p className="mt-3 text-xs text-destructive">{submitError}</p>
+        ) : null}
+
+        <Button
+          type="button"
+          className="mt-4 h-10 rounded-2xl"
+          onClick={handleSubmit}
+          disabled={
+            !selectedModel ||
+            !prompt.trim() ||
+            models.supported.length === 0
+          }
+        >
+          <span>{t.studioImageGenerate}</span>
+        </Button>
+      </aside>
+
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background p-4">
+        <OutputCanvas
+          generations={generations}
+          savingOutputId={savingOutputId}
+          onSelectGeneration={loadOutputIntoForm}
+          onSaveOutput={handleSave}
+          onDownloadOutput={downloadOutput}
+        />
+      </div>
+    </section>
+  )
+}
+
+type ParameterControlProps = {
+  field: StudioImageParameterField
+  value: unknown
+  onChange: (value: unknown) => void
+  disabled?: boolean
+}
+
+function ParameterControl({
+  field,
+  value,
+  onChange,
+  disabled,
+}: ParameterControlProps) {
+  if (field.kind === "boolean") {
+    const next = Boolean(value)
+    return (
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs font-medium text-muted-foreground">
+          {field.label}
+        </span>
+        <Toggle
+          pressed={next}
+          onPressedChange={(pressed) => onChange(pressed)}
+          disabled={disabled}
+          className="rounded-2xl"
+        >
+          {next ? "ON" : "OFF"}
+        </Toggle>
+      </div>
+    )
+  }
+
+  if (field.kind === "select" && field.options && field.options.length > 0) {
+    return (
+      <div className="flex flex-col gap-1.5">
+        <span className="text-xs font-medium text-muted-foreground">
+          {field.label}
+        </span>
+        <Select
+          value={typeof value === "string" ? value : ""}
+          onValueChange={(next) => onChange(next)}
+          disabled={disabled}
+        >
+          <SelectTrigger className="w-full rounded-2xl">
+            <SelectValue placeholder={field.label} />
+          </SelectTrigger>
+          <SelectContent>
+            {field.options.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    )
+  }
+
+  if (field.kind === "slider") {
+    const min = field.min ?? 0
+    const max = field.max ?? 100
+    const step = field.step ?? 1
+    const numeric =
+      typeof value === "number" ? value : Number(value ?? field.defaultValue ?? min)
+    const safe = Number.isFinite(numeric) ? numeric : min
+    return (
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-medium text-muted-foreground">
+            {field.label}
+          </span>
+          <Input
+            type="number"
+            min={min}
+            max={max}
+            step={step}
+            value={safe}
+            onChange={(event) => onChange(Number(event.target.value))}
+            className="h-7 w-20 rounded-xl text-xs"
+            disabled={disabled}
+          />
+        </div>
+        <Slider
+          min={min}
+          max={max}
+          step={step}
+          value={[safe]}
+          onValueChange={(next) => onChange(next[0])}
+          disabled={disabled}
+        />
+      </div>
+    )
+  }
+
+  if (field.kind === "number") {
+    const numeric = typeof value === "number" ? value : value === "" ? "" : value
+    return (
+      <div className="flex flex-col gap-1.5">
+        <span className="text-xs font-medium text-muted-foreground">
+          {field.label}
+        </span>
+        <Input
+          type="number"
+          value={numeric as number | string}
+          onChange={(event) =>
+            onChange(event.target.value === "" ? "" : Number(event.target.value))
+          }
+          className="h-9 rounded-2xl"
+          disabled={disabled}
+        />
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <span className="text-xs font-medium text-muted-foreground">
+        {field.label}
+      </span>
+      <Input
+        value={typeof value === "string" ? value : ""}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-9 rounded-2xl"
+        disabled={disabled}
+      />
+    </div>
+  )
+}
+
+type ReferenceImagesFieldProps = {
+  attachments: PendingReferenceImage[]
+  referenceUrl: string
+  onUrlChange: (value: string) => void
+  onAddUrl: () => void
+  onAddFiles: (files: FileList | null) => void
+  onRemove: (id: string) => void
+  disabled?: boolean
+}
+
+function ReferenceImagesField({
+  attachments,
+  referenceUrl,
+  onUrlChange,
+  onAddUrl,
+  onAddFiles,
+  onRemove,
+  disabled,
+}: ReferenceImagesFieldProps) {
+  const { t } = useI18n()
+  const fileInputRef = React.useRef<HTMLInputElement>(null)
+
+  return (
+    <div className="mt-4 flex flex-col gap-2">
+      <span className="text-xs font-medium text-muted-foreground">
+        {t.studioImageReferences}
+      </span>
+      <div className="flex flex-wrap gap-2">
+        {attachments.map((attachment) => (
+          <div
+            key={attachment.id}
+            className="group relative size-16 overflow-hidden rounded-2xl border bg-muted"
+          >
+            {attachment.dataUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={attachment.dataUrl}
+                alt={attachment.name}
+                className="size-full object-cover"
+              />
+            ) : (
+              <span className="flex h-full items-center justify-center px-1 text-[10px] text-muted-foreground">
+                URL
+              </span>
+            )}
+            <button
+              type="button"
+              className="absolute top-0.5 right-0.5 flex size-5 items-center justify-center rounded-full bg-foreground/70 text-background opacity-0 transition group-hover:opacity-100 [&_svg]:size-3.5"
+              onClick={() => onRemove(attachment.id)}
+              aria-label={t.studioRemoveAttachment}
+              disabled={disabled}
+            >
+              <RiCloseLine aria-hidden />
+            </button>
+          </div>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={(event) => {
+            onAddFiles(event.target.files)
+            event.target.value = ""
+          }}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="rounded-2xl"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={disabled || attachments.length >= MAX_REFERENCE_IMAGES}
+        >
+          <RiAddLine aria-hidden />
+          <span>{t.studioImageAttach}</span>
+        </Button>
+      </div>
+      <div className="flex gap-2">
+        <Input
+          value={referenceUrl}
+          onChange={(event) => onUrlChange(event.target.value)}
+          placeholder={t.studioImageReferenceUrl}
+          className="h-9 rounded-2xl"
+          disabled={disabled || attachments.length >= MAX_REFERENCE_IMAGES}
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="rounded-2xl"
+          onClick={onAddUrl}
+          disabled={
+            disabled ||
+            !referenceUrl.trim() ||
+            attachments.length >= MAX_REFERENCE_IMAGES
+          }
+        >
+          {t.studioImageAddUrl}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function getOutputGridConfig(count: number) {
+  if (count <= 1) {
+    return { cols: 1, rows: 1, aspect: "1 / 1" }
+  }
+  if (count === 2) {
+    return { cols: 2, rows: 1, aspect: "2 / 1" }
+  }
+  if (count === 3) {
+    return { cols: 3, rows: 1, aspect: "3 / 1" }
+  }
+  if (count === 4) {
+    return { cols: 2, rows: 2, aspect: "1 / 1" }
+  }
+  const cols = Math.ceil(Math.sqrt(count))
+  const rows = Math.ceil(count / cols)
+  return { cols, rows, aspect: `${cols} / ${rows}` }
+}
+
+type CanvasTile =
+  | {
+      kind: "output"
+      key: string
+      generation: StudioImageGeneration
+      output: StudioImageOutput
+    }
+  | {
+      kind: "pending"
+      key: string
+      generation: StudioImageGeneration
+    }
+
+function buildCanvasTiles(generations: StudioImageGeneration[]): CanvasTile[] {
+  const tiles: CanvasTile[] = []
+
+  for (const generation of generations) {
+    if (generation.outputs.length === 0 && generation.status === "running") {
+      tiles.push({
+        kind: "pending",
+        key: `pending-${generation.id}`,
+        generation,
+      })
+      continue
+    }
+
+    for (const output of generation.outputs) {
+      tiles.push({
+        kind: "output",
+        key: output.id,
+        generation,
+        output,
+      })
+    }
+  }
+
+  return tiles
+}
+
+type OutputCanvasProps = {
+  generations: StudioImageGeneration[]
+  savingOutputId: string | null
+  onSelectGeneration: (generation: StudioImageGeneration) => void
+  onSaveOutput: (outputId: string) => void
+  onDownloadOutput: (output: StudioImageOutput) => void
+}
+
+function OutputCanvas({
+  generations,
+  savingOutputId,
+  onSelectGeneration,
+  onSaveOutput,
+  onDownloadOutput,
+}: OutputCanvasProps) {
+  const { t } = useI18n()
+  const tiles = buildCanvasTiles(generations)
+
+  if (tiles.length === 0) {
+    return (
+      <div className="flex flex-1 items-center justify-center">
+        <p className="text-sm text-muted-foreground">{t.studioImageEmpty}</p>
+      </div>
+    )
+  }
+
+  const grid = getOutputGridConfig(tiles.length)
+
+  return (
+    <div className="flex min-h-0 flex-1 items-center justify-center">
+      <div
+        className="grid h-auto w-auto max-h-full max-w-full gap-3"
+        style={{
+          aspectRatio: grid.aspect,
+          gridTemplateColumns: `repeat(${grid.cols}, minmax(0, 1fr))`,
+          gridTemplateRows: `repeat(${grid.rows}, minmax(0, 1fr))`,
+        }}
+      >
+        {tiles.map((tile) =>
+          tile.kind === "output" ? (
+            <CanvasOutputTile
+              key={tile.key}
+              generation={tile.generation}
+              output={tile.output}
+              saving={savingOutputId === tile.output.id}
+              onSelect={() => onSelectGeneration(tile.generation)}
+              onSave={() => onSaveOutput(tile.output.id)}
+              onDownload={() => onDownloadOutput(tile.output)}
+            />
+          ) : (
+            <CanvasPendingTile
+              key={tile.key}
+              generation={tile.generation}
+            />
+          )
+        )}
+      </div>
+    </div>
+  )
+}
+
+type CanvasOutputTileProps = {
+  generation: StudioImageGeneration
+  output: StudioImageOutput
+  saving: boolean
+  onSelect: () => void
+  onSave: () => void
+  onDownload: () => void
+}
+
+function CanvasOutputTile({
+  generation,
+  output,
+  saving,
+  onSelect,
+  onSave,
+  onDownload,
+}: CanvasOutputTileProps) {
+  const { t } = useI18n()
+  const src = output.src
+
+  return (
+    <div className="group relative flex min-h-0 flex-col overflow-hidden rounded-2xl border bg-muted">
+      <button
+        type="button"
+        onClick={onSelect}
+        className="flex min-h-0 flex-1 items-center justify-center overflow-hidden focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {src ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={src}
+            alt={generation.prompt}
+            className="size-full object-cover"
+          />
+        ) : null}
+      </button>
+
+      <div className="absolute top-0 left-0 right-0 flex items-start justify-between gap-2 bg-gradient-to-b from-black/60 to-transparent p-2 text-white">
+        <div className="flex min-w-0 flex-col">
+          <p className="truncate text-xs font-medium">
+            {generation.prompt}
+          </p>
+          <p className="truncate text-[10px] text-white/75">
+            {generation.modelName}
+          </p>
+        </div>
+        <StatusBadge generation={generation} />
+      </div>
+
+      <div className="absolute right-2 bottom-2 flex items-center gap-1.5 rounded-full bg-black/60 px-1 py-0.5 opacity-0 transition group-hover:opacity-100">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 rounded-full px-2 text-xs text-white hover:bg-white/15"
+          onClick={(event) => {
+            event.stopPropagation()
+            onDownload()
+          }}
+        >
+          <RiDownloadLine aria-hidden />
+          <span>{t.studioImageDownload}</span>
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 rounded-full px-2 text-xs text-white hover:bg-white/15"
+          onClick={(event) => {
+            event.stopPropagation()
+            onSave()
+          }}
+          disabled={saving}
+        >
+          {saving ? (
+            <RiLoader4Line className="animate-spin" aria-hidden />
+          ) : (
+            <RiSaveLine aria-hidden />
+          )}
+          <span>{output.savedAt ? t.studioImageSaved : t.studioImageSave}</span>
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function CanvasPendingTile({
+  generation,
+}: {
+  generation: StudioImageGeneration
+}) {
+  return (
+    <div className="relative flex min-h-0 flex-col overflow-hidden rounded-2xl border bg-muted text-muted-foreground">
+      <div className="absolute inset-0 animate-pulse bg-gradient-to-br from-muted via-muted/40 to-muted" />
+      <div className="relative z-10 flex flex-1 items-center justify-center">
+        <RiLoader4Line className="size-8 animate-spin" aria-hidden />
+      </div>
+      <div className="absolute top-0 left-0 right-0 flex items-start justify-between gap-2 bg-gradient-to-b from-black/30 to-transparent p-2 text-xs">
+        <div className="flex min-w-0 flex-col">
+          <p className="truncate font-medium text-foreground">
+            {generation.prompt}
+          </p>
+          <p className="truncate text-[10px] text-muted-foreground">
+            {generation.modelName}
+          </p>
+        </div>
+        <StatusBadge generation={generation} />
+      </div>
+    </div>
+  )
+}
+
+function StatusBadge({ generation }: { generation: StudioImageGeneration }) {
+  const { t } = useI18n()
+  const labelMap: Record<StudioImageGeneration["status"], string> = {
+    queued: t.studioImageQueued,
+    running: t.studioImageRunning,
+    complete: t.studioImageComplete,
+    partial: t.studioImageComplete,
+    error: t.studioImageFailed,
+  }
+  return (
+    <span
+      className={cn(
+        "shrink-0 rounded-full border bg-background/80 px-2 py-0.5 text-[10px]",
+        generation.status === "error" &&
+          "border-destructive/40 text-destructive",
+        generation.status === "complete" &&
+          "border-emerald-500/40 text-emerald-600"
+      )}
+    >
+      {labelMap[generation.status]}
+    </span>
+  )
+}
+
+export { StudioImageWorkbench }
