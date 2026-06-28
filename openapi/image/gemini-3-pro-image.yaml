@@ -1,0 +1,356 @@
+openapi: 3.1.0
+x-language: en-US
+info:
+  title: ModelVerse gemini-3-pro-image Image API
+  version: "1.0.0"
+  description: |
+    Self-contained OpenAPI 3.1 schema for the ModelVerse Gemini-compatible
+    `gemini-3-pro-image-preview` image generation API.
+
+    This file intentionally includes only the fields documented by that source
+    file for this model.
+
+servers:
+  - url: https://api.modelverse.cn
+    description: ModelVerse API endpoint documented for this model.
+
+tags:
+  - name: gemini-3-pro-image
+    description: Gemini-compatible image generation with gemini-3-pro-image-preview.
+
+security:
+  - xGoogApiKey: []
+
+paths:
+  "/v1beta/models/gemini-3-pro-image-preview:generateContent":
+    post:
+      tags:
+        - gemini-3-pro-image
+      operationId: generateGemini3ProImageContent
+      summary: Generate content with gemini-3-pro-image-preview
+      description: |
+        Generate a Gemini-compatible response containing text and/or image
+        parts. For image generation, the source document warns callers to set
+        `generationConfig.responseModalities` to include `IMAGE`.
+      security:
+        - xGoogApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Gemini3ProImageGenerateContentRequest"
+            examples:
+              textToImageWithSearch:
+                summary: Text-to-image request with Google Search tool
+                value:
+                  contents:
+                    - parts:
+                        - text: Da Vinci style anatomical sketch of a dissected Monarch butterfly. Detailed drawings of the head, wings, and legs on textured parchment with notes in English.
+                  tools:
+                    - google_search: {}
+                  generationConfig:
+                    responseModalities:
+                      - TEXT
+                      - IMAGE
+                    imageConfig:
+                      aspectRatio: "1:1"
+                      imageSize: 1K
+              textToImageWithExplicitRole:
+                summary: Text-to-image request with the documented user role
+                value:
+                  contents:
+                    - role: user
+                      parts:
+                        - text: A detailed botanical illustration of a white peony on parchment.
+                  generationConfig:
+                    responseModalities:
+                      - TEXT
+                      - IMAGE
+                    imageConfig:
+                      aspectRatio: "4:3"
+                      imageSize: 2K
+      responses:
+        "200":
+          description: Gemini-compatible content generation response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Gemini3ProImageGenerateContentResponse"
+              examples:
+                textAndImage:
+                  summary: Text and image parts returned by the model
+                  value:
+                    candidates:
+                      - content:
+                          parts:
+                            - text: Here is the anatomical sketch of a dissected Monarch butterfly in Da Vinci style...
+                            - inlineData:
+                                data: iVBORw0KGgoAAAANSUhEUgAA...
+                                mimeType: image/png
+                          role: model
+                        finishReason: STOP
+                    usageMetadata:
+                      candidatesTokenCount: 1315
+                      totalTokenCount: 1331
+                imagePartOnly:
+                  summary: Image part returned without a text part
+                  value:
+                    candidates:
+                      - content:
+                          parts:
+                            - inlineData:
+                                data: iVBORw0KGgoAAAANSUhEUgAA...
+                                mimeType: image/png
+                          role: model
+                        finishReason: STOP
+                    usageMetadata:
+                      candidatesTokenCount: 1315
+                      totalTokenCount: 1331
+        "400":
+          description: Invalid request parameters or generation error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Gemini3ProImageErrorResponse"
+              examples:
+                documentedError:
+                  $ref: "#/components/examples/Gemini3ProImageError"
+        default:
+          description: Error response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Gemini3ProImageErrorResponse"
+              examples:
+                documentedError:
+                  $ref: "#/components/examples/Gemini3ProImageError"
+
+components:
+  securitySchemes:
+    xGoogApiKey:
+      type: apiKey
+      in: header
+      name: x-goog-api-key
+      description: ModelVerse API key sent in the Gemini-compatible `x-goog-api-key` header.
+
+  schemas:
+    Gemini3ProImageGenerateContentRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - contents
+      properties:
+        contents:
+          type: array
+          minItems: 1
+          description: Request content containing one or more parts.
+          items:
+            $ref: "#/components/schemas/Gemini3ProImageContentInput"
+        tools:
+          type: array
+          minItems: 1
+          description: Optional Gemini-compatible tools shown in the documented curl example.
+          items:
+            $ref: "#/components/schemas/Gemini3ProImageTool"
+        generationConfig:
+          $ref: "#/components/schemas/Gemini3ProImageGenerationConfig"
+
+    Gemini3ProImageContentInput:
+      type: object
+      additionalProperties: false
+      required:
+        - role
+        - parts
+      properties:
+        role:
+          type: string
+          const: user
+          default: user
+          description: Content role. The source document fixes this role to `user`.
+        parts:
+          type: array
+          minItems: 1
+          description: Content parts for the request.
+          items:
+            $ref: "#/components/schemas/Gemini3ProImageRequestPart"
+
+    Gemini3ProImageRequestPart:
+      type: object
+      additionalProperties: false
+      properties:
+        text:
+          type: string
+          minLength: 1
+          description: Prompt text.
+
+    Gemini3ProImageTool:
+      type: object
+      additionalProperties: false
+      properties:
+        google_search:
+          type: object
+          additionalProperties: false
+          description: Google Search tool object from the documented request example.
+
+    Gemini3ProImageGenerationConfig:
+      type: object
+      additionalProperties: false
+      properties:
+        responseModalities:
+          type: array
+          minItems: 1
+          maxItems: 2
+          uniqueItems: true
+          default:
+            - TEXT
+            - IMAGE
+          description: Expected response modalities. The documented default is `["TEXT", "IMAGE"]`.
+          items:
+            type: string
+            enum:
+              - TEXT
+              - IMAGE
+        imageConfig:
+          $ref: "#/components/schemas/Gemini3ProImageConfig"
+
+    Gemini3ProImageConfig:
+      type: object
+      additionalProperties: false
+      properties:
+        aspectRatio:
+          type: string
+          default: "1:1"
+          description: Output image aspect ratio.
+          enum:
+            - "1:1"
+            - "2:3"
+            - "3:2"
+            - "3:4"
+            - "4:3"
+            - "4:5"
+            - "5:4"
+            - "9:16"
+            - "16:9"
+            - "21:9"
+        imageSize:
+          type: string
+          default: 1K
+          description: Output image resolution.
+          enum:
+            - 1K
+            - 2K
+            - 4K
+
+    Gemini3ProImageGenerateContentResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        candidates:
+          type: array
+          description: Candidate content returned by the model.
+          items:
+            $ref: "#/components/schemas/Gemini3ProImageCandidate"
+        usageMetadata:
+          $ref: "#/components/schemas/Gemini3ProImageUsageMetadata"
+
+    Gemini3ProImageCandidate:
+      type: object
+      additionalProperties: false
+      properties:
+        content:
+          $ref: "#/components/schemas/Gemini3ProImageContentOutput"
+        finishReason:
+          type: string
+          description: Generation finish reason, for example `STOP`.
+          examples:
+            - STOP
+
+    Gemini3ProImageContentOutput:
+      type: object
+      additionalProperties: false
+      properties:
+        parts:
+          type: array
+          description: Response parts, which can contain text and image data.
+          items:
+            $ref: "#/components/schemas/Gemini3ProImageResponsePart"
+        role:
+          type: string
+          const: model
+          description: Response role from the documented example.
+
+    Gemini3ProImageResponsePart:
+      type: object
+      additionalProperties: false
+      properties:
+        text:
+          type: string
+          description: Text returned by the model.
+        inlineData:
+          $ref: "#/components/schemas/Gemini3ProImageInlineData"
+        thought:
+          type: boolean
+          description: Whether this part is an intermediate thought image to skip.
+
+    Gemini3ProImageInlineData:
+      type: object
+      additionalProperties: false
+      properties:
+        data:
+          type: string
+          contentEncoding: base64
+          description: Base64-encoded image data.
+        mimeType:
+          type: string
+          description: MIME type for the inline image data.
+          examples:
+            - image/png
+
+    Gemini3ProImageUsageMetadata:
+      type: object
+      additionalProperties: true
+      description: Token usage metadata returned by the API.
+      properties:
+        candidatesTokenCount:
+          type: integer
+          minimum: 0
+        totalTokenCount:
+          type: integer
+          minimum: 0
+
+    Gemini3ProImageErrorResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/Gemini3ProImageError"
+
+    Gemini3ProImageError:
+      type: object
+      additionalProperties: true
+      properties:
+        message:
+          type: string
+          description: Error message.
+        type:
+          type: string
+          description: Error type.
+        param:
+          type: string
+          description: Request ID or related parameter.
+        code:
+          type: string
+          description: Error code.
+
+  examples:
+    Gemini3ProImageError:
+      summary: Documented error response
+      value:
+        error:
+          message: error_message
+          type: error_type
+          param: request_id
+          code: error_code

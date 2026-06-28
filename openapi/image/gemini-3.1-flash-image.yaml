@@ -1,0 +1,365 @@
+openapi: 3.1.0
+x-language: en-US
+info:
+  title: ModelVerse gemini-3.1-flash-image-preview Image API
+  version: "1.0.0"
+  description: |
+    Self-contained OpenAPI 3.1 schema for the ModelVerse Gemini-compatible
+    `gemini-3.1-flash-image-preview` image generation API.
+
+
+servers:
+  - url: https://api.modelverse.cn
+    description: ModelVerse API endpoint documented for this model.
+
+tags:
+  - name: gemini-3.1-flash-image-preview
+    description: Gemini-compatible image generation with gemini-3.1-flash-image-preview.
+
+security:
+  - geminiApiKeyAuth: []
+
+paths:
+  "/v1beta/models/gemini-3.1-flash-image-preview:generateContent":
+    post:
+      tags:
+        - gemini-3.1-flash-image-preview
+      operationId: generateGemini31FlashImageContent
+      summary: Generate content with gemini-3.1-flash-image-preview
+      description: |
+        Generate text and image content using the Gemini-compatible
+        `generateContent` API. For text-to-image calls, the source document
+        notes that `generationConfig.responseModalities` must include `IMAGE`
+        and may include `TEXT`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Gemini31FlashImageGenerateContentRequest"
+            examples:
+              anatomicalButterfly:
+                summary: Text-to-image request with text and image response modalities
+                value:
+                  contents:
+                    - parts:
+                        - text: Da Vinci style anatomical sketch of a dissected Monarch butterfly. Detailed drawings of the head, wings, and legs on textured parchment with notes in English.
+                  tools:
+                    - google_search: {}
+                  generationConfig:
+                    responseModalities:
+                      - TEXT
+                      - IMAGE
+                    imageConfig:
+                      aspectRatio: "1:1"
+                      imageSize: 1K
+              halfKCat:
+                summary: 0.5K image-only request
+                value:
+                  contents:
+                    - parts:
+                        - text: 一只坐着的橙色小猫，正面，纯色背景
+                  generationConfig:
+                    responseModalities:
+                      - IMAGE
+                    imageConfig:
+                      aspectRatio: "1:1"
+                      imageSize: "512"
+      responses:
+        "200":
+          description: Generated content response containing candidate text and/or inline image data.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Gemini31FlashImageGenerateContentResponse"
+              examples:
+                textAndImage:
+                  summary: Source document response with text and inline image data
+                  value:
+                    candidates:
+                      - content:
+                          parts:
+                            - text: Here is the anatomical sketch of a dissected Monarch butterfly in Da Vinci style...
+                            - inlineData:
+                                data: iVBORw0KGgoAAAANSUhEUgAA...
+                                mimeType: image/png
+                          role: model
+                        finishReason: STOP
+                    usageMetadata:
+                      candidatesTokenCount: 1315
+                      totalTokenCount: 1331
+                imageOnly:
+                  summary: Image-only response with inline PNG data
+                  value:
+                    candidates:
+                      - content:
+                          parts:
+                            - inlineData:
+                                data: iVBORw0KGgoAAAANSUhEUgAA...
+                                mimeType: image/png
+                          role: model
+                        finishReason: STOP
+                    usageMetadata:
+                      candidatesTokenCount: 1315
+                      totalTokenCount: 1331
+        "400":
+          description: Invalid request parameters or generation error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Gemini31FlashImageErrorResponse"
+              examples:
+                documentedError:
+                  $ref: "#/components/examples/Gemini31FlashImageError"
+        default:
+          description: Error response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Gemini31FlashImageErrorResponse"
+              examples:
+                documentedError:
+                  $ref: "#/components/examples/Gemini31FlashImageError"
+
+components:
+  securitySchemes:
+    geminiApiKeyAuth:
+      type: apiKey
+      in: header
+      name: x-goog-api-key
+      description: |
+        ModelVerse API key sent in the documented `x-goog-api-key:
+        <MODELVERSE_API_KEY>` header for the Gemini-compatible endpoint.
+
+  schemas:
+    Gemini31FlashImageGenerateContentRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - contents
+      properties:
+        contents:
+          type: array
+          minItems: 1
+          description: Request contents containing one or more content parts.
+          items:
+            $ref: "#/components/schemas/Gemini31FlashImageRequestContent"
+        tools:
+          type: array
+          description: Tool configuration. The source request example includes `google_search`.
+          items:
+            $ref: "#/components/schemas/Gemini31FlashImageTool"
+        generationConfig:
+          $ref: "#/components/schemas/Gemini31FlashImageGenerationConfig"
+
+    Gemini31FlashImageRequestContent:
+      type: object
+      additionalProperties: false
+      required:
+        - role
+        - parts
+      properties:
+        role:
+          type: string
+          const: user
+          default: user
+          description: Content role documented for requests; fixed to `user`.
+        parts:
+          type: array
+          minItems: 1
+          description: Content parts for the request.
+          items:
+            $ref: "#/components/schemas/Gemini31FlashImageRequestPart"
+
+    Gemini31FlashImageRequestPart:
+      type: object
+      additionalProperties: false
+      properties:
+        text:
+          type: string
+          minLength: 1
+          description: Text prompt.
+    Gemini31FlashImageTool:
+      type: object
+      additionalProperties: false
+      properties:
+        google_search:
+          type: object
+          additionalProperties: false
+          description: Empty Google Search tool configuration shown in the source request example.
+
+    Gemini31FlashImageGenerationConfig:
+      type: object
+      additionalProperties: false
+      properties:
+        responseModalities:
+          type: array
+          default:
+            - TEXT
+            - IMAGE
+          description: Expected response modalities.
+          items:
+            type: string
+            enum:
+              - TEXT
+              - IMAGE
+        imageConfig:
+          $ref: "#/components/schemas/Gemini31FlashImageConfig"
+
+    Gemini31FlashImageConfig:
+      type: object
+      additionalProperties: false
+      properties:
+        aspectRatio:
+          type: string
+          default: "1:1"
+          description: Output image aspect ratio.
+          enum:
+            - "1:1"
+            - "2:3"
+            - "3:2"
+            - "3:4"
+            - "4:3"
+            - "4:5"
+            - "5:4"
+            - "9:16"
+            - "16:9"
+            - "21:9"
+        imageSize:
+          type: string
+          default: 1K
+          description: Output image resolution. The `512` value is documented without a `K` suffix.
+          enum:
+            - "512"
+            - 1K
+            - 2K
+            - 4K
+
+    Gemini31FlashImageGenerateContentResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - candidates
+      properties:
+        candidates:
+          type: array
+          description: Candidate content returned by the model.
+          items:
+            $ref: "#/components/schemas/Gemini31FlashImageCandidate"
+        usageMetadata:
+          $ref: "#/components/schemas/Gemini31FlashImageUsageMetadata"
+
+    Gemini31FlashImageCandidate:
+      type: object
+      additionalProperties: false
+      properties:
+        content:
+          $ref: "#/components/schemas/Gemini31FlashImageResponseContent"
+        finishReason:
+          type: string
+          description: Generation finish reason, such as `STOP`.
+          examples:
+            - STOP
+
+    Gemini31FlashImageResponseContent:
+      type: object
+      additionalProperties: false
+      properties:
+        parts:
+          type: array
+          description: Response parts, which may include text and inline image data.
+          items:
+            $ref: "#/components/schemas/Gemini31FlashImageResponsePart"
+        role:
+          type: string
+          description: Candidate content role returned by the model.
+          examples:
+            - model
+
+    Gemini31FlashImageResponsePart:
+      type: object
+      additionalProperties: false
+      anyOf:
+        - required:
+            - text
+        - required:
+            - inlineData
+      properties:
+        text:
+          type: string
+          description: Text returned by the model.
+        inlineData:
+          $ref: "#/components/schemas/Gemini31FlashImageInlineData"
+        thought:
+          type: boolean
+          description: Whether this part is an intermediate thought part; clients can skip thought images and keep final output images.
+
+    Gemini31FlashImageInlineData:
+      type: object
+      additionalProperties: false
+      required:
+        - data
+        - mimeType
+      properties:
+        data:
+          type: string
+          description: Base64-encoded image data.
+        mimeType:
+          type: string
+          description: MIME type for the inline image data.
+          examples:
+            - image/png
+
+    Gemini31FlashImageUsageMetadata:
+      type: object
+      additionalProperties: false
+      properties:
+        candidatesTokenCount:
+          type: integer
+          minimum: 0
+          description: Candidate token count shown in the source response example.
+        totalTokenCount:
+          type: integer
+          minimum: 0
+          description: Total token count shown in the source response example.
+
+    Gemini31FlashImageErrorResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/Gemini31FlashImageErrorObject"
+
+    Gemini31FlashImageErrorObject:
+      type: object
+      additionalProperties: false
+      required:
+        - message
+        - type
+        - param
+        - code
+      properties:
+        message:
+          type: string
+          description: Error message.
+        type:
+          type: string
+          description: Error type.
+        param:
+          type: string
+          description: Request identifier, documented as `request_id`.
+        code:
+          type: string
+          description: Error code.
+
+  examples:
+    Gemini31FlashImageError:
+      summary: Documented error response
+      value:
+        error:
+          message: error_message
+          type: error_type
+          param: request_id
+          code: error_code

@@ -1,0 +1,435 @@
+openapi: 3.1.0
+x-language: en-US
+info:
+  title: ModelVerse Midjourney API
+  version: "1.0.0"
+  description: |
+    Self-contained OpenAPI 3.1 schema for the ModelVerse Midjourney
+    asynchronous image task API.
+
+    The source document covers text-to-image, upscale, variation, and reroll
+    actions through the shared task submit and status routes.
+
+
+servers:
+  - url: https://api.modelverse.cn
+    description: ModelVerse API endpoint documented for Midjourney.
+
+tags:
+  - name: Midjourney
+    description: Asynchronous Midjourney image generation and follow-up actions.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/tasks/submit:
+    post:
+      tags:
+        - Midjourney
+      operationId: submitMidjourneyTask
+      summary: Submit a Midjourney task
+      description: |
+        Submit an asynchronous Midjourney task. `midjourney-fast-imagine`
+        requires `input.prompt`. `midjourney-fast-upscale`,
+        `midjourney-fast-variation`, and `midjourney-fast-reroll` require
+        `parameters.mj_task_id` and `parameters.mj_custom_id` from a previous
+        status response button.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MidjourneyTaskSubmitRequest"
+            examples:
+              imagine:
+                summary: Text-to-image
+                value:
+                  model: midjourney-fast-imagine
+                  input:
+                    prompt: a cute cat sitting on a cloud, anime style
+              upscale:
+                summary: Upscale U1
+                value:
+                  model: midjourney-fast-upscale
+                  input: {}
+                  parameters:
+                    mj_task_id: "1775203239196609"
+                    mj_custom_id: MJ::JOB::upsample::1::431a5822-bfb2-4c55-8fc5-fc101abebd91
+              variation:
+                summary: Create variation V1
+                value:
+                  model: midjourney-fast-variation
+                  input: {}
+                  parameters:
+                    mj_task_id: "1775203239196609"
+                    mj_custom_id: MJ::JOB::variation::1::431a5822-bfb2-4c55-8fc5-fc101abebd91
+              reroll:
+                summary: Reroll all images
+                value:
+                  model: midjourney-fast-reroll
+                  input: {}
+                  parameters:
+                    mj_task_id: "1775203239196609"
+                    mj_custom_id: MJ::JOB::reroll::0::431a5822-bfb2-4c55-8fc5-fc101abebd91::SOLO
+      responses:
+        "200":
+          description: Task submitted successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MidjourneyTaskSubmitResponse"
+              examples:
+                submitted:
+                  summary: Submitted task
+                  value:
+                    output:
+                      task_id: "1775203239196609"
+                    request_id: abc123...
+        "400":
+          description: Invalid request parameters or task submission error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MidjourneyHttpErrorResponse"
+              examples:
+                invalidRequest:
+                  $ref: "#/components/examples/MidjourneyHttpError"
+        default:
+          description: Error response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MidjourneyHttpErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/MidjourneyHttpError"
+
+  /v1/tasks/status:
+    get:
+      tags:
+        - Midjourney
+      operationId: getMidjourneyTaskStatus
+      summary: Query a Midjourney task
+      description: |
+        Poll an asynchronous Midjourney task until `task_status` is `Success`
+        or `Failure`. Successful imagine, variation, and reroll tasks return
+        one grid image URL. Successful upscale tasks return one single-image
+        URL. The `buttons` array supplies `custom_id` values for follow-up
+        upscale, variation, and reroll operations.
+      parameters:
+        - name: task_id
+          in: query
+          required: true
+          description: Asynchronous task identifier returned by `/v1/tasks/submit`.
+          schema:
+            type: string
+          examples:
+            documented:
+              summary: Source task ID example
+              value: "1775203239196609"
+      responses:
+        "200":
+          description: Task status response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MidjourneyTaskStatusResponse"
+              examples:
+                success:
+                  summary: Successful task with continuation buttons
+                  value:
+                    output:
+                      task_id: "1775203239196609"
+                      task_status: Success
+                      urls:
+                        - https://example.com/midjourney-grid.png
+                      submit_time: 1775203239
+                      buttons:
+                        - custom_id: MJ::JOB::upsample::1::431a5822-bfb2-4c55-8fc5-fc101abebd91
+                          label: U1
+                        - custom_id: MJ::JOB::upsample::2::431a5822-bfb2-4c55-8fc5-fc101abebd91
+                          label: U2
+                        - custom_id: MJ::JOB::upsample::3::431a5822-bfb2-4c55-8fc5-fc101abebd91
+                          label: U3
+                        - custom_id: MJ::JOB::upsample::4::431a5822-bfb2-4c55-8fc5-fc101abebd91
+                          label: U4
+                        - custom_id: MJ::JOB::reroll::0::431a5822-bfb2-4c55-8fc5-fc101abebd91::SOLO
+                          emoji: "\U0001F504"
+                        - custom_id: MJ::JOB::variation::1::431a5822-bfb2-4c55-8fc5-fc101abebd91
+                          label: V1
+                        - custom_id: MJ::JOB::variation::2::431a5822-bfb2-4c55-8fc5-fc101abebd91
+                          label: V2
+                        - custom_id: MJ::JOB::variation::3::431a5822-bfb2-4c55-8fc5-fc101abebd91
+                          label: V3
+                        - custom_id: MJ::JOB::variation::4::431a5822-bfb2-4c55-8fc5-fc101abebd91
+                          label: V4
+                failure:
+                  summary: Failed task
+                  value:
+                    output:
+                      task_id: "1775203239196609"
+                      task_status: Failure
+                      submit_time: 1775203239
+                      error_message: Generation failed.
+        "400":
+          description: Invalid task identifier or task status error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MidjourneyHttpErrorResponse"
+              examples:
+                invalidRequest:
+                  $ref: "#/components/examples/MidjourneyHttpError"
+        default:
+          description: Error response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MidjourneyHttpErrorResponse"
+              examples:
+                error:
+                  $ref: "#/components/examples/MidjourneyHttpError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+
+  schemas:
+    MidjourneyTaskSubmitRequest:
+      oneOf:
+        - $ref: "#/components/schemas/MidjourneyImagineSubmitRequest"
+        - $ref: "#/components/schemas/MidjourneyUpscaleSubmitRequest"
+        - $ref: "#/components/schemas/MidjourneyVariationSubmitRequest"
+        - $ref: "#/components/schemas/MidjourneyRerollSubmitRequest"
+      discriminator:
+        propertyName: model
+        mapping:
+          midjourney-fast-imagine: "#/components/schemas/MidjourneyImagineSubmitRequest"
+          midjourney-fast-upscale: "#/components/schemas/MidjourneyUpscaleSubmitRequest"
+          midjourney-fast-variation: "#/components/schemas/MidjourneyVariationSubmitRequest"
+          midjourney-fast-reroll: "#/components/schemas/MidjourneyRerollSubmitRequest"
+
+    MidjourneyImagineSubmitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - input
+      properties:
+        model:
+          type: string
+          const: midjourney-fast-imagine
+          description: Text-to-image model returning one grid image with four generated images.
+        input:
+          $ref: "#/components/schemas/MidjourneyImagineInput"
+
+    MidjourneyUpscaleSubmitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - input
+        - parameters
+      properties:
+        model:
+          type: string
+          const: midjourney-fast-upscale
+          description: Upscales a selected image or performs documented follow-up upscale actions.
+        input:
+          $ref: "#/components/schemas/MidjourneyEmptyInput"
+        parameters:
+          $ref: "#/components/schemas/MidjourneyActionParameters"
+
+    MidjourneyVariationSubmitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - input
+        - parameters
+      properties:
+        model:
+          type: string
+          const: midjourney-fast-variation
+          description: Generates four variations from a selected image.
+        input:
+          $ref: "#/components/schemas/MidjourneyEmptyInput"
+        parameters:
+          $ref: "#/components/schemas/MidjourneyActionParameters"
+
+    MidjourneyRerollSubmitRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - input
+        - parameters
+      properties:
+        model:
+          type: string
+          const: midjourney-fast-reroll
+          description: Regenerates all four images from the previous task.
+        input:
+          $ref: "#/components/schemas/MidjourneyEmptyInput"
+        parameters:
+          $ref: "#/components/schemas/MidjourneyActionParameters"
+
+    MidjourneyImagineInput:
+      type: object
+      additionalProperties: false
+      required:
+        - prompt
+      properties:
+        prompt:
+          type: string
+          description: Prompt text. Required for `midjourney-fast-imagine`.
+
+    MidjourneyEmptyInput:
+      type: object
+      additionalProperties: false
+      description: Empty input object used by follow-up Midjourney actions.
+
+    MidjourneyActionParameters:
+      type: object
+      additionalProperties: false
+      required:
+        - mj_task_id
+        - mj_custom_id
+      properties:
+        mj_task_id:
+          type: string
+          description: Previous task ID required for upscale, variation, and reroll.
+        mj_custom_id:
+          type: string
+          description: "`custom_id` from a previous status response `buttons` item."
+
+    MidjourneyTaskSubmitResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+      properties:
+        output:
+          type: object
+          additionalProperties: false
+          required:
+            - task_id
+          properties:
+            task_id:
+              type: string
+              description: Asynchronous task identifier.
+        request_id:
+          type: string
+          description: Request identifier returned by ModelVerse.
+
+    MidjourneyTaskStatusResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - output
+      properties:
+        output:
+          $ref: "#/components/schemas/MidjourneyTaskStatusOutput"
+
+    MidjourneyTaskStatusOutput:
+      type: object
+      additionalProperties: false
+      required:
+        - task_id
+        - task_status
+      properties:
+        task_id:
+          type: string
+          description: Task ID.
+        task_status:
+          $ref: "#/components/schemas/MidjourneyTaskStatus"
+        urls:
+          type: array
+          description: |
+            Image URL list. Imagine, variation, and reroll return one grid image;
+            upscale returns one single-image URL.
+          items:
+            type: string
+            format: uri
+        submit_time:
+          type: integer
+          format: int64
+          description: Unix timestamp in seconds.
+        buttons:
+          type: array
+          description: Continuation buttons containing `custom_id` values for follow-up actions.
+          items:
+            $ref: "#/components/schemas/MidjourneyButton"
+        error_message:
+          type: string
+          description: Error message present when `task_status` is `Failure`.
+
+    MidjourneyTaskStatus:
+      type: string
+      enum:
+        - Pending
+        - Running
+        - Success
+        - Failure
+
+    MidjourneyButton:
+      type: object
+      additionalProperties: false
+      required:
+        - custom_id
+      anyOf:
+        - required:
+            - label
+        - required:
+            - emoji
+      properties:
+        custom_id:
+          type: string
+          description: Button custom ID used as `parameters.mj_custom_id`.
+        label:
+          type: string
+          description: Button label, such as `U1` or `V1`.
+        emoji:
+          type: string
+          description: Button emoji, such as the reroll button.
+
+    MidjourneyHttpErrorResponse:
+      type: object
+      additionalProperties: true
+      description: |
+        Non-200 error body. The Midjourney source document does not define a
+        fixed HTTP error envelope, so this schema intentionally permits
+        provider-specific fields.
+      properties:
+        error:
+          type: object
+          additionalProperties: true
+          properties:
+            message:
+              type: string
+            type:
+              type: string
+            code:
+              type:
+                - string
+                - "null"
+            param:
+              type:
+                - string
+                - "null"
+        request_id:
+          type: string
+
+  examples:
+    MidjourneyHttpError:
+      summary: HTTP error response
+      value:
+        error:
+          message: Invalid param
+          type: invalid_request_error
+          code: param_error
+          param: model

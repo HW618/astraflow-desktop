@@ -1,0 +1,454 @@
+openapi: 3.1.0
+x-language: en-US
+info:
+  title: ModelVerse gemini-2.5-flash-image Gemini-Compatible Image API
+  version: "1.0.0"
+  description: |
+    Self-contained OpenAPI 3.1 schema for the ModelVerse Gemini-compatible
+    `gemini-2.5-flash-image` `generateContent` image generation and image
+    editing API.
+
+
+servers:
+  - url: https://api.modelverse.cn
+    description: ModelVerse API endpoint documented for this model.
+
+tags:
+  - name: gemini-2.5-flash-image
+    description: Gemini-compatible text-to-image and image editing with gemini-2.5-flash-image.
+
+security:
+  - xGoogApiKey: []
+  - bearerAuth: []
+
+paths:
+  /v1beta/models/gemini-2.5-flash-image:generateContent:
+    post:
+      tags:
+        - gemini-2.5-flash-image
+      operationId: generateContentGemini25FlashImage
+      summary: Generate content with gemini-2.5-flash-image
+      description: |
+        Generate text and image output using the documented ModelVerse
+        Gemini-compatible `generateContent` endpoint. The source examples use
+        `generationConfig.responseModalities: ["TEXT", "IMAGE"]`; this model
+        does not support image-only output.
+      security:
+        - xGoogApiKey: []
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Gemini25FlashImageGenerateContentRequest"
+            examples:
+              textToImage:
+                summary: Source document text-to-image request
+                value:
+                  contents:
+                    - role: user
+                      parts:
+                        - text: Create a picture of a nano banana dish in a fancy restaurant with a Gemini theme
+                  generationConfig:
+                    responseModalities:
+                      - TEXT
+                      - IMAGE
+              imageEditInlineData:
+                summary: Source document image editing request with inline image data
+                value:
+                  contents:
+                    - role: user
+                      parts:
+                        - text: Convert this photo to black and white, in a cartoonish style.
+                        - inlineData:
+                            mimeType: image/jpeg
+                            data: "{image_base64_string}"
+                  generationConfig:
+                    responseModalities:
+                      - TEXT
+                      - IMAGE
+              imageEditFileData:
+                summary: Image editing request using documented fileData
+                value:
+                  contents:
+                    - role: user
+                      parts:
+                        - text: Convert this photo to black and white, in a cartoonish style.
+                        - fileData:
+                            mimeType: image/jpeg
+                            fileUri: https://umodelverse-inference.cn-wlcb.ufileos.com/ucloud-maxcot.jpg
+                  generationConfig:
+                    responseModalities:
+                      - TEXT
+                      - IMAGE
+      responses:
+        "200":
+          description: Gemini-compatible generateContent response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Gemini25FlashImageGenerateContentResponse"
+              examples:
+                documentedResponse:
+                  summary: Source document response with text, image data, and usage metadata
+                  value:
+                    candidates:
+                      - content:
+                          parts:
+                            - text: "That sounds incredibly unique! Here's a picture of a nano banana dish in a fancy restaurant with a Gemini theme:\n\n"
+                            - inlineData:
+                                data: xxx
+                                mimeType: image/png
+                          role: model
+                        finishReason: STOP
+                    usageMetadata:
+                      candidatesTokenCount: 1315
+                      candidatesTokensDetails:
+                        - modality: IMAGE
+                          tokenCount: 1290
+                        - modality: TEXT
+                          tokenCount: 25
+                      promptTokenCount: 16
+                      promptTokensDetails:
+                        - modality: TEXT
+                          tokenCount: 16
+                      totalTokenCount: 1331
+                      trafficType: ON_DEMAND
+        "400":
+          $ref: "#/components/responses/Gemini25FlashImageBadRequest"
+        "401":
+          $ref: "#/components/responses/Gemini25FlashImageUnauthorized"
+        default:
+          $ref: "#/components/responses/Gemini25FlashImageError"
+
+components:
+  securitySchemes:
+    xGoogApiKey:
+      type: apiKey
+      in: header
+      name: x-goog-api-key
+      description: "ModelVerse API key sent as `x-goog-api-key: <MODELVERSE_API_KEY>`."
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: "ModelVerse API key sent as `Authorization: Bearer <MODELVERSE_API_KEY>`."
+
+  responses:
+    Gemini25FlashImageBadRequest:
+      description: Invalid request parameters or generation error.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Gemini25FlashImageErrorResponse"
+          examples:
+            documentedError:
+              $ref: "#/components/examples/Gemini25FlashImageError"
+    Gemini25FlashImageUnauthorized:
+      description: Authentication error.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Gemini25FlashImageErrorResponse"
+          examples:
+            documentedError:
+              $ref: "#/components/examples/Gemini25FlashImageError"
+    Gemini25FlashImageError:
+      description: Error response.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Gemini25FlashImageErrorResponse"
+          examples:
+            documentedError:
+              $ref: "#/components/examples/Gemini25FlashImageError"
+
+  schemas:
+    Gemini25FlashImageGenerateContentRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - contents
+      properties:
+        contents:
+          type: array
+          minItems: 1
+          description: Request content, containing one or more content parts.
+          items:
+            $ref: "#/components/schemas/Gemini25FlashImageRequestContent"
+        generationConfig:
+          $ref: "#/components/schemas/Gemini25FlashImageGenerationConfig"
+
+    Gemini25FlashImageRequestContent:
+      type: object
+      additionalProperties: false
+      required:
+        - role
+        - parts
+      properties:
+        role:
+          type: string
+          const: user
+          default: user
+          description: Content role. The source document fixes this value to `user`.
+        parts:
+          type: array
+          minItems: 1
+          description: Concrete content parts for the request.
+          items:
+            $ref: "#/components/schemas/Gemini25FlashImageRequestPart"
+
+    Gemini25FlashImageRequestPart:
+      type: object
+      additionalProperties: false
+      anyOf:
+        - required:
+            - text
+        - required:
+            - inlineData
+        - required:
+            - fileData
+        - required:
+            - file_data
+      properties:
+        text:
+          type: string
+          minLength: 1
+          description: Prompt text.
+        inlineData:
+          $ref: "#/components/schemas/Gemini25FlashImageInlineData"
+        fileData:
+          $ref: "#/components/schemas/Gemini25FlashImageFileData"
+        file_data:
+          $ref: "#/components/schemas/Gemini25FlashImageFileDataSnakeCase"
+
+    Gemini25FlashImageInlineData:
+      type: object
+      additionalProperties: false
+      required:
+        - mimeType
+        - data
+      properties:
+        mimeType:
+          type: string
+          description: MIME type for the inline data.
+          examples:
+            - image/jpeg
+            - image/png
+        data:
+          type: string
+          minLength: 1
+          description: Base64-encoded data.
+
+    Gemini25FlashImageFileData:
+      type: object
+      additionalProperties: false
+      required:
+        - mimeType
+        - fileUri
+      properties:
+        mimeType:
+          type: string
+          description: MIME type for the referenced file.
+          examples:
+            - image/jpeg
+            - image/png
+        fileUri:
+          type: string
+          format: uri
+          description: URI for the referenced file.
+
+    Gemini25FlashImageFileDataSnakeCase:
+      type: object
+      additionalProperties: false
+      required:
+        - mime_type
+        - file_uri
+      properties:
+        mime_type:
+          type: string
+          description: MIME type for the referenced file when using snake_case.
+          examples:
+            - image/jpeg
+            - image/png
+        file_uri:
+          type: string
+          format: uri
+          description: URI for the referenced file when using snake_case.
+
+    Gemini25FlashImageGenerationConfig:
+      type: object
+      additionalProperties: false
+      properties:
+        responseModalities:
+          type: array
+          minItems: 1
+          default:
+            - TEXT
+            - IMAGE
+          description: |
+            Expected response modalities. The source examples require both
+            `TEXT` and `IMAGE`; image-only output is not supported.
+          items:
+            $ref: "#/components/schemas/Gemini25FlashImageResponseModality"
+
+    Gemini25FlashImageResponseModality:
+      type: string
+      enum:
+        - TEXT
+        - IMAGE
+      description: Response modality documented for this model.
+
+    Gemini25FlashImageGenerateContentResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - candidates
+      properties:
+        candidates:
+          type: array
+          description: Returned candidate content list.
+          items:
+            $ref: "#/components/schemas/Gemini25FlashImageCandidate"
+        usageMetadata:
+          $ref: "#/components/schemas/Gemini25FlashImageUsageMetadata"
+
+    Gemini25FlashImageCandidate:
+      type: object
+      additionalProperties: false
+      properties:
+        content:
+          $ref: "#/components/schemas/Gemini25FlashImageResponseContent"
+        finishReason:
+          type: string
+          description: Completion finish reason.
+          examples:
+            - STOP
+
+    Gemini25FlashImageResponseContent:
+      type: object
+      additionalProperties: false
+      properties:
+        parts:
+          type: array
+          description: Content parts that may contain text and image data.
+          items:
+            $ref: "#/components/schemas/Gemini25FlashImageResponsePart"
+        role:
+          type: string
+          const: model
+          description: Content role for model output.
+
+    Gemini25FlashImageResponsePart:
+      type: object
+      additionalProperties: false
+      anyOf:
+        - required:
+            - text
+        - required:
+            - inlineData
+      properties:
+        text:
+          type: string
+          description: Text returned by the model.
+        inlineData:
+          $ref: "#/components/schemas/Gemini25FlashImageResponseInlineData"
+        thought:
+          type: boolean
+          description: Optional marker for intermediate thought parts shown by the source extraction examples.
+
+    Gemini25FlashImageResponseInlineData:
+      type: object
+      additionalProperties: false
+      required:
+        - data
+        - mimeType
+      properties:
+        data:
+          type: string
+          description: Base64-encoded image data.
+        mimeType:
+          type: string
+          description: MIME type for the returned image data.
+          examples:
+            - image/png
+
+    Gemini25FlashImageUsageMetadata:
+      type: object
+      additionalProperties: false
+      properties:
+        candidatesTokenCount:
+          type: integer
+          description: Token count consumed by candidate output.
+        candidatesTokensDetails:
+          type: array
+          description: Candidate token counts split by modality.
+          items:
+            $ref: "#/components/schemas/Gemini25FlashImageTokenDetails"
+        promptTokenCount:
+          type: integer
+          description: Token count consumed by the prompt.
+        promptTokensDetails:
+          type: array
+          description: Prompt token counts split by modality.
+          items:
+            $ref: "#/components/schemas/Gemini25FlashImageTokenDetails"
+        totalTokenCount:
+          type: integer
+          description: Total token count consumed by the request.
+        trafficType:
+          type: string
+          description: Traffic type shown in the source response example.
+          examples:
+            - ON_DEMAND
+
+    Gemini25FlashImageTokenDetails:
+      type: object
+      additionalProperties: false
+      properties:
+        modality:
+          type: string
+          enum:
+            - TEXT
+            - IMAGE
+          description: Token modality.
+        tokenCount:
+          type: integer
+          description: Token count for this modality.
+
+    Gemini25FlashImageErrorResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/Gemini25FlashImageErrorObject"
+
+    Gemini25FlashImageErrorObject:
+      type: object
+      additionalProperties: true
+      properties:
+        message:
+          type: string
+          description: Error message.
+        type:
+          type: string
+          description: Error type.
+        param:
+          type: string
+          description: Request ID or related parameter.
+        code:
+          type: string
+          description: Error code.
+
+  examples:
+    Gemini25FlashImageError:
+      summary: Documented error response
+      value:
+        error:
+          message: error_message
+          type: error_type
+          param: request_id
+          code: error_code

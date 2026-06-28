@@ -1,0 +1,269 @@
+openapi: 3.1.0
+x-language: en-US
+info:
+  title: ModelVerse Qwen/Qwen-Image-Edit Image API
+  version: "1.0.0"
+  description: |
+    Self-contained OpenAPI 3.1 schema for the ModelVerse OpenAI-compatible
+    `Qwen/Qwen-Image-Edit` image request documented in
+
+    The source document describes an edit-oriented model that accepts an input
+    image, but the documented compatible endpoint is
+    `POST /v1/images/generations` with an `application/json` request body.
+
+servers:
+  - url: https://api.modelverse.cn
+    description: ModelVerse API endpoint documented for this model.
+
+tags:
+  - name: Qwen/Qwen-Image-Edit
+    description: Image editing requests with the Qwen/Qwen-Image-Edit model.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/images/generations:
+    post:
+      tags:
+        - Qwen/Qwen-Image-Edit
+      operationId: createQwenQwenImageEditImageGeneration
+      summary: Edit an image with Qwen/Qwen-Image-Edit
+      description: |
+        Submit a synchronous OpenAI-compatible image request for
+        `Qwen/Qwen-Image-Edit`. The request includes a text prompt and a source
+        image supplied as Base64 data or an image URL.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QwenQwenImageEditRequest"
+            examples:
+              base64Image:
+                summary: Edit a Base64-encoded PNG image
+                value:
+                  model: Qwen/Qwen-Image-Edit
+                  prompt: Convert to quick pencil sketch
+                  image: data:image/png;base64,{image_base64_string}
+                  size: 1664x928
+              imageUrlWithSeed:
+                summary: Edit an image URL with a fixed seed
+                value:
+                  model: Qwen/Qwen-Image-Edit
+                  prompt: Turn the product photo into a clean watercolor illustration
+                  image: https://example.com/source.png
+                  seed: 42
+                  size: 1328x1328
+      responses:
+        "200":
+          description: Image response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QwenQwenImageEditResponse"
+              examples:
+                documentedResponse:
+                  summary: Source document response example
+                  value:
+                    created: 1750667997
+                    data:
+                      - url: https://xxxxx/xxxx.png
+                        b64_json: data:image/png;base64,{image_base64_string}
+                    usage:
+                      input_tokens_details: {}
+                urlResponse:
+                  summary: Response containing an image URL
+                  value:
+                    created: 1750667997
+                    data:
+                      - url: https://xxxxx/xxxx.png
+                    usage:
+                      input_tokens_details: {}
+                base64Response:
+                  summary: Response containing Base64 image data
+                  value:
+                    created: 1750667997
+                    data:
+                      - b64_json: data:image/png;base64,{image_base64_string}
+                    usage:
+                      input_tokens_details: {}
+        "400":
+          description: Invalid request parameters or image generation error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QwenQwenImageEditErrorResponse"
+              examples:
+                documentedError:
+                  $ref: "#/components/examples/QwenQwenImageEditError"
+        default:
+          description: Error response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QwenQwenImageEditErrorResponse"
+              examples:
+                documentedError:
+                  $ref: "#/components/examples/QwenQwenImageEditError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: |
+        ModelVerse API key sent in the `Authorization: Bearer <API_KEY>`
+        header.
+
+  schemas:
+    QwenQwenImageEditModel:
+      type: string
+      const: Qwen/Qwen-Image-Edit
+      description: The only model ID documented by the source file.
+
+    QwenQwenImageEditPrompt:
+      type: string
+      description: Text prompt describing the edit to apply to the input image.
+      examples:
+        - Convert to quick pencil sketch
+
+    QwenQwenImageEditImage:
+      type: string
+      description: |
+        Input image as Base64 data or an image URL. The source document shows a
+        data URL such as `data:image/png;base64,{image_base64_string}` and
+        describes image links with the form `http://xxx`.
+      examples:
+        - data:image/png;base64,{image_base64_string}
+        - https://example.com/source.png
+
+    QwenQwenImageEditSeed:
+      type: integer
+      default: -1
+      description: |
+        Random seed used to control generation randomness. Reusing the same
+        seed can help keep generated content consistent.
+      examples:
+        - -1
+        - 42
+
+    QwenQwenImageEditSize:
+      type: string
+      default: 1664x928
+      description: |
+        Output image size as `WIDTHxHEIGHT`. The source parameter table lists
+        `1664x928` (16:9), `1472x1104` (4:3), `1328x1328` (1:1),
+        `1104x1472` (3:4), and `928x1664` (9:16).
+      enum:
+        - 1664x928
+        - 1472x1104
+        - 1328x1328
+        - 1104x1472
+        - 928x1664
+
+    QwenQwenImageEditRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - prompt
+        - image
+      properties:
+        model:
+          $ref: "#/components/schemas/QwenQwenImageEditModel"
+        prompt:
+          $ref: "#/components/schemas/QwenQwenImageEditPrompt"
+        image:
+          $ref: "#/components/schemas/QwenQwenImageEditImage"
+        seed:
+          $ref: "#/components/schemas/QwenQwenImageEditSeed"
+        size:
+          $ref: "#/components/schemas/QwenQwenImageEditSize"
+
+    QwenQwenImageEditResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - created
+        - data
+      properties:
+        created:
+          type: integer
+          format: int64
+          description: Unix timestamp in seconds for when the request was created.
+        data:
+          type: array
+          minItems: 1
+          description: |
+            Output image information. When the image is returned as a URL, the
+            item contains `url`; when returned as Base64 data, it contains
+            `b64_json`. The source notes that generated links expire within
+            7 days.
+          items:
+            $ref: "#/components/schemas/QwenQwenImageEditDataItem"
+        usage:
+          $ref: "#/components/schemas/QwenQwenImageEditUsage"
+
+    QwenQwenImageEditDataItem:
+      type: object
+      additionalProperties: false
+      anyOf:
+        - required:
+            - url
+        - required:
+            - b64_json
+      properties:
+        url:
+          type: string
+          format: uri
+          description: URL for downloading the generated image.
+        b64_json:
+          type: string
+          description: Base64 image data, optionally prefixed as a data URL.
+
+    QwenQwenImageEditUsage:
+      type: object
+      additionalProperties: true
+      description: Optional usage object shown by the source response example.
+      properties:
+        input_tokens_details:
+          type: object
+          additionalProperties: true
+
+    QwenQwenImageEditErrorResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/QwenQwenImageEditError"
+
+    QwenQwenImageEditError:
+      type: object
+      additionalProperties: true
+      properties:
+        message:
+          type: string
+          description: Error message.
+        type:
+          type: string
+          description: Error type.
+        param:
+          type: string
+          description: Request ID or related parameter.
+        code:
+          type: string
+          description: Error code.
+
+  examples:
+    QwenQwenImageEditError:
+      summary: Source document error response
+      value:
+        error:
+          message: error_message
+          type: error_type
+          param: request_id
+          code: error_code

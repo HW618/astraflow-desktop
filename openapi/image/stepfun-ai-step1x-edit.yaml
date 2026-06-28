@@ -1,0 +1,326 @@
+openapi: 3.1.0
+x-language: en-US
+info:
+  title: ModelVerse stepfun-ai/step1x-edit Image API
+  version: "1.0.0"
+  description: |
+    Self-contained OpenAPI 3.1 schema for the ModelVerse OpenAI-compatible
+    `stepfun-ai/step1x-edit` image request documented in
+
+    The source document describes an edit-oriented model that accepts an input
+    image, but the documented compatible endpoint is
+    `POST /v1/images/generations` with an `application/json` request body.
+
+servers:
+  - url: https://api.modelverse.cn
+    description: ModelVerse API endpoint documented for this model.
+
+tags:
+  - name: stepfun-ai/step1x-edit
+    description: Image editing requests with the stepfun-ai/step1x-edit model.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/images/generations:
+    post:
+      tags:
+        - stepfun-ai/step1x-edit
+      operationId: createStepfunAiStep1xEditImageGeneration
+      summary: Edit an image with stepfun-ai/step1x-edit
+      description: |
+        Submit a synchronous OpenAI-compatible image request for
+        `stepfun-ai/step1x-edit`. The request includes a text prompt and a
+        source image supplied as Base64 data or an image URL.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StepfunAiStep1xEditRequest"
+            examples:
+              base64Image:
+                summary: Source document Base64 image request
+                value:
+                  model: stepfun-ai/step1x-edit
+                  prompt: Convert to quick pencil sketch
+                  image: data:image/png;base64,{image_base64_string}
+                  negative_prompt: blurry, low quality
+              imageUrlWithControls:
+                summary: Edit an image URL with generation controls
+                value:
+                  model: stepfun-ai/step1x-edit
+                  prompt: Turn the product photo into a clean pencil sketch
+                  image: https://example.com/source.png
+                  n: 2
+                  strength: 0.8
+                  seed: 42
+                  steps: 20
+                  guidance_scale: 2.5
+                  response_format: url
+              base64ResponseFormat:
+                summary: Request Base64 output
+                value:
+                  model: stepfun-ai/step1x-edit
+                  prompt: Convert to quick pencil sketch
+                  image: data:image/png;base64,{image_base64_string}
+                  response_format: b64_json
+      responses:
+        "200":
+          description: Image response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StepfunAiStep1xEditResponse"
+              examples:
+                documentedResponse:
+                  summary: Source document response example
+                  value:
+                    created: 1750667997
+                    data:
+                      - url: https://xxxxx/xxxx.png
+                        b64_json: data:image/png;base64,{image_base64_string}
+                    usage:
+                      input_tokens_details: {}
+                urlResponse:
+                  summary: Response containing an image URL
+                  value:
+                    created: 1750667997
+                    data:
+                      - url: https://xxxxx/xxxx.png
+                    usage:
+                      input_tokens_details: {}
+                base64Response:
+                  summary: Response containing Base64 image data
+                  value:
+                    created: 1750667997
+                    data:
+                      - b64_json: data:image/png;base64,{image_base64_string}
+                    usage:
+                      input_tokens_details: {}
+        "400":
+          description: Invalid request parameters or image generation error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StepfunAiStep1xEditErrorResponse"
+              examples:
+                documentedError:
+                  $ref: "#/components/examples/StepfunAiStep1xEditError"
+        default:
+          description: Error response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StepfunAiStep1xEditErrorResponse"
+              examples:
+                documentedError:
+                  $ref: "#/components/examples/StepfunAiStep1xEditError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: |
+        ModelVerse API key sent in the `Authorization: Bearer <API_KEY>`
+        header.
+
+  schemas:
+    StepfunAiStep1xEditModel:
+      type: string
+      const: stepfun-ai/step1x-edit
+      description: The only model ID documented by the source file.
+
+    StepfunAiStep1xEditPrompt:
+      type: string
+      minLength: 1
+      description: Text prompt describing the requested image edit.
+      examples:
+        - Convert to quick pencil sketch
+
+    StepfunAiStep1xEditImage:
+      type: string
+      minLength: 1
+      description: |
+        Input image as Base64 data or an image URL. The source document shows a
+        data URL such as `data:image/png;base64,{image_base64_string}` and
+        describes image links with the form `http://xxx`.
+      examples:
+        - data:image/png;base64,{image_base64_string}
+        - https://example.com/source.png
+
+    StepfunAiStep1xEditImageCount:
+      type: integer
+      minimum: 1
+      maximum: 4
+      default: 1
+      description: Number of generated images to return.
+
+    StepfunAiStep1xEditStrength:
+      type: number
+      format: float
+      minimum: 0
+      maximum: 1
+      default: 0.8
+      description: Degree to which the reference image is transformed.
+
+    StepfunAiStep1xEditSeed:
+      type: integer
+      default: -1
+      description: |
+        Random seed used to control generation randomness. Reusing the same
+        seed can help keep generated content consistent.
+      examples:
+        - -1
+        - 42
+
+    StepfunAiStep1xEditSteps:
+      type: integer
+      minimum: 1
+      maximum: 50
+      default: 20
+      description: Number of inference steps.
+
+    StepfunAiStep1xEditGuidanceScale:
+      type: number
+      format: float
+      minimum: 1
+      maximum: 10
+      default: 2.5
+      description: |
+        How closely the model output follows the prompt. Higher values reduce
+        generation freedom and increase prompt relevance.
+
+    StepfunAiStep1xEditNegativePrompt:
+      type: string
+      description: Text describing content that should not appear in the image.
+      examples:
+        - blurry, low quality
+
+    StepfunAiStep1xEditResponseFormat:
+      type: string
+      enum:
+        - url
+        - b64_json
+      default: url
+      description: |
+        Format for returned generated images. The source document lists `url`
+        as the default and describes `b64_json` as the Base64 response option.
+
+    StepfunAiStep1xEditRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - prompt
+        - image
+      properties:
+        model:
+          $ref: "#/components/schemas/StepfunAiStep1xEditModel"
+        prompt:
+          $ref: "#/components/schemas/StepfunAiStep1xEditPrompt"
+        image:
+          $ref: "#/components/schemas/StepfunAiStep1xEditImage"
+        n:
+          $ref: "#/components/schemas/StepfunAiStep1xEditImageCount"
+        strength:
+          $ref: "#/components/schemas/StepfunAiStep1xEditStrength"
+        seed:
+          $ref: "#/components/schemas/StepfunAiStep1xEditSeed"
+        steps:
+          $ref: "#/components/schemas/StepfunAiStep1xEditSteps"
+        guidance_scale:
+          $ref: "#/components/schemas/StepfunAiStep1xEditGuidanceScale"
+        negative_prompt:
+          $ref: "#/components/schemas/StepfunAiStep1xEditNegativePrompt"
+        response_format:
+          $ref: "#/components/schemas/StepfunAiStep1xEditResponseFormat"
+
+    StepfunAiStep1xEditResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - created
+        - data
+      properties:
+        created:
+          type: integer
+          format: int64
+          description: Unix timestamp in seconds for when the request was created.
+        data:
+          type: array
+          minItems: 1
+          description: |
+            Output image information. When the image is returned as a URL, the
+            item contains `url`; when returned as Base64 data, it contains
+            `b64_json`. The source notes that generated links expire within
+            7 days.
+          items:
+            $ref: "#/components/schemas/StepfunAiStep1xEditDataItem"
+        usage:
+          $ref: "#/components/schemas/StepfunAiStep1xEditUsage"
+
+    StepfunAiStep1xEditDataItem:
+      type: object
+      additionalProperties: false
+      anyOf:
+        - required:
+            - url
+        - required:
+            - b64_json
+      properties:
+        url:
+          type: string
+          format: uri
+          description: URL for downloading the generated image.
+        b64_json:
+          type: string
+          description: Base64 image data, optionally prefixed as a data URL.
+
+    StepfunAiStep1xEditUsage:
+      type: object
+      additionalProperties: true
+      description: Optional usage object shown by the source response example.
+      properties:
+        input_tokens_details:
+          type: object
+          additionalProperties: true
+
+    StepfunAiStep1xEditErrorResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/StepfunAiStep1xEditError"
+
+    StepfunAiStep1xEditError:
+      type: object
+      additionalProperties: true
+      properties:
+        message:
+          type: string
+          description: Error message.
+        type:
+          type: string
+          description: Error type.
+        param:
+          type: string
+          description: Request ID or related parameter.
+        code:
+          type: string
+          description: Error code.
+
+  examples:
+    StepfunAiStep1xEditError:
+      summary: Source document error response example
+      value:
+        error:
+          message: error_message
+          type: error_type
+          param: request_id
+          code: error_code

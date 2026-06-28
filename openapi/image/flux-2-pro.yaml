@@ -1,0 +1,272 @@
+openapi: 3.1.0
+x-language: en-US
+info:
+  title: ModelVerse flux-2-pro Image API
+  version: "1.0.0"
+  description: |
+    Self-contained OpenAPI 3.1 schema for the ModelVerse `flux-2-pro`
+    image API.
+
+    The source document references upstream FLUX.2 [pro] documentation for
+    additional fields; this schema is intentionally limited to the fields
+    documented in the ModelVerse source file.
+
+servers:
+  - url: https://api.modelverse.cn
+    description: ModelVerse API endpoint documented for this model.
+
+tags:
+  - name: flux-2-pro
+    description: Image generation and image-to-image generation with flux-2-pro.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/flux-2-pro:
+    post:
+      tags:
+        - flux-2-pro
+      operationId: createFlux2ProImageGeneration
+      summary: Generate an image with flux-2-pro
+      description: |
+        Generate an image from a required text prompt and, optionally, up to
+        eight Base64-encoded input images. The documented response returns
+        Base64 image data in `data[].b64_json`.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Flux2ProImageRequest"
+            examples:
+              textToImage:
+                summary: Generate a square PNG image from text
+                value:
+                  prompt: A photograph of a red fox in an autumn forest
+                  width: 1024
+                  height: 1024
+              imageToImage:
+                summary: Generate from reference images with a seed
+                value:
+                  prompt: Create a polished product photo while preserving the main subject
+                  input_image: "{base64_image_string}"
+                  input_image_2: "{base64_image_string}"
+                  seed: 123456
+                  width: 1024
+                  height: 1024
+                  safety_tolerance: "2"
+                  output_format: png
+      responses:
+        "200":
+          description: Image generation response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Flux2ProImageResponse"
+              examples:
+                generatedImage:
+                  summary: Generated image returned as Base64
+                  value:
+                    createed: 1761283200
+                    input_mp: 0
+                    output_mp: 2
+                    total_pixels: 1048576
+                    data:
+                      - b64_json: "{image_base64_string}"
+                referenceImageResult:
+                  summary: Generated image with input and output pixel accounting
+                  value:
+                    createed: 1761283260
+                    input_mp: 1
+                    output_mp: 1
+                    total_pixels: 2097152
+                    data:
+                      - b64_json: "{image_base64_string}"
+        "400":
+          description: Invalid request parameters or image generation error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Flux2ProErrorResponse"
+              examples:
+                invalidWidth:
+                  summary: Invalid request parameter
+                  value:
+                    error:
+                      message: "width must be greater than or equal to 64 and a multiple of 32"
+                      type: invalid_request_error
+                      param: width
+                      code: param_error
+        default:
+          description: Error response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Flux2ProErrorResponse"
+              examples:
+                requestError:
+                  summary: Request error
+                  value:
+                    error:
+                      message: error_message
+                      type: error_type
+                      param: request_id
+                      code: error_code
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: |
+        ModelVerse API key sent in the `Authorization: Bearer <API_KEY>`
+        header. The source document states that ModelVerse uses
+        `Authorization` instead of the upstream `x-key` header.
+
+  schemas:
+    Flux2ProImageRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - prompt
+      properties:
+        prompt:
+          type: string
+          minLength: 1
+          description: Text prompt.
+        input_image:
+          $ref: "#/components/schemas/Flux2ProBase64Image"
+        input_image_2:
+          $ref: "#/components/schemas/Flux2ProBase64Image"
+        input_image_3:
+          $ref: "#/components/schemas/Flux2ProBase64Image"
+        input_image_4:
+          $ref: "#/components/schemas/Flux2ProBase64Image"
+        input_image_5:
+          $ref: "#/components/schemas/Flux2ProBase64Image"
+        input_image_6:
+          $ref: "#/components/schemas/Flux2ProBase64Image"
+        input_image_7:
+          $ref: "#/components/schemas/Flux2ProBase64Image"
+        input_image_8:
+          $ref: "#/components/schemas/Flux2ProBase64Image"
+        seed:
+          type: integer
+          format: int64
+          description: Optional seed for reproducible generation.
+        width:
+          type: integer
+          minimum: 64
+          multipleOf: 32
+          description: Image width in pixels. The documented constraint is `x >= 64` and a multiple of 32.
+        height:
+          type: integer
+          minimum: 64
+          multipleOf: 32
+          description: Image height in pixels. The documented constraint is `x >= 64` and a multiple of 32.
+        safety_tolerance:
+          type: string
+          enum:
+            - "0"
+            - "1"
+            - "2"
+            - "3"
+            - "4"
+            - "5"
+            - "6"
+          description: |
+            Tolerance level for input and output moderation. The source
+            describes values from 1 to 6 and also states that `0` is the
+            strictest and `6` is the least strict.
+        output_format:
+          type: string
+          enum:
+            - png
+            - jpg
+            - jpeg
+          default: png
+          description: |
+            Output image format. The source type column lists `jpeg/png`, and
+            the source description lists `png,jpg`.
+        webhook_url:
+          type: string
+          format: uri
+          description: Webhook URL used to receive generation results.
+        webhook_secret:
+          type: string
+          description: Webhook secret used to verify webhook requests.
+
+    Flux2ProBase64Image:
+      type: string
+      contentEncoding: base64
+      description: Base64-encoded image.
+
+    Flux2ProImageResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        createed:
+          type: integer
+          format: int64
+          description: Creation time field as documented in the source response table.
+        input_mp:
+          type: integer
+          minimum: 0
+          description: Input image pixels in megapixels, rounded up.
+        output_mp:
+          type: integer
+          minimum: 0
+          description: Output image pixels in megapixels, rounded up.
+        total_pixels:
+          type: integer
+          minimum: 0
+          description: Total pixels.
+        data:
+          type: array
+          description: Generated image data.
+          items:
+            $ref: "#/components/schemas/Flux2ProImageData"
+
+    Flux2ProImageData:
+      type: object
+      additionalProperties: false
+      required:
+        - b64_json
+      properties:
+        b64_json:
+          type: string
+          contentEncoding: base64
+          description: Base64-encoded generated image data.
+
+    Flux2ProErrorResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/Flux2ProError"
+
+    Flux2ProError:
+      type: object
+      additionalProperties: false
+      required:
+        - message
+        - code
+      properties:
+        message:
+          type: string
+          description: Error message.
+        type:
+          type: string
+          description: Error type.
+        param:
+          type: string
+          description: Request parameter related to the error, when available.
+        code:
+          type: string
+          description: Error code.

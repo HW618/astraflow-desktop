@@ -1,0 +1,471 @@
+openapi: 3.1.0
+x-language: en-US
+info:
+  title: ModelVerse doubao-seedream Image API
+  version: "1.0.0"
+  description: |
+    Self-contained OpenAPI 3.1 schema for the ModelVerse OpenAI-compatible
+    `doubao-seedream-4.5` and `doubao-seedream-5-0-260128` image generation
+    API.
+
+
+servers:
+  - url: https://api.modelverse.cn
+    description: ModelVerse API endpoint documented for this model family.
+
+tags:
+  - name: doubao-seedream
+    description: Image generation and reference-image generation with doubao-seedream.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/images/generations:
+    post:
+      tags:
+        - doubao-seedream
+      operationId: createDoubaoSeedreamImageGeneration
+      summary: Generate images with doubao-seedream
+      description: |
+        Generate images from a prompt, optionally using up to 14 reference
+        images. Set `stream` to `true` to receive Server-Sent Events for
+        partial success, partial failure, and completion events.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DoubaoSeedreamGenerationRequest"
+            examples:
+              referenceImageToSketch:
+                summary: Generate from a reference image
+                value:
+                  model: doubao-seedream-4.5
+                  prompt: 将图片转换为铅笔素描
+                  images:
+                    - https://umodelverse-inference.cn-wlcb.ufileos.com/ucloud-maxcot.jpg
+                  size: 2k
+                  watermark: false
+                  stream: false
+                  response_format: url
+              webSearchWeatherPoster:
+                summary: Generate with web search using doubao-seedream-5
+                value:
+                  model: doubao-seedream-5-0-260128
+                  prompt: 制作一张上海未来5日的天气预报图，采用现代扁平化插画风格，清晰展示每日天气、温度和穿搭建议。
+                  size: 2k
+                  tools:
+                    - type: web_search
+                  output_format: jpeg
+                  response_format: url
+                  watermark: false
+              streamedBase64Group:
+                summary: Stream a generated image group as Base64 JSON
+                value:
+                  model: doubao-seedream-4.5
+                  prompt: 生成一组现代城市公共空间导视图标
+                  size: 2048x2048
+                  sequential_image_generation: auto
+                  sequential_image_generation_options:
+                    max_images: 3
+                  stream: true
+                  response_format: b64_json
+                  watermark: true
+      responses:
+        "200":
+          description: Image generation response. Non-stream requests return JSON; stream requests return SSE.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DoubaoSeedreamGenerationResponse"
+              examples:
+                urlImage:
+                  summary: Generated image returned as a URL
+                  value:
+                    model: doubao-seedream-4-5-251128
+                    created: 1767939740
+                    data:
+                      - url: https://xxxxxx
+                        size: 2048x2048
+                    usage:
+                      generated_images: 1
+                      output_tokens: 16384
+                      total_tokens: 16384
+                base64Image:
+                  summary: Generated image returned as Base64 JSON
+                  value:
+                    model: doubao-seedream-4-5-251128
+                    created: 1767939740
+                    data:
+                      - b64_json: "{image_base64_string}"
+                        size: 2048x2048
+                    usage:
+                      generated_images: 1
+                      output_tokens: 16384
+                      total_tokens: 16384
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/DoubaoSeedreamStreamEvent"
+              examples:
+                streamedImage:
+                  summary: Streamed image generation events
+                  value: |
+                    event: image_generation.partial_succeeded
+                    data: {"type":"image_generation.partial_succeeded","model":"doubao-seedream-4-5-251128","created":1767939740,"image_index":0,"url":"https://xxxxxx","size":"2048x2048"}
+
+                    event: image_generation.completed
+                    data: {"type":"image_generation.completed","model":"doubao-seedream-4-5-251128","created":1767939740,"usage":{"generated_images":1,"output_tokens":16384,"total_tokens":16384}}
+
+        "400":
+          description: Invalid request parameters or image generation error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DoubaoSeedreamErrorResponse"
+              examples:
+                requestError:
+                  summary: Request-level error
+                  value:
+                    error:
+                      code: error_code
+                      message: error_message
+        default:
+          description: Error response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DoubaoSeedreamErrorResponse"
+              examples:
+                requestError:
+                  summary: Request-level error
+                  value:
+                    error:
+                      code: error_code
+                      message: error_message
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: |
+        ModelVerse API key sent in the `Authorization: Bearer <API_KEY>`
+        header.
+
+  schemas:
+    DoubaoSeedreamGenerationRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - prompt
+      properties:
+        model:
+          $ref: "#/components/schemas/DoubaoSeedreamModel"
+        prompt:
+          $ref: "#/components/schemas/DoubaoSeedreamPrompt"
+        images:
+          type: array
+          maxItems: 14
+          description: |
+            Reference image inputs. Each item can be an accessible URL or a
+            Base64 data URL such as `data:image/png;base64,<base64_image>`.
+          items:
+            type: string
+        size:
+          $ref: "#/components/schemas/DoubaoSeedreamSize"
+        sequential_image_generation:
+          $ref: "#/components/schemas/DoubaoSeedreamSequentialImageGeneration"
+        sequential_image_generation_options:
+          $ref: "#/components/schemas/DoubaoSeedreamSequentialImageGenerationOptions"
+        stream:
+          type: boolean
+          default: false
+          description: |
+            Whether to enable streaming output. `false` returns all image
+            results after generation completes; `true` returns SSE events as
+            each image result is available.
+        response_format:
+          type: string
+          enum:
+            - url
+            - b64_json
+          default: url
+          description: |
+            Image return format. URL links are valid for 24 hours after image
+            generation; `b64_json` returns Base64-encoded image data.
+        watermark:
+          type: boolean
+          default: true
+          description: Whether to add the documented "AI generated" watermark in the lower-right corner.
+        optimize_prompt_options:
+          type: object
+          additionalProperties: true
+          description: Prompt optimization options documented as an object.
+        tools:
+          type: array
+          description: Tool configuration. The source document states this parameter is supported only by `doubao-seedream-5-0-260128`.
+          items:
+            $ref: "#/components/schemas/DoubaoSeedreamTool"
+        output_format:
+          type: string
+          enum:
+            - png
+            - jpeg
+          default: jpeg
+          description: Output image file format. The source document states this parameter is supported only by `doubao-seedream-5-0-260128`.
+
+    DoubaoSeedreamModel:
+      type: string
+      enum:
+        - doubao-seedream-4.5
+        - doubao-seedream-5-0-260128
+      description: Model name documented for this API.
+
+    DoubaoSeedreamPrompt:
+      type: string
+      minLength: 1
+      description: Prompt used to generate images. The source recommends no more than 300 Chinese characters or 600 English words.
+
+    DoubaoSeedreamSize:
+      type: string
+      description: |
+        Image size. The documented keyword values are `2K` and `4K`; explicit
+        pixel dimensions use `<width>x<height>`. For explicit dimensions, the
+        documented total pixel range is 3,686,400 to 16,777,216 and the aspect
+        ratio range is 1/16 to 16.
+      default: 2048x2048
+      x-min-pixels: 3686400
+      x-max-pixels: 16777216
+      x-min-aspect-ratio: "1:16"
+      x-max-aspect-ratio: "16:1"
+      oneOf:
+        - pattern: "^[24][Kk]$"
+        - pattern: "^[1-9][0-9]*x[1-9][0-9]*$"
+      examples:
+        - 2K
+        - 4K
+        - 2048x2048
+        - 2304x1728
+        - 1728x2304
+        - 2560x1440
+        - 1440x2560
+        - 2496x1664
+        - 1664x2496
+        - 3024x1296
+
+    DoubaoSeedreamSequentialImageGeneration:
+      type: string
+      enum:
+        - auto
+        - disabled
+      default: disabled
+      description: |
+        Group-image generation mode. `auto` lets the model decide whether to
+        return a group and how many images it contains; `disabled` generates
+        one image.
+
+    DoubaoSeedreamSequentialImageGenerationOptions:
+      type: object
+      additionalProperties: false
+      description: Options used only when `sequential_image_generation` is `auto`.
+      properties:
+        max_images:
+          type: integer
+          minimum: 1
+          maximum: 15
+          description: Maximum number of images to generate for this request.
+
+    DoubaoSeedreamTool:
+      type: object
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          const: web_search
+          default: web_search
+          description: |
+            Web search tool. When enabled, the model decides whether to search
+            the internet based on the prompt.
+
+    DoubaoSeedreamGenerationResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - created
+        - data
+      properties:
+        model:
+          type: string
+          description: Model ID used for this request.
+        created:
+          type: integer
+          format: int64
+          description: Unix timestamp in seconds for when the request was created.
+        data:
+          type: array
+          description: Output image entries. Entries can contain image data or per-image error information.
+          items:
+            $ref: "#/components/schemas/DoubaoSeedreamImageData"
+        usage:
+          $ref: "#/components/schemas/DoubaoSeedreamUsage"
+        error:
+          $ref: "#/components/schemas/DoubaoSeedreamError"
+
+    DoubaoSeedreamImageData:
+      type: object
+      additionalProperties: false
+      properties:
+        url:
+          type: string
+          format: uri
+          description: Image download URL returned when `response_format` is `url`; valid for 24 hours after generation.
+        b64_json:
+          type: string
+          contentEncoding: base64
+          description: Base64 image data returned when `response_format` is `b64_json`.
+        size:
+          type: string
+          pattern: "^[1-9][0-9]*x[1-9][0-9]*$"
+          description: Image dimensions in `<width>x<height>` pixels.
+        error:
+          $ref: "#/components/schemas/DoubaoSeedreamError"
+
+    DoubaoSeedreamUsage:
+      type: object
+      additionalProperties: false
+      properties:
+        generated_images:
+          type: integer
+          description: Successfully generated image count, excluding failed images.
+        output_tokens:
+          type: integer
+          description: |
+            Tokens spent on generated images. The source describes this as the
+            rounded value of `sum(image_width * image_height) / 256`.
+        total_tokens:
+          type: integer
+          description: Total tokens consumed by the request; currently equal to `output_tokens`.
+
+    DoubaoSeedreamErrorResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/DoubaoSeedreamError"
+
+    DoubaoSeedreamError:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: Error code.
+        message:
+          type: string
+          description: Error message.
+
+    DoubaoSeedreamStreamEvent:
+      description: |
+        Server-Sent Events stream data payload. Each SSE `data` payload is one
+        of `image_generation.partial_succeeded`,
+        `image_generation.partial_failed`, or `image_generation.completed`.
+      oneOf:
+        - $ref: "#/components/schemas/DoubaoSeedreamPartialSucceededEvent"
+        - $ref: "#/components/schemas/DoubaoSeedreamPartialFailedEvent"
+        - $ref: "#/components/schemas/DoubaoSeedreamCompletedEvent"
+      discriminator:
+        propertyName: type
+
+    DoubaoSeedreamPartialSucceededEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - model
+        - created
+        - image_index
+      properties:
+        type:
+          type: string
+          const: image_generation.partial_succeeded
+        model:
+          type: string
+          description: Model ID used for this request.
+        created:
+          type: integer
+          format: int64
+          description: Unix timestamp in seconds for when the request was created.
+        image_index:
+          type: integer
+          minimum: 0
+          description: Zero-based image index for this request.
+        url:
+          type: string
+          format: uri
+          description: Image download URL returned when `response_format` is `url`.
+        b64_json:
+          type: string
+          contentEncoding: base64
+          description: Base64 image data returned when `response_format` is `b64_json`.
+        size:
+          type: string
+          pattern: "^[1-9][0-9]*x[1-9][0-9]*$"
+          description: Image dimensions in `<width>x<height>` pixels.
+
+    DoubaoSeedreamPartialFailedEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - model
+        - created
+        - image_index
+        - error
+      properties:
+        type:
+          type: string
+          const: image_generation.partial_failed
+        model:
+          type: string
+          description: Model ID used for this request.
+        created:
+          type: integer
+          format: int64
+          description: Unix timestamp in seconds for when the request was created.
+        image_index:
+          type: integer
+          minimum: 0
+          description: Zero-based image index for this request.
+        error:
+          $ref: "#/components/schemas/DoubaoSeedreamError"
+
+    DoubaoSeedreamCompletedEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - model
+        - created
+        - usage
+      properties:
+        type:
+          type: string
+          const: image_generation.completed
+        model:
+          type: string
+          description: Model ID used for this request.
+        created:
+          type: integer
+          format: int64
+          description: Unix timestamp in seconds for when the request was created.
+        usage:
+          $ref: "#/components/schemas/DoubaoSeedreamUsage"

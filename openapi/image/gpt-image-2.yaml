@@ -1,0 +1,392 @@
+openapi: 3.1.0
+x-language: en-US
+info:
+  title: ModelVerse gpt-image-2 Image API
+  version: "1.0.0"
+  description: |
+    Self-contained OpenAPI 3.1 schema for the ModelVerse OpenAI-compatible
+    `gpt-image-2` image generation and image editing APIs.
+
+
+servers:
+  - url: https://api.modelverse.cn
+    description: ModelVerse API endpoint documented for this model.
+
+tags:
+  - name: gpt-image-2
+    description: Image generation, localized image editing, and multi-image composition with gpt-image-2.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/images/generations:
+    post:
+      tags:
+        - gpt-image-2
+      operationId: createGptImage2ImageGeneration
+      summary: Generate images with gpt-image-2
+      description: |
+        Generate one or more images from a text prompt. The documented
+        `gpt-image-2` response returns base64 image data in `data[].b64_json`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GptImage2GenerationRequest"
+            examples:
+              flower:
+                summary: Generate a PNG image
+                value:
+                  model: gpt-image-2
+                  prompt: a beautiful flower
+                  size: 1024x1024
+                  quality: high
+                  output_format: png
+                  output_compression: 100
+      responses:
+        "200":
+          description: Image generation response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GptImage2ImagesResponse"
+              examples:
+                generatedImage:
+                  summary: Generated image with token usage
+                  value:
+                    created: 1750667997
+                    data:
+                      - b64_json: "{image_base64_string}"
+                    usage:
+                      total_tokens: 4169
+                      input_tokens: 9
+                      output_tokens: 4160
+                      input_tokens_details:
+                        text_tokens: 9
+        "400":
+          description: Invalid request parameters or generation error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GptImage2ErrorResponse"
+              examples:
+                documentedError:
+                  $ref: "#/components/examples/GptImage2Error"
+        default:
+          description: Error response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GptImage2ErrorResponse"
+              examples:
+                documentedError:
+                  $ref: "#/components/examples/GptImage2Error"
+
+  /v1/images/edits:
+    post:
+      tags:
+        - gpt-image-2
+      operationId: createGptImage2ImageEdit
+      summary: Edit images with gpt-image-2
+      description: |
+        Edit a single image, optionally constrained by a `mask`, or compose
+        multiple reference images into a new image by repeating the multipart
+        `image[]` field. Multipart requests must include `model`, `prompt`,
+        and at least one of `image` or `image[]`.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/GptImage2EditRequest"
+            encoding:
+              image:
+                contentType: image/png
+              mask:
+                contentType: image/png
+              image[]:
+                contentType: image/png
+                style: form
+                explode: true
+            examples:
+              localizedEdit:
+                summary: Localized edit with an optional mask
+                value:
+                  image: /path/to/your/image.png
+                  mask: /path/to/your/mask.png
+                  model: gpt-image-2
+                  prompt: Add a beach ball in the center
+                  size: 1024x1024
+                  n: 1
+                  quality: low
+                  output_format: png
+                  output_compression: 100
+              multiImageComposition:
+                summary: Compose multiple images by repeating image[]
+                value:
+                  model: gpt-image-2
+                  image[]:
+                    - ./body-lotion.png
+                    - ./bath-bomb.png
+                    - ./incense-kit.png
+                    - ./soap.png
+                  prompt: a beautiful gift basket containing all these products arranged elegantly
+      responses:
+        "200":
+          description: Image edit response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GptImage2ImagesResponse"
+              examples:
+                editedImage:
+                  summary: Edited image with token usage
+                  value:
+                    created: 1750667997
+                    data:
+                      - b64_json: "{image_base64_string}"
+                    usage:
+                      total_tokens: 4169
+                      input_tokens: 9
+                      output_tokens: 4160
+                      input_tokens_details:
+                        text_tokens: 9
+        "400":
+          description: Invalid request parameters or edit error.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GptImage2ErrorResponse"
+              examples:
+                documentedError:
+                  $ref: "#/components/examples/GptImage2Error"
+        default:
+          description: Error response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GptImage2ErrorResponse"
+              examples:
+                documentedError:
+                  $ref: "#/components/examples/GptImage2Error"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+
+  schemas:
+    GptImage2Model:
+      type: string
+      const: gpt-image-2
+      description: The image model ID documented for these operations.
+
+    GptImage2Prompt:
+      type: string
+      minLength: 1
+      description: Text prompt describing the image to generate or the edit to apply.
+
+    GptImage2ImageCount:
+      type: integer
+      minimum: 1
+      maximum: 10
+      default: 1
+      description: Number of images to generate. The documented range is 1 to 10.
+
+    GptImage2Size:
+      type: string
+      default: auto
+      description: |
+        Image resolution. Use `auto` or a `WIDTHxHEIGHT` value. For explicit
+        dimensions, both width and height must be multiples of 16 pixels, each
+        side must be at most 3840 pixels, the aspect ratio must be at most 3:1,
+        and the total pixel count must be 655360 to 8294400.
+      x-width-multiple-of: 16
+      x-height-multiple-of: 16
+      x-max-side: 3840
+      x-min-pixels: 655360
+      x-max-pixels: 8294400
+      x-max-aspect-ratio: "3:1"
+      oneOf:
+        - const: auto
+        - pattern: "^[1-9][0-9]*x[1-9][0-9]*$"
+      examples:
+        - 1024x1024
+        - 1024x1536
+        - 1536x1024
+        - 2048x2048
+        - 2048x1152
+        - 2160x3840
+
+    GptImage2Quality:
+      type: string
+      enum:
+        - low
+        - medium
+        - high
+      description: Image quality. Higher quality can take longer.
+
+    GptImage2OutputFormat:
+      type: string
+      enum:
+        - png
+        - jpeg
+      default: png
+      description: Output image format.
+
+    GptImage2OutputCompression:
+      type: integer
+      minimum: 0
+      maximum: 100
+      default: 100
+      description: Image compression strength. `0` disables compression and `100` applies maximum compression.
+
+    GptImage2GenerationRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - prompt
+      properties:
+        model:
+          $ref: "#/components/schemas/GptImage2Model"
+        prompt:
+          $ref: "#/components/schemas/GptImage2Prompt"
+        n:
+          $ref: "#/components/schemas/GptImage2ImageCount"
+        size:
+          $ref: "#/components/schemas/GptImage2Size"
+        quality:
+          $ref: "#/components/schemas/GptImage2Quality"
+        output_format:
+          $ref: "#/components/schemas/GptImage2OutputFormat"
+        output_compression:
+          $ref: "#/components/schemas/GptImage2OutputCompression"
+
+    GptImage2EditRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - model
+        - prompt
+      anyOf:
+        - required:
+            - image
+        - required:
+            - image[]
+      properties:
+        image:
+          type: string
+          format: binary
+          description: Image file to edit for single-image local editing.
+        image[]:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            format: binary
+          description: Repeated multipart image field for multi-image composition.
+        mask:
+          type: string
+          format: binary
+          description: Optional mask file that limits the edited region for single-image local editing.
+        model:
+          $ref: "#/components/schemas/GptImage2Model"
+        prompt:
+          $ref: "#/components/schemas/GptImage2Prompt"
+        n:
+          $ref: "#/components/schemas/GptImage2ImageCount"
+        size:
+          $ref: "#/components/schemas/GptImage2Size"
+        quality:
+          $ref: "#/components/schemas/GptImage2Quality"
+        output_format:
+          $ref: "#/components/schemas/GptImage2OutputFormat"
+        output_compression:
+          $ref: "#/components/schemas/GptImage2OutputCompression"
+
+    GptImage2ImagesResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - created
+        - data
+      properties:
+        created:
+          type: integer
+          format: int64
+          description: Unix timestamp in seconds for when the request was created.
+        data:
+          type: array
+          minItems: 1
+          description: Generated image data. The documented gpt-image-2 response returns base64 image data.
+          items:
+            $ref: "#/components/schemas/GptImage2ImageData"
+        usage:
+          $ref: "#/components/schemas/GptImage2Usage"
+
+    GptImage2ImageData:
+      type: object
+      additionalProperties: false
+      required:
+        - b64_json
+      properties:
+        b64_json:
+          type: string
+          description: Base64-encoded image data, optionally prefixed as a data URL.
+
+    GptImage2Usage:
+      type: object
+      additionalProperties: true
+      properties:
+        total_tokens:
+          type: integer
+        input_tokens:
+          type: integer
+        output_tokens:
+          type: integer
+        input_tokens_details:
+          type: object
+          additionalProperties: true
+          properties:
+            text_tokens:
+              type: integer
+
+    GptImage2ErrorResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/GptImage2Error"
+
+    GptImage2Error:
+      type: object
+      additionalProperties: true
+      properties:
+        message:
+          type: string
+          description: Error message.
+        type:
+          type: string
+          description: Error type.
+        param:
+          type: string
+          description: Request ID or related parameter.
+        code:
+          type: string
+          description: Error code.
+
+  examples:
+    GptImage2Error:
+      summary: Documented error response
+      value:
+        error:
+          message: error_message
+          type: error_type
+          param: request_id
+          code: error_code
