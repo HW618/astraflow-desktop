@@ -8,14 +8,19 @@ import {
   createStudioVideoGeneration,
   createStudioVideoOutput,
   listStudioVideoGenerations,
+  recordStudioVideoGenerationTask,
   updateStudioVideoGeneration,
 } from "@/lib/studio-video-db"
+import { downloadVideoAsDataUrl } from "@/lib/studio-video-storage"
 import type {
   StudioVideoModelOpenapi,
   StudioVideoOutput,
   StudioVideoParameterField,
 } from "@/lib/studio-video-types"
-import { getVideoModelEndpoint, getVideoTaskStatusEndpoint } from "@/lib/video-openapi"
+import {
+  getVideoModelEndpoint,
+  getVideoTaskStatusEndpoint,
+} from "@/lib/video-openapi"
 
 export const runtime = "nodejs"
 
@@ -404,6 +409,24 @@ function getAsyncTaskId(payload: unknown) {
 
   if (typeof taskId === "number" && Number.isFinite(taskId)) {
     return String(taskId)
+  }
+
+  return null
+}
+
+function getProviderRequestId(payload: unknown) {
+  if (!payload || typeof payload !== "object") {
+    return null
+  }
+
+  const requestId = (payload as { request_id?: unknown }).request_id
+
+  if (typeof requestId === "string" && requestId) {
+    return requestId
+  }
+
+  if (typeof requestId === "number" && Number.isFinite(requestId)) {
+    return String(requestId)
   }
 
   return null
@@ -821,6 +844,58 @@ function extractVideoOutputs(payload: unknown): NormalizedOutput[] {
     }))
 }
 
+function mergeOutputMetadata(
+  metadata: unknown,
+  extra: Record<string, unknown>
+) {
+  if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
+    return {
+      ...metadata,
+      ...extra,
+    }
+  }
+
+  if (metadata === undefined || metadata === null) {
+    return extra
+  }
+
+  return {
+    sourceMetadata: metadata,
+    ...extra,
+  }
+}
+
+async function prepareAutoSavedOutput(
+  output: NormalizedOutput
+): Promise<NormalizedOutput> {
+  if (output.dataUrl || !output.url) {
+    return output
+  }
+
+  try {
+    const saved = await downloadVideoAsDataUrl(output.url)
+
+    return {
+      ...output,
+      dataUrl: saved.dataUrl,
+      mimeType: output.mimeType ?? saved.mimeType,
+      metadata: mergeOutputMetadata(output.metadata, {
+        sourceUrl: output.url,
+        autoSaved: true,
+      }),
+    }
+  } catch (error) {
+    return {
+      ...output,
+      metadata: mergeOutputMetadata(output.metadata, {
+        autoSaved: true,
+        autoSaveDownloadError:
+          error instanceof Error ? error.message : "Failed to download video.",
+      }),
+    }
+  }
+}
+
 export async function GET(_request: Request, context: RouteContext) {
   const { sessionId } = await context.params
   const session = getStudioSession(sessionId)
@@ -896,6 +971,8 @@ export async function POST(request: Request, context: RouteContext) {
 
   const endpointUrl = getVideoModelEndpoint(parsed.data.openapi)
   const statusUrl = getVideoTaskStatusEndpoint(parsed.data.openapi)
+  let providerTaskId: string | null = null
+  let providerRequestId: string | null = null
 
   try {
     let providerResponse: { ok: boolean; status: number; body: unknown }
@@ -917,6 +994,8 @@ export async function POST(request: Request, context: RouteContext) {
         apiKey,
       })
 
+      providerRequestId = getProviderRequestId(providerResponse.body)
+
       if (providerResponse.ok) {
         const taskId = getOpenAiVideoTaskId(providerResponse.body)
 
@@ -932,6 +1011,12 @@ export async function POST(request: Request, context: RouteContext) {
             },
           }
         } else {
+          providerTaskId = taskId
+          recordStudioVideoGenerationTask(generation.id, {
+            providerTaskId,
+            providerRequestId,
+          })
+
           const statusResponse = await pollOpenAiVideoTask({
             statusUrl,
             taskId,
@@ -942,6 +1027,8 @@ export async function POST(request: Request, context: RouteContext) {
             ok: statusResponse.ok,
             status: statusResponse.status,
             body: {
+              task_id: taskId,
+              request_id: providerRequestId,
               submit: providerResponse.body,
               status: statusResponse.body,
             },
@@ -974,6 +1061,8 @@ export async function POST(request: Request, context: RouteContext) {
         apiKey,
       })
 
+      providerRequestId = getProviderRequestId(providerResponse.body)
+
       if (providerResponse.ok) {
         const taskId = getAsyncTaskId(providerResponse.body)
 
@@ -989,6 +1078,12 @@ export async function POST(request: Request, context: RouteContext) {
             },
           }
         } else {
+          providerTaskId = taskId
+          recordStudioVideoGenerationTask(generation.id, {
+            providerTaskId,
+            providerRequestId,
+          })
+
           const statusResponse = await pollAsyncTask({
             statusUrl,
             taskId,
@@ -999,6 +1094,8 @@ export async function POST(request: Request, context: RouteContext) {
             ok: statusResponse.ok,
             status: statusResponse.status,
             body: {
+              task_id: taskId,
+              request_id: providerRequestId,
               submit: providerResponse.body,
               status: statusResponse.body,
             },
@@ -1021,13 +1118,21 @@ export async function POST(request: Request, context: RouteContext) {
         status: "error",
         errorMessage: String(message),
         rawResponse: providerResponse.body,
+        providerTaskId,
+        providerRequestId,
       })
 
       return NextResponse.json(
         {
           ok: false,
           error: String(message),
-          data: { ...generation, status: "error", errorMessage: message },
+          data: {
+            ...generation,
+            status: "error",
+            errorMessage: message,
+            providerTaskId,
+            providerRequestId,
+          },
         },
         { status: 502 }
       )
@@ -1038,6 +1143,8 @@ export async function POST(request: Request, context: RouteContext) {
         status: "error",
         errorMessage: "No video returned by the provider.",
         rawResponse: providerResponse.body,
+        providerTaskId,
+        providerRequestId,
       })
 
       return NextResponse.json(
@@ -1048,7 +1155,11 @@ export async function POST(request: Request, context: RouteContext) {
 
     const stored: StudioVideoOutput[] = []
 
-    outputs.forEach((output, index) => {
+    const autoSavedOutputs = await Promise.all(
+      outputs.map((output) => prepareAutoSavedOutput(output))
+    )
+
+    autoSavedOutputs.forEach((output, index) => {
       stored.push(
         createStudioVideoOutput({
           generationId: generation.id,
@@ -1060,6 +1171,7 @@ export async function POST(request: Request, context: RouteContext) {
           height: output.height ?? null,
           durationSeconds: output.durationSeconds ?? null,
           metadata: output.metadata,
+          autoSave: true,
         })
       )
     })
@@ -1067,6 +1179,8 @@ export async function POST(request: Request, context: RouteContext) {
     updateStudioVideoGeneration(generation.id, {
       status: "complete",
       rawResponse: providerResponse.body,
+      providerTaskId,
+      providerRequestId,
     })
 
     return NextResponse.json(
@@ -1075,6 +1189,8 @@ export async function POST(request: Request, context: RouteContext) {
         data: {
           ...generation,
           status: "complete",
+          providerTaskId,
+          providerRequestId,
           outputs: stored,
           completedAt: new Date().toISOString(),
         },
@@ -1088,6 +1204,8 @@ export async function POST(request: Request, context: RouteContext) {
     updateStudioVideoGeneration(generation.id, {
       status: "error",
       errorMessage: message,
+      providerTaskId: null,
+      providerRequestId: null,
     })
 
     return NextResponse.json(

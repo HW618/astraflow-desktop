@@ -18,6 +18,8 @@ type DbVideoGenerationRow = {
   manufacturer: string | null
   openapi_file: string | null
   operation_id: string | null
+  provider_task_id: string | null
+  provider_request_id: string | null
   prompt: string
   params: string
   status: StudioVideoStatus
@@ -50,6 +52,8 @@ type DbSavedVideoOutputRow = {
   prompt: string
   model_name: string
   manufacturer: string | null
+  provider_task_id: string | null
+  provider_request_id: string | null
   mime_type: string | null
   width: number | null
   height: number | null
@@ -65,6 +69,8 @@ type CreateVideoGenerationInput = {
   manufacturer?: string | null
   openapiFile?: string | null
   operationId?: string | null
+  providerTaskId?: string | null
+  providerRequestId?: string | null
   prompt: string
   params: Record<string, unknown>
   status?: StudioVideoStatus
@@ -80,6 +86,7 @@ type CreateVideoOutputInput = {
   height?: number | null
   durationSeconds?: number | null
   metadata?: unknown
+  autoSave?: boolean
 }
 
 type UpdateVideoGenerationInput = {
@@ -87,6 +94,13 @@ type UpdateVideoGenerationInput = {
   errorMessage?: string | null
   rawResponse?: unknown
   completedAt?: string | null
+  providerTaskId?: string | null
+  providerRequestId?: string | null
+}
+
+type RecordVideoGenerationTaskInput = {
+  providerTaskId?: string | null
+  providerRequestId?: string | null
 }
 
 let videoDb: Database.Database | undefined
@@ -127,6 +141,8 @@ function initializeVideoSchema(database: Database.Database) {
       manufacturer TEXT,
       openapi_file TEXT,
       operation_id TEXT,
+      provider_task_id TEXT,
+      provider_request_id TEXT,
       prompt TEXT NOT NULL,
       params TEXT NOT NULL,
       status TEXT NOT NULL,
@@ -159,6 +175,32 @@ function initializeVideoSchema(database: Database.Database) {
     CREATE INDEX IF NOT EXISTS studio_video_outputs_generation_idx
       ON studio_video_outputs(generation_id, output_index ASC);
   `)
+
+  ensureVideoGenerationTaskColumns(database)
+}
+
+function ensureVideoGenerationTaskColumns(database: Database.Database) {
+  const columns = new Set(
+    (
+      database
+        .prepare("PRAGMA table_info(studio_video_generations)")
+        .all() as Array<{ name: string }>
+    ).map((column) => column.name)
+  )
+
+  if (!columns.has("provider_task_id")) {
+    database.exec(`
+      ALTER TABLE studio_video_generations
+      ADD COLUMN provider_task_id TEXT
+    `)
+  }
+
+  if (!columns.has("provider_request_id")) {
+    database.exec(`
+      ALTER TABLE studio_video_generations
+      ADD COLUMN provider_request_id TEXT
+    `)
+  }
 }
 
 function parseJsonRecord(raw: string): Record<string, unknown> {
@@ -206,6 +248,8 @@ function mapVideoGeneration(
     manufacturer: row.manufacturer,
     openapiFile: row.openapi_file,
     operationId: row.operation_id,
+    providerTaskId: row.provider_task_id,
+    providerRequestId: row.provider_request_id,
     prompt: row.prompt,
     params: parseJsonRecord(row.params),
     status: row.status,
@@ -222,8 +266,9 @@ export function listStudioVideoGenerations(sessionId: string) {
     .prepare(
       `
         SELECT id, session_id, model_square_id, model_name, manufacturer,
-               openapi_file, operation_id, prompt, params, status,
-               error_message, raw_response, created_at, completed_at
+               openapi_file, operation_id, provider_task_id,
+               provider_request_id, prompt, params, status, error_message,
+               raw_response, created_at, completed_at
         FROM studio_video_generations
         WHERE session_id = ?
         ORDER BY created_at ASC
@@ -274,12 +319,14 @@ export function createStudioVideoGeneration(
         `
           INSERT INTO studio_video_generations
             (id, session_id, model_square_id, model_name, manufacturer,
-             openapi_file, operation_id, prompt, params, status,
-             error_message, raw_response, created_at, completed_at)
+             openapi_file, operation_id, provider_task_id,
+             provider_request_id, prompt, params, status, error_message,
+             raw_response, created_at, completed_at)
           VALUES
             (@id, @sessionId, @modelSquareId, @modelName, @manufacturer,
-             @openapiFile, @operationId, @prompt, @params, @status,
-             NULL, NULL, @createdAt, NULL)
+             @openapiFile, @operationId, @providerTaskId,
+             @providerRequestId, @prompt, @params, @status, NULL, NULL,
+             @createdAt, NULL)
         `
       )
       .run({
@@ -290,6 +337,8 @@ export function createStudioVideoGeneration(
         manufacturer: input.manufacturer ?? null,
         openapiFile: input.openapiFile ?? null,
         operationId: input.operationId ?? null,
+        providerTaskId: input.providerTaskId ?? null,
+        providerRequestId: input.providerRequestId ?? null,
         prompt: input.prompt,
         params: JSON.stringify(input.params),
         status,
@@ -317,6 +366,8 @@ export function createStudioVideoGeneration(
     manufacturer: input.manufacturer ?? null,
     openapiFile: input.openapiFile ?? null,
     operationId: input.operationId ?? null,
+    providerTaskId: input.providerTaskId ?? null,
+    providerRequestId: input.providerRequestId ?? null,
     prompt: input.prompt,
     params: input.params,
     status,
@@ -340,6 +391,8 @@ export function updateStudioVideoGeneration(
         SET status = ?,
             error_message = ?,
             raw_response = ?,
+            provider_task_id = COALESCE(?, provider_task_id),
+            provider_request_id = COALESCE(?, provider_request_id),
             completed_at = ?
         WHERE id = ?
       `
@@ -348,7 +401,33 @@ export function updateStudioVideoGeneration(
       input.status,
       input.errorMessage ?? null,
       input.rawResponse === undefined ? null : JSON.stringify(input.rawResponse),
+      input.providerTaskId ?? null,
+      input.providerRequestId ?? null,
       completedAt,
+      generationId
+    )
+}
+
+export function recordStudioVideoGenerationTask(
+  generationId: string,
+  input: RecordVideoGenerationTaskInput
+) {
+  if (!input.providerTaskId && !input.providerRequestId) {
+    return
+  }
+
+  getVideoDb()
+    .prepare(
+      `
+        UPDATE studio_video_generations
+        SET provider_task_id = COALESCE(?, provider_task_id),
+            provider_request_id = COALESCE(?, provider_request_id)
+        WHERE id = ?
+      `
+    )
+    .run(
+      input.providerTaskId ?? null,
+      input.providerRequestId ?? null,
       generationId
     )
 }
@@ -358,6 +437,7 @@ export function createStudioVideoOutput(
 ): StudioVideoOutput {
   const id = randomUUID()
   const createdAt = nowIso()
+  const savedAt = input.autoSave ? createdAt : null
 
   getVideoDb()
     .prepare(
@@ -367,7 +447,7 @@ export function createStudioVideoOutput(
            width, height, duration_seconds, metadata, saved_at, created_at)
         VALUES
           (@id, @generationId, @index, @url, @dataUrl, @mimeType,
-           @width, @height, @durationSeconds, @metadata, NULL, @createdAt)
+           @width, @height, @durationSeconds, @metadata, @savedAt, @createdAt)
       `
     )
     .run({
@@ -382,6 +462,7 @@ export function createStudioVideoOutput(
       durationSeconds: input.durationSeconds ?? null,
       metadata:
         input.metadata === undefined ? null : JSON.stringify(input.metadata),
+      savedAt,
       createdAt,
     })
 
@@ -396,7 +477,7 @@ export function createStudioVideoOutput(
     width: input.width ?? null,
     height: input.height ?? null,
     durationSeconds: input.durationSeconds ?? null,
-    savedAt: null,
+    savedAt,
     createdAt,
   }
 }
@@ -422,9 +503,10 @@ export function listStudioSavedVideoOutputs(): StudioSavedVideoOutput[] {
       `
         SELECT outputs.id, outputs.generation_id, generations.session_id,
                outputs.output_index, generations.prompt, generations.model_name,
-               generations.manufacturer, outputs.mime_type, outputs.width,
-               outputs.height, outputs.duration_seconds, outputs.saved_at,
-               outputs.created_at
+               generations.manufacturer, generations.provider_task_id,
+               generations.provider_request_id, outputs.mime_type,
+               outputs.width, outputs.height, outputs.duration_seconds,
+               outputs.saved_at, outputs.created_at
         FROM studio_video_outputs AS outputs
         INNER JOIN studio_video_generations AS generations
           ON generations.id = outputs.generation_id
@@ -442,6 +524,8 @@ export function listStudioSavedVideoOutputs(): StudioSavedVideoOutput[] {
     prompt: row.prompt,
     modelName: row.model_name,
     manufacturer: row.manufacturer,
+    providerTaskId: row.provider_task_id,
+    providerRequestId: row.provider_request_id,
     mimeType: row.mime_type,
     width: row.width,
     height: row.height,

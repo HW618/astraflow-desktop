@@ -98,6 +98,8 @@ function getFileSearchText(file: StudioLibraryFile) {
     file.prompt,
     file.modelName,
     file.manufacturer,
+    file.kind === "video" ? file.providerTaskId : null,
+    file.kind === "video" ? file.providerRequestId : null,
     file.mimeType,
     formatDimensions(file),
     formatDuration(file),

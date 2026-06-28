@@ -7,7 +7,6 @@ import {
   RiDownloadLine,
   RiLoader4Line,
   RiQuestionLine,
-  RiSaveLine,
 } from "@remixicon/react"
 
 import { useI18n } from "@/components/i18n-provider"
@@ -77,7 +76,7 @@ function getVideoCopy(locale: string) {
       queued: "排队中",
       running: "生成中",
       generatingTitle: "正在生成视频",
-      generatingHint: "完成后会自动显示在这里",
+      generatingHint: "完成后会自动保存到文件库",
       complete: "已完成",
       failed: "失败",
     }
@@ -105,7 +104,7 @@ function getVideoCopy(locale: string) {
     queued: "Queued",
     running: "Running",
     generatingTitle: "Generating video",
-    generatingHint: "The result will appear here",
+    generatingHint: "It will be saved to Files when ready",
     complete: "Complete",
     failed: "Failed",
   }
@@ -216,14 +215,6 @@ async function submitVideoGeneration({
   return readJson<StudioVideoGeneration>(response)
 }
 
-async function saveVideoOutput(outputId: string) {
-  const response = await fetch(
-    `/api/studio/video-outputs/${outputId}/save`,
-    { method: "POST" }
-  )
-  return readJson<StudioVideoOutput>(response)
-}
-
 type PendingReferenceImage = {
   id: string
   name: string
@@ -311,9 +302,6 @@ function StudioVideoWorkbench({
   const [submitError, setSubmitError] = React.useState("")
   const [generations, setGenerations] = React.useState<StudioVideoGeneration[]>(
     []
-  )
-  const [savingOutputId, setSavingOutputId] = React.useState<string | null>(
-    null
   )
 
   const selectedModel = React.useMemo(
@@ -499,6 +487,8 @@ function StudioVideoWorkbench({
       manufacturer: promptModel.manufacturer,
       openapiFile: promptOpenapi.file,
       operationId: promptOpenapi.operationId,
+      providerTaskId: null,
+      providerRequestId: null,
       prompt: promptText,
       params: promptParams,
       status: "running",
@@ -573,25 +563,6 @@ function StudioVideoWorkbench({
     setSelectedModelId(generation.modelSquareId)
     setPrompt(generation.prompt)
     setParamValues(generation.params ?? {})
-  }
-
-  async function handleSave(outputId: string) {
-    setSavingOutputId(outputId)
-    try {
-      const saved = await saveVideoOutput(outputId)
-      setGenerations((current) =>
-        current.map((generation) => ({
-          ...generation,
-          outputs: generation.outputs.map((output) =>
-            output.id === outputId ? saved : output
-          ),
-        }))
-      )
-    } catch {
-      // ignore save error silently — user can retry
-    } finally {
-      setSavingOutputId(null)
-    }
   }
 
   function downloadOutput(output: StudioVideoOutput) {
@@ -746,9 +717,7 @@ function StudioVideoWorkbench({
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background p-4">
         <OutputCanvas
           generations={generations}
-          savingOutputId={savingOutputId}
           onSelectGeneration={loadOutputIntoForm}
-          onSaveOutput={handleSave}
           onDownloadOutput={downloadOutput}
         />
       </div>
@@ -1113,17 +1082,13 @@ function getOutputGridClassName(count: number) {
 
 type OutputCanvasProps = {
   generations: StudioVideoGeneration[]
-  savingOutputId: string | null
   onSelectGeneration: (generation: StudioVideoGeneration) => void
-  onSaveOutput: (outputId: string) => void
   onDownloadOutput: (output: StudioVideoOutput) => void
 }
 
 function OutputCanvas({
   generations,
-  savingOutputId,
   onSelectGeneration,
-  onSaveOutput,
   onDownloadOutput,
 }: OutputCanvasProps) {
   const { locale } = useI18n()
@@ -1152,9 +1117,7 @@ function OutputCanvas({
               key={tile.key}
               generation={tile.generation}
               output={tile.output}
-              saving={savingOutputId === tile.output.id}
               onSelect={() => onSelectGeneration(tile.generation)}
-              onSave={() => onSaveOutput(tile.output.id)}
               onDownload={() => onDownloadOutput(tile.output)}
             />
           ) : (
@@ -1172,18 +1135,14 @@ function OutputCanvas({
 type CanvasOutputTileProps = {
   generation: StudioVideoGeneration
   output: StudioVideoOutput
-  saving: boolean
   onSelect: () => void
-  onSave: () => void
   onDownload: () => void
 }
 
 function CanvasOutputTile({
   generation,
   output,
-  saving,
   onSelect,
-  onSave,
   onDownload,
 }: CanvasOutputTileProps) {
   const { locale } = useI18n()
@@ -1234,24 +1193,6 @@ function CanvasOutputTile({
         >
           <RiDownloadLine aria-hidden />
           <span>{copy.download}</span>
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-7 rounded-full px-2 text-xs text-white hover:bg-white/15"
-          onClick={(event) => {
-            event.stopPropagation()
-            onSave()
-          }}
-          disabled={saving}
-        >
-          {saving ? (
-            <RiLoader4Line className="animate-spin" aria-hidden />
-          ) : (
-            <RiSaveLine aria-hidden />
-          )}
-          <span>{output.savedAt ? copy.saved : copy.save}</span>
         </Button>
       </div>
     </div>

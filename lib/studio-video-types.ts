@@ -85,6 +85,8 @@ export type StudioVideoGeneration = {
   manufacturer: string | null
   openapiFile: string | null
   operationId: string | null
+  providerTaskId: string | null
+  providerRequestId: string | null
   prompt: string
   params: Record<string, unknown>
   status: StudioVideoStatus
@@ -102,6 +104,8 @@ export type StudioSavedVideoOutput = {
   prompt: string
   modelName: string
   manufacturer: string | null
+  providerTaskId: string | null
+  providerRequestId: string | null
   mimeType: string | null
   width: number | null
   height: number | null
