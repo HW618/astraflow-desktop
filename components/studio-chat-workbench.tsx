@@ -4,6 +4,7 @@ import * as React from "react"
 import {
   RiAddLine,
   RiArrowUpLine,
+  RiBrainLine,
   RiCloseLine,
   RiFileCopyLine,
   RiStopFill,
@@ -46,6 +47,12 @@ import { useI18n } from "@/components/i18n-provider"
 import {
   CHAT_MODEL_OPTIONS,
   DEFAULT_CHAT_MODEL,
+  getDefaultChatReasoningEffort,
+  getChatReasoningEfforts,
+  isChatReasoningEffort,
+  isChatReasoningEffortSupported,
+  resolveChatReasoningEffort,
+  type ChatReasoningEffort,
   type SupportedChatModel,
 } from "@/lib/chat-models"
 import type {
@@ -106,8 +113,10 @@ type ChatStreamSnapshot = {
 }
 
 const CHAT_MODEL_STORAGE_KEY = "astraflow:chat-model"
+const CHAT_REASONING_EFFORT_STORAGE_KEY = "astraflow:chat-reasoning-effort"
 
 const chatModelListeners = new Set<() => void>()
+const chatReasoningEffortListeners = new Set<() => void>()
 
 function getStoredChatModel(): SupportedChatModel {
   if (typeof window === "undefined") {
@@ -149,6 +158,115 @@ function useChatModel() {
   )
 
   return [model, setStoredChatModel] as const
+}
+
+function getStoredChatReasoningEffort(
+  model: SupportedChatModel
+): ChatReasoningEffort {
+  if (typeof window === "undefined") {
+    return getDefaultChatReasoningEffort(model)
+  }
+
+  const stored = window.localStorage.getItem(
+    CHAT_REASONING_EFFORT_STORAGE_KEY
+  )
+
+  if (
+    stored &&
+    isChatReasoningEffort(stored) &&
+    isChatReasoningEffortSupported(model, stored)
+  ) {
+    return stored
+  }
+
+  if (stored) {
+    try {
+      const parsed = JSON.parse(stored) as Partial<
+        Record<SupportedChatModel, string>
+      >
+      const effort = parsed[model]
+
+      if (
+        effort &&
+        isChatReasoningEffort(effort) &&
+        isChatReasoningEffortSupported(model, effort)
+      ) {
+        return effort
+      }
+    } catch {
+      // Ignore legacy or malformed storage and fall back to model defaults.
+    }
+  }
+
+  return getDefaultChatReasoningEffort(model)
+}
+
+function getStoredChatReasoningEffortMap() {
+  const stored = window.localStorage.getItem(
+    CHAT_REASONING_EFFORT_STORAGE_KEY
+  )
+
+  if (!stored || isChatReasoningEffort(stored)) {
+    return {}
+  }
+
+  try {
+    return JSON.parse(stored) as Partial<
+      Record<SupportedChatModel, ChatReasoningEffort>
+    >
+  } catch {
+    return {}
+  }
+}
+
+function setStoredChatReasoningEffort(
+  model: SupportedChatModel,
+  effort: ChatReasoningEffort
+) {
+  const nextEffort = resolveChatReasoningEffort(model, effort)
+  const nextEfforts = {
+    ...getStoredChatReasoningEffortMap(),
+    [model]: nextEffort,
+  }
+
+  window.localStorage.setItem(
+    CHAT_REASONING_EFFORT_STORAGE_KEY,
+    JSON.stringify(nextEfforts)
+  )
+  chatReasoningEffortListeners.forEach((listener) => listener())
+}
+
+function subscribeChatReasoningEffort(listener: () => void) {
+  chatReasoningEffortListeners.add(listener)
+  window.addEventListener("storage", listener)
+
+  return () => {
+    chatReasoningEffortListeners.delete(listener)
+    window.removeEventListener("storage", listener)
+  }
+}
+
+function useChatReasoningEffort(model: SupportedChatModel) {
+  const getSnapshot = React.useCallback(
+    () => getStoredChatReasoningEffort(model),
+    [model]
+  )
+  const getServerSnapshot = React.useCallback(
+    () => getDefaultChatReasoningEffort(model),
+    [model]
+  )
+  const reasoningEffort = React.useSyncExternalStore(
+    subscribeChatReasoningEffort,
+    getSnapshot,
+    getServerSnapshot
+  )
+  const setReasoningEffort = React.useCallback(
+    (effort: ChatReasoningEffort) =>
+      setStoredChatReasoningEffort(model, effort),
+    [model]
+  )
+
+  return [reasoningEffort, setReasoningEffort] as const
 }
 
 function getChatModelLabel(model: SupportedChatModel) {
@@ -221,12 +339,14 @@ async function generateSessionTitle(sessionId: string, prompt: string) {
 async function streamAssistantResponse({
   sessionId,
   model,
+  reasoningEffort,
   signal,
   onFirstChunk,
   onChunk,
 }: {
   sessionId: string
   model: SupportedChatModel
+  reasoningEffort: ChatReasoningEffort
   signal: AbortSignal
   onFirstChunk?: () => void
   onChunk: (snapshot: ChatStreamSnapshot) => void
@@ -237,6 +357,7 @@ async function streamAssistantResponse({
     body: JSON.stringify({
       sessionId,
       model,
+      reasoningEffort,
     }),
     signal,
   })
@@ -355,6 +476,8 @@ function StudioChatWorkbench({
   const { t } = useI18n()
   const [input, setInput] = React.useState("")
   const [selectedModel, setSelectedModel] = useChatModel()
+  const [selectedReasoningEffort, setSelectedReasoningEffort] =
+    useChatReasoningEffort(selectedModel)
   const [messages, setMessages] = React.useState<StudioMessage[]>([])
   const [pendingAttachments, setPendingAttachments] = React.useState<
     PendingAttachment[]
@@ -454,7 +577,11 @@ function StudioChatWorkbench({
   }, [])
 
   const startAssistantRun = React.useCallback(
-    (activeSessionId: string, model: SupportedChatModel) => {
+    (
+      activeSessionId: string,
+      model: SupportedChatModel,
+      reasoningEffort: ChatReasoningEffort
+    ) => {
       const abortController = new AbortController()
       abortControllersRef.current.set(activeSessionId, abortController)
       setChatErrors((current) => {
@@ -477,6 +604,7 @@ function StudioChatWorkbench({
       void streamAssistantResponse({
         sessionId: activeSessionId,
         model,
+        reasoningEffort,
         signal: abortController.signal,
         onFirstChunk() {
           setActiveRuns((current) => {
@@ -629,7 +757,11 @@ function StudioChatWorkbench({
           })
       }
 
-      startAssistantRun(activeSessionId, selectedModel)
+      startAssistantRun(
+        activeSessionId,
+        selectedModel,
+        selectedReasoningEffort
+      )
     } catch {
       if (sessionId) {
         setChatErrors((current) => ({ ...current, [sessionId]: true }))
@@ -692,8 +824,10 @@ function StudioChatWorkbench({
               <ChatComposer
                 value={input}
                 model={selectedModel}
+                reasoningEffort={selectedReasoningEffort}
                 attachments={pendingAttachments}
                 onModelChange={setSelectedModel}
+                onReasoningEffortChange={setSelectedReasoningEffort}
                 onValueChange={setInput}
                 onAddFiles={addFiles}
                 onRemoveAttachment={removeAttachment}
@@ -713,8 +847,10 @@ function StudioChatWorkbench({
             <ChatComposer
               value={input}
               model={selectedModel}
+              reasoningEffort={selectedReasoningEffort}
               attachments={pendingAttachments}
               onModelChange={setSelectedModel}
+              onReasoningEffortChange={setSelectedReasoningEffort}
               onValueChange={setInput}
               onAddFiles={addFiles}
               onRemoveAttachment={removeAttachment}
@@ -736,8 +872,10 @@ function StudioChatWorkbench({
 type ChatComposerProps = {
   value: string
   model: SupportedChatModel
+  reasoningEffort: ChatReasoningEffort
   attachments: PendingAttachment[]
   onModelChange: (model: SupportedChatModel) => void
+  onReasoningEffortChange: (effort: ChatReasoningEffort) => void
   onValueChange: (value: string) => void
   onAddFiles: (files: FileList | null) => void
   onRemoveAttachment: (id: string) => void
@@ -750,8 +888,10 @@ type ChatComposerProps = {
 function ChatComposer({
   value,
   model,
+  reasoningEffort,
   attachments,
   onModelChange,
+  onReasoningEffortChange,
   onValueChange,
   onAddFiles,
   onRemoveAttachment,
@@ -764,6 +904,27 @@ function ChatComposer({
   const [isTextareaFocused, setIsTextareaFocused] = React.useState(false)
   const fileInputRef = React.useRef<HTMLInputElement>(null)
   const showCustomCaret = isTextareaFocused && value.length === 0
+  const reasoningLabelByValue: Record<ChatReasoningEffort, string> = {
+    none: t.studioReasoningNone,
+    minimal: t.studioReasoningMinimal,
+    low: t.studioReasoningLow,
+    medium: t.studioReasoningMedium,
+    high: t.studioReasoningHigh,
+    xhigh: t.studioReasoningXHigh,
+    max: t.studioReasoningMax,
+    enabled: t.studioReasoningEnabled,
+  }
+  const resolvedReasoningEffort = resolveChatReasoningEffort(
+    model,
+    reasoningEffort
+  )
+  const reasoningOptions = getChatReasoningEfforts(model).map((effort) => ({
+    value: effort,
+    label: reasoningLabelByValue[effort],
+  }))
+  const reasoningEffortLabel =
+    reasoningOptions.find((option) => option.value === resolvedReasoningEffort)
+      ?.label ?? reasoningLabelByValue[resolvedReasoningEffort]
 
   const handlePaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const files = event.clipboardData?.files
@@ -841,9 +1002,9 @@ function ChatComposer({
         />
       </div>
 
-      <div className="mt-2 flex items-center justify-between gap-2">
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
         <div
-          className="flex items-center gap-2"
+          className="flex shrink-0 items-center gap-2"
           onClick={(event) => event.stopPropagation()}
         >
           <input
@@ -869,7 +1030,12 @@ function ChatComposer({
               <RiAddLine aria-hidden />
             </Button>
           </PromptInputAction>
+        </div>
 
+        <PromptInputActions
+          className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2"
+          onClick={(event) => event.stopPropagation()}
+        >
           <Select
             value={model}
             onValueChange={(nextValue) =>
@@ -879,12 +1045,12 @@ function ChatComposer({
           >
             <SelectTrigger
               size="sm"
-              className="h-8 max-w-44 rounded-full bg-background px-3 text-sm"
+              className="h-8 max-w-40 rounded-full bg-background px-3 text-sm sm:max-w-48"
               aria-label={t.studioChatModel}
             >
-              <span>{getChatModelLabel(model)}</span>
+              <span className="truncate">{getChatModelLabel(model)}</span>
             </SelectTrigger>
-            <SelectContent position="popper" side="top" align="start">
+            <SelectContent position="popper" side="top" align="end">
               <SelectGroup>
                 {CHAT_MODEL_OPTIONS.map((option) => (
                   <SelectItem key={option.value} value={option.value}>
@@ -894,9 +1060,33 @@ function ChatComposer({
               </SelectGroup>
             </SelectContent>
           </Select>
-        </div>
 
-        <PromptInputActions className="shrink-0">
+          <Select
+            value={resolvedReasoningEffort}
+            onValueChange={(nextValue) =>
+              onReasoningEffortChange(nextValue as ChatReasoningEffort)
+            }
+            disabled={isBusy}
+          >
+            <SelectTrigger
+              size="sm"
+              className="h-8 rounded-full bg-background px-3 text-sm"
+              aria-label={t.studioReasoningEffort}
+            >
+              <RiBrainLine aria-hidden className="size-4" />
+              <span>{reasoningEffortLabel}</span>
+            </SelectTrigger>
+            <SelectContent position="popper" side="top" align="end">
+              <SelectGroup>
+                {reasoningOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+
           <Button
             type="button"
             size="icon-sm"

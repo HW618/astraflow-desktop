@@ -1,10 +1,21 @@
 import { NextResponse } from "next/server"
-import type OpenAI from "openai"
 import { z } from "zod"
+import {
+  AIMessage,
+  HumanMessage,
+  SystemMessage,
+  type BaseMessage,
+  type MessageContent,
+} from "@langchain/core/messages"
 
 import { getAppAuthState } from "@/lib/app-auth"
-import { DEFAULT_CHAT_MODEL, SUPPORTED_CHAT_MODELS } from "@/lib/chat-models"
-import { createModelverseClient } from "@/lib/modelverse-openai"
+import {
+  DEFAULT_CHAT_MODEL,
+  resolveChatReasoningEffort,
+  SUPPORTED_CHAT_MODELS,
+  SUPPORTED_CHAT_REASONING_EFFORTS,
+} from "@/lib/chat-models"
+import { createModelverseChatModel } from "@/lib/modelverse-langchain"
 import { DEFAULT_SYSTEM_PROMPT } from "@/lib/modelverse-openai"
 import { getStudioSession, listStudioMessages } from "@/lib/studio-db"
 
@@ -13,12 +24,8 @@ export const runtime = "nodejs"
 const chatRequestSchema = z.object({
   sessionId: z.string().trim().min(1),
   model: z.enum(SUPPORTED_CHAT_MODELS).default(DEFAULT_CHAT_MODEL),
+  reasoningEffort: z.enum(SUPPORTED_CHAT_REASONING_EFFORTS).optional(),
 })
-
-type ChatCompletionDeltaWithReasoning =
-  OpenAI.Chat.Completions.ChatCompletionChunk.Choice.Delta & {
-    reasoning_content?: string | null
-  }
 
 type ChatStreamEvent = {
   type: "content" | "reasoning"
@@ -29,14 +36,12 @@ function encodeStreamEvent(encoder: TextEncoder, event: ChatStreamEvent) {
   return encoder.encode(`${JSON.stringify(event)}\n`)
 }
 
-function toChatMessages(
-  sessionId: string
-): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
+function toLangChainMessages(sessionId: string): BaseMessage[] {
   const history = listStudioMessages(sessionId)
 
   const messages = history.map((message) => {
     if (message.role === "user" && message.attachments.length > 0) {
-      const parts: OpenAI.Chat.Completions.ChatCompletionContentPart[] = []
+      const parts: MessageContent = []
 
       if (message.content) {
         parts.push({ type: "text", text: message.content })
@@ -49,19 +54,53 @@ function toChatMessages(
         })
       }
 
-      return { role: "user" as const, content: parts }
+      return new HumanMessage({ content: parts })
     }
 
-    return { role: message.role, content: message.content }
+    if (message.role === "user") {
+      return new HumanMessage(message.content)
+    }
+
+    return new AIMessage(message.content)
   })
 
-  return [
-    {
-      role: "system" as const,
-      content: DEFAULT_SYSTEM_PROMPT,
-    },
-    ...messages,
-  ]
+  return [new SystemMessage(DEFAULT_SYSTEM_PROMPT), ...messages]
+}
+
+function extractTextDelta(content: MessageContent) {
+  if (typeof content === "string") {
+    return content
+  }
+
+  return content
+    .map((part) =>
+      part.type === "text" && "text" in part && typeof part.text === "string"
+        ? part.text
+        : ""
+    )
+    .join("")
+}
+
+function extractReasoningDelta(chunk: BaseMessage) {
+  const providerReasoning = chunk.additional_kwargs.reasoning_content
+
+  if (typeof providerReasoning === "string") {
+    return providerReasoning
+  }
+
+  if (Array.isArray(chunk.content)) {
+    return chunk.content
+      .map((part) =>
+        part.type === "reasoning" &&
+        "reasoning" in part &&
+        typeof part.reasoning === "string"
+          ? part.reasoning
+          : ""
+      )
+      .join("")
+  }
+
+  return ""
 }
 
 export async function POST(request: Request) {
@@ -93,12 +132,14 @@ export async function POST(request: Request) {
   }
 
   try {
-    const client = createModelverseClient()
-    const stream = await client.chat.completions.create({
-      model: parsed.data.model,
-      stream: true,
-      messages: toChatMessages(parsed.data.sessionId),
-    })
+    const reasoningEffort = resolveChatReasoningEffort(
+      parsed.data.model,
+      parsed.data.reasoningEffort
+    )
+    const model = createModelverseChatModel(parsed.data.model, reasoningEffort)
+    const stream = await model.stream(
+      toLangChainMessages(parsed.data.sessionId)
+    )
 
     const encoder = new TextEncoder()
 
@@ -107,11 +148,8 @@ export async function POST(request: Request) {
         async start(controller) {
           try {
             for await (const chunk of stream) {
-              const delta = chunk.choices[0]?.delta as
-                | ChatCompletionDeltaWithReasoning
-                | undefined
-              const reasoningContent = delta?.reasoning_content
-              const content = delta?.content
+              const reasoningContent = extractReasoningDelta(chunk)
+              const content = extractTextDelta(chunk.content)
 
               if (reasoningContent) {
                 controller.enqueue(
