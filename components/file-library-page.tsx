@@ -4,6 +4,7 @@ import * as React from "react"
 import Link from "next/link"
 import {
   RiDownloadLine,
+  RiFileTextLine,
   RiMicLine,
   RiSearchLine,
   RiSparkling2Line,
@@ -50,7 +51,7 @@ function formatSavedTime(value: string, locale: string) {
 }
 
 function formatDimensions(file: StudioLibraryFile) {
-  if (file.kind === "audio") {
+  if (file.kind !== "image" && file.kind !== "video") {
     return null
   }
 
@@ -62,7 +63,10 @@ function formatDimensions(file: StudioLibraryFile) {
 }
 
 function formatDuration(file: StudioLibraryFile) {
-  if (file.kind === "image" || !file.durationSeconds) {
+  if (
+    (file.kind !== "audio" && file.kind !== "video") ||
+    !file.durationSeconds
+  ) {
     return null
   }
 
@@ -77,11 +81,19 @@ function formatMimeType(file: StudioLibraryFile) {
   const { mimeType } = file
 
   if (!mimeType) {
-    return file.kind === "audio"
-      ? "Audio"
-      : file.kind === "video"
-        ? "Video"
-        : "Image"
+    if (file.kind === "audio") {
+      return "Audio"
+    }
+
+    if (file.kind === "video") {
+      return "Video"
+    }
+
+    if (file.kind === "image") {
+      return "Image"
+    }
+
+    return "File"
   }
 
   const subtype = mimeType.split("/")[1]?.split("+")[0]
@@ -97,6 +109,8 @@ function getFileSearchText(file: StudioLibraryFile) {
     file.manufacturer,
     file.kind === "video" ? file.providerTaskId : null,
     file.kind === "video" ? file.providerRequestId : null,
+    file.kind === "file" ? file.name : null,
+    file.kind === "file" ? file.sandboxPath : null,
     file.mimeType,
     formatDimensions(file),
     formatDuration(file),
@@ -203,13 +217,21 @@ function LibraryFileCard({
   const { t } = useI18n()
   const dimensions = formatDimensions(file)
   const duration = formatDuration(file)
-  const details = [formatMimeType(file), dimensions, duration].filter(Boolean)
+  const details = [formatMimeType(file), dimensions, duration].filter(
+    (detail): detail is string => Boolean(detail)
+  )
+  const fileSize =
+    file.kind === "file" && typeof file.size === "number"
+      ? formatFileSize(file.size)
+      : null
   const kindLabel =
     file.kind === "audio"
       ? t.fileLibraryAudio
       : file.kind === "video"
         ? t.fileLibraryVideo
-        : t.fileLibraryImage
+        : file.kind === "image"
+          ? t.fileLibraryImage
+          : t.fileLibraryFile
 
   return (
     <article className="group flex min-w-0 shrink-0 flex-col overflow-hidden rounded-lg border bg-card">
@@ -258,10 +280,23 @@ function LibraryFileCard({
               {detail}
             </Badge>
           ))}
+          {fileSize ? <Badge variant="outline">{fileSize}</Badge> : null}
         </div>
       </div>
     </article>
   )
+}
+
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) {
+    return `${bytes} B`
+  }
+
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`
+  }
+
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 function LibraryMediaPreview({ file }: { file: StudioLibraryFile }) {
@@ -290,15 +325,30 @@ function LibraryMediaPreview({ file }: { file: StudioLibraryFile }) {
     )
   }
 
+  if (file.kind === "file") {
+    return (
+      <div className="flex size-full items-center justify-center p-5">
+        <div className="flex min-w-0 flex-col items-center gap-3 text-center">
+          <div className="flex size-14 items-center justify-center rounded-full bg-background text-muted-foreground shadow-sm">
+            <RiFileTextLine className="size-6" aria-hidden />
+          </div>
+          <span className="line-clamp-3 max-w-full break-words text-xs text-muted-foreground">
+            {file.name}
+          </span>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex size-full items-center justify-center p-3">
       <div className="flex w-full min-w-0 flex-col items-center gap-4">
         <div className="flex size-12 items-center justify-center rounded-full bg-background text-muted-foreground shadow-sm">
           <RiMicLine className="size-5" aria-hidden />
         </div>
-        <AudioPlayer className="w-full min-w-0 rounded-lg border bg-background px-2 py-2">
+        <AudioPlayer className="w-full min-w-0 max-w-full rounded-lg border bg-background px-2 py-2">
           <AudioPlayerElement src={file.src} preload="metadata" />
-          <AudioPlayerControlBar className="w-full min-w-0 [&>[data-slot=button-group]]:w-full [&>[data-slot=button-group]]:min-w-0">
+          <AudioPlayerControlBar className="w-full min-w-0 max-w-full [&>[data-slot=button-group]]:w-full [&>[data-slot=button-group]]:min-w-0">
             <AudioPlayerPlayButton />
             <AudioPlayerTimeDisplay className="hidden sm:flex" />
             <AudioPlayerTimeRange className="min-w-0 flex-1 basis-0" />

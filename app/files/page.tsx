@@ -2,7 +2,10 @@ import { connection } from "next/server"
 
 import { FileLibraryPage } from "@/components/file-library-page"
 import { listStudioSavedAudioLibraryFiles } from "@/lib/studio-audio-library"
-import { listStudioSavedImageOutputs } from "@/lib/studio-db"
+import {
+  listStudioSavedGenericFiles,
+  listStudioSavedImageOutputs,
+} from "@/lib/studio-db"
 import type { StudioLibraryFile } from "@/lib/studio-types"
 import { listStudioSavedVideoLibraryFiles } from "@/lib/studio-video-library"
 
@@ -27,7 +30,13 @@ export default async function FilesPage() {
   )
   const videoFiles = listStudioSavedVideoLibraryFiles()
   const audioFiles = listStudioSavedAudioLibraryFiles()
-  const files = [...imageFiles, ...videoFiles, ...audioFiles].sort(
+  const genericFiles = listStudioSavedGenericFiles()
+  const files = [
+    ...imageFiles,
+    ...videoFiles,
+    ...audioFiles,
+    ...genericFiles,
+  ].sort(
     (left, right) =>
       new Date(right.savedAt).getTime() - new Date(left.savedAt).getTime()
   )

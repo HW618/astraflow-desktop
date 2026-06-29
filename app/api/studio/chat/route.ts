@@ -16,9 +16,17 @@ import {
   SUPPORTED_CHAT_REASONING_EFFORTS,
 } from "@/lib/chat-models"
 import { createStudioAgentTools } from "@/lib/exa-tools"
+import {
+  createAvailableSessionFilesManifest,
+  describeAttachmentForPrompt,
+} from "@/lib/e2b-session-sandbox"
 import { createModelverseChatModel } from "@/lib/modelverse-langchain"
 import { DEFAULT_SYSTEM_PROMPT } from "@/lib/modelverse-openai"
-import { getStudioSession, listStudioMessages } from "@/lib/studio-db"
+import {
+  getStudioModelverseApiKey,
+  getStudioSession,
+  listStudioMessages,
+} from "@/lib/studio-db"
 
 export const runtime = "nodejs"
 
@@ -49,6 +57,47 @@ type ChatStreamEvent =
       error?: string
     }
 
+const STUDIO_CHAT_DEBUG = process.env.ASTRAFLOW_STUDIO_CHAT_DEBUG === "1"
+
+function truncateDebugValue(value: unknown, maxLength = 260) {
+  const text = stringifyToolPayload(value).replace(/\s+/g, " ").trim()
+
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text
+}
+
+function debugStudioChatTool(
+  label: string,
+  payload: Record<string, unknown>
+) {
+  if (!STUDIO_CHAT_DEBUG) {
+    return
+  }
+
+  console.info(`[studio-chat:tool] ${label}`, payload)
+}
+
+function isAbortLikeError(error: unknown, signal?: AbortSignal) {
+  const record = getRecord(error)
+  const name = typeof record?.name === "string" ? record.name : ""
+  const message = error instanceof Error ? error.message : String(error)
+
+  return (
+    Boolean(signal?.aborted) ||
+    name === "AbortError" ||
+    name === "ResponseAborted" ||
+    message.includes("ResponseAborted") ||
+    message.includes("aborted")
+  )
+}
+
+function closeStreamController(controller: ReadableStreamDefaultController) {
+  try {
+    controller.close()
+  } catch {
+    // The client may already have disconnected.
+  }
+}
+
 function encodeStreamEvent(encoder: TextEncoder, event: ChatStreamEvent) {
   return encoder.encode(`${JSON.stringify(event)}\n`)
 }
@@ -71,8 +120,27 @@ function stringifyToolPayload(value: unknown) {
 
 function isVisibleToolName(
   name: unknown
-): name is "web_search" | "web_fetch" | "run_code" {
-  return name === "web_search" || name === "web_fetch" || name === "run_code"
+): name is
+  | "web_search"
+  | "web_fetch"
+  | "run_code"
+  | "run_command"
+  | "upload_file"
+  | "list_files"
+  | "read_file"
+  | "write_file"
+  | "download_file" {
+  return (
+    name === "web_search" ||
+    name === "web_fetch" ||
+    name === "run_code" ||
+    name === "run_command" ||
+    name === "upload_file" ||
+    name === "list_files" ||
+    name === "read_file" ||
+    name === "write_file" ||
+    name === "download_file"
+  )
 }
 
 function getRecord(value: unknown) {
@@ -87,7 +155,10 @@ function getRawEventData(event: unknown) {
 
   return {
     method: record?.method,
-    data: getRecord(params?.data),
+    event: record?.event,
+    name: record?.name,
+    runId: record?.run_id ?? record?.runId,
+    data: getRecord(params?.data) ?? getRecord(record?.data),
   }
 }
 
@@ -105,6 +176,76 @@ function getToolCallInput(value: unknown) {
   }
 
   return value
+}
+
+function getStringValue(...values: unknown[]) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) {
+      return value
+    }
+  }
+
+  return null
+}
+
+function getToolCallId(data: Record<string, unknown>, runId: unknown) {
+  const toolCall = getRecord(data.tool_call) ?? getRecord(data.toolCall)
+  const id = getStringValue(
+    data.tool_call_id,
+    data.toolCallId,
+    toolCall?.id,
+    runId
+  )
+
+  return id ?? crypto.randomUUID()
+}
+
+function getToolName(data: Record<string, unknown>, fallbackName: unknown) {
+  const toolCall = getRecord(data.tool_call) ?? getRecord(data.toolCall)
+
+  return getStringValue(
+    data.tool_name,
+    data.toolName,
+    toolCall?.name,
+    fallbackName
+  )
+}
+
+function inferToolNameFromToolCallId(toolCallId: string) {
+  const [candidate] = toolCallId.split(":")
+
+  return isVisibleToolName(candidate) ? candidate : null
+}
+
+function resolveToolNameForEvent({
+  data,
+  fallbackName,
+  toolCallId,
+  seenToolCalls,
+}: {
+  data: Record<string, unknown>
+  fallbackName: unknown
+  toolCallId: string
+  seenToolCalls: Map<string, string>
+}) {
+  return (
+    getToolName(data, fallbackName) ??
+    seenToolCalls.get(toolCallId) ??
+    inferToolNameFromToolCallId(toolCallId)
+  )
+}
+
+function getToolInput(data: Record<string, unknown>) {
+  const toolCall = getRecord(data.tool_call) ?? getRecord(data.toolCall)
+
+  return data.input ?? toolCall?.args ?? toolCall?.input ?? ""
+}
+
+function getToolOutput(value: unknown) {
+  const record = getRecord(value)
+  const kwargs = getRecord(record?.kwargs)
+
+  return record?.content ?? kwargs?.content ?? value
 }
 
 function toLangChainMessages(
@@ -127,9 +268,16 @@ function toLangChainMessages(
       }
 
       for (const attachment of message.attachments) {
+        if (attachment.type === "image" && attachment.dataUrl) {
+          parts.push({
+            type: "image_url",
+            image_url: { url: attachment.dataUrl },
+          })
+        }
+
         parts.push({
-          type: "image_url",
-          image_url: { url: attachment.dataUrl },
+          type: "text",
+          text: describeAttachmentForPrompt(attachment),
         })
       }
 
@@ -150,10 +298,12 @@ function getAgentSystemPrompt({
   hasWebFetch,
   hasWebSearch,
   hasRunCode,
+  sandboxManifest,
 }: {
   hasWebFetch: boolean
   hasWebSearch: boolean
   hasRunCode: boolean
+  sandboxManifest: string
 }) {
   if (!hasWebFetch && !hasWebSearch && !hasRunCode) {
     return DEFAULT_SYSTEM_PROMPT
@@ -175,13 +325,14 @@ function getAgentSystemPrompt({
 
   if (hasRunCode) {
     toolInstructions.push(
-      "You have access to a run_code tool backed by an E2B code-interpreter-v1 sandbox. Use it for calculations, data processing, code execution, or quick scripts in python, javascript, typescript, bash, r, or java. The auto_pause field is required: choose true only when later tool calls may need the same sandbox state or files, and choose false for one-shot execution so the sandbox is killed after the code finishes. If you need to continue from a previous run_code result, pass its Sandbox ID as sandbox_id."
+      "You have access to a persistent per-chat E2B code-interpreter-v1 sandbox through run_code, run_command, and file tools: upload_file, list_files, read_file, write_file, and download_file. Use run_code for calculations, data processing, document analysis, and scripts in python, javascript, typescript, bash, r, or java. Use run_command for direct shell commands, bash pipelines, package/environment inspection, and filesystem operations; it runs through sandbox.commands.run with /bin/bash -l -c. For uploaded PDFs, Word documents, spreadsheets, CSVs, or other non-image files, call upload_file with the file_id first, then use the returned sandbox path inside run_code or run_command. Do not try to inline binary content. The sandbox auto-pauses after inactivity and auto-resumes on traffic with memory and filesystem preserved. Do not ask for a sandbox_id or auto_pause value; this chat session already owns one sandbox. Use download_file when generated output should be saved to the local file library for the user."
     )
   }
 
   return `${DEFAULT_SYSTEM_PROMPT}
 
-${toolInstructions.join("\n")}`
+${toolInstructions.join("\n")}
+${sandboxManifest ? `\n${sandboxManifest}` : ""}`
 }
 
 export async function POST(request: Request) {
@@ -218,7 +369,15 @@ export async function POST(request: Request) {
       parsed.data.reasoningEffort
     )
     const model = createModelverseChatModel(parsed.data.model, reasoningEffort)
-    const tools = createStudioAgentTools()
+    const modelverseApiKey = getStudioModelverseApiKey()?.key ?? null
+    const sandboxManifest = modelverseApiKey
+      ? createAvailableSessionFilesManifest(parsed.data.sessionId)
+      : ""
+
+    const tools = createStudioAgentTools({
+      sessionId: parsed.data.sessionId,
+      modelverseApiKey,
+    })
     const hasWebFetch = tools.some((agentTool) => agentTool.name === "web_fetch")
     const hasWebSearch = tools.some(
       (agentTool) => agentTool.name === "web_search"
@@ -231,6 +390,7 @@ export async function POST(request: Request) {
         hasWebFetch,
         hasWebSearch,
         hasRunCode,
+        sandboxManifest,
       }),
     })
     const run = await agent.streamEvents(
@@ -243,9 +403,15 @@ export async function POST(request: Request) {
       {
         version: "v3",
         signal: request.signal,
-        recursionLimit: tools.length > 0 ? 8 : 2,
       }
     )
+    const runOutput = run.output.catch((error) => {
+      if (isAbortLikeError(error, request.signal)) {
+        return null
+      }
+
+      throw error
+    })
 
     const encoder = new TextEncoder()
 
@@ -258,6 +424,7 @@ export async function POST(request: Request) {
             }
 
             const seenToolCalls = new Map<string, string>()
+            let toolEventSeq = 0
 
             const enqueueToolCall = ({
               toolCallId,
@@ -269,10 +436,22 @@ export async function POST(request: Request) {
               input: unknown
             }) => {
               if (seenToolCalls.has(toolCallId)) {
+                debugStudioChatTool("tool_call_duplicate_skipped", {
+                  seq: ++toolEventSeq,
+                  toolCallId,
+                  toolName,
+                  firstToolName: seenToolCalls.get(toolCallId),
+                })
                 return
               }
 
               seenToolCalls.set(toolCallId, toolName)
+              debugStudioChatTool("tool_call_emit", {
+                seq: ++toolEventSeq,
+                toolCallId,
+                toolName,
+                inputPreview: truncateDebugValue(input),
+              })
               enqueue({
                 type: "tool_call",
                 toolCallId,
@@ -282,7 +461,8 @@ export async function POST(request: Request) {
             }
 
             for await (const rawEvent of run) {
-              const { method, data } = getRawEventData(rawEvent)
+              const { method, data, event, name, runId } =
+                getRawEventData(rawEvent)
 
               if (!data) {
                 continue
@@ -318,6 +498,15 @@ export async function POST(request: Request) {
                     contentBlock?.type === "tool_call" &&
                     isVisibleToolName(contentBlock.name)
                   ) {
+                    debugStudioChatTool("message_tool_call_block", {
+                      seq: ++toolEventSeq,
+                      toolCallId:
+                        typeof contentBlock.id === "string"
+                          ? contentBlock.id
+                          : null,
+                      toolName: contentBlock.name,
+                      dataKeys: Object.keys(data),
+                    })
                     enqueueToolCall({
                       toolCallId:
                         typeof contentBlock.id === "string"
@@ -330,22 +519,148 @@ export async function POST(request: Request) {
                 }
               }
 
-              if (method === "tools") {
-                const toolName = data.tool_name
-                const toolCallId =
-                  typeof data.tool_call_id === "string"
-                    ? data.tool_call_id
-                    : crypto.randomUUID()
+              if (
+                event === "on_tool_start" ||
+                event === "on_tool_end" ||
+                event === "on_tool_error"
+              ) {
+                const toolCallId = getToolCallId(data, runId)
+                const toolName = resolveToolNameForEvent({
+                  data,
+                  fallbackName: name,
+                  toolCallId,
+                  seenToolCalls,
+                })
+
+                debugStudioChatTool("langchain_tool_event_seen", {
+                  seq: ++toolEventSeq,
+                  event,
+                  method,
+                  name,
+                  runId,
+                  toolName,
+                  dataKeys: Object.keys(data),
+                })
 
                 if (!isVisibleToolName(toolName)) {
+                  debugStudioChatTool("langchain_tool_event_skipped", {
+                    seq: ++toolEventSeq,
+                    event,
+                    toolCallId,
+                    rawToolName: getToolName(data, name),
+                    knownToolName: seenToolCalls.get(toolCallId),
+                  })
                   continue
                 }
+
+                debugStudioChatTool("langchain_tool_event_resolved", {
+                  seq: ++toolEventSeq,
+                  event,
+                  toolName,
+                  toolCallId,
+                  runId,
+                  seenStartForId: seenToolCalls.has(toolCallId),
+                  inputPreview:
+                    event === "on_tool_start"
+                      ? truncateDebugValue(getToolInput(data))
+                      : undefined,
+                  outputLength:
+                    event === "on_tool_end"
+                      ? stringifyToolPayload(getToolOutput(data.output)).length
+                      : undefined,
+                  errorPreview:
+                    event === "on_tool_error"
+                      ? truncateDebugValue(getToolOutput(data.error))
+                      : undefined,
+                })
+
+                if (event === "on_tool_start") {
+                  enqueueToolCall({
+                    toolCallId,
+                    toolName,
+                    input: getToolInput(data),
+                  })
+                }
+
+                if (event === "on_tool_end") {
+                  enqueue({
+                    type: "tool_result",
+                    toolCallId,
+                    toolName,
+                    status: "complete",
+                    output: stringifyToolPayload(getToolOutput(data.output)),
+                  })
+                }
+
+                if (event === "on_tool_error") {
+                  enqueue({
+                    type: "tool_result",
+                    toolCallId,
+                    toolName,
+                    status: "error",
+                    error: stringifyToolPayload(
+                      getToolOutput(data.error ?? data.output)
+                    ),
+                  })
+                }
+              }
+
+              if (method === "tools") {
+                const toolCallId = getToolCallId(data, runId)
+                const toolName = resolveToolNameForEvent({
+                  data,
+                  fallbackName: name,
+                  toolCallId,
+                  seenToolCalls,
+                })
+
+                debugStudioChatTool("custom_tool_event_seen", {
+                  seq: ++toolEventSeq,
+                  event: data.event,
+                  method,
+                  name,
+                  runId,
+                  toolName,
+                  dataKeys: Object.keys(data),
+                })
+
+                if (!isVisibleToolName(toolName)) {
+                  debugStudioChatTool("custom_tool_event_skipped", {
+                    seq: ++toolEventSeq,
+                    event: data.event,
+                    toolCallId,
+                    rawToolName: getToolName(data, name),
+                    knownToolName: seenToolCalls.get(toolCallId),
+                  })
+                  continue
+                }
+
+                debugStudioChatTool("custom_tool_event_resolved", {
+                  seq: ++toolEventSeq,
+                  event: data.event,
+                  toolName,
+                  toolCallId,
+                  runId,
+                  seenStartForId: seenToolCalls.has(toolCallId),
+                  inputPreview:
+                    data.event === "tool-started"
+                      ? truncateDebugValue(getToolInput(data))
+                      : undefined,
+                  outputLength:
+                    data.event === "tool-finished"
+                      ? stringifyToolPayload(getToolOutput(data.output)).length
+                      : undefined,
+                  errorPreview:
+                    data.event === "tool-error"
+                      ? truncateDebugValue(data.message ?? data.error)
+                      : undefined,
+                })
 
                 if (data.event === "tool-started") {
                   enqueueToolCall({
                     toolCallId,
                     toolName,
-                    input: data.input ?? "",
+                    input: getToolInput(data),
                   })
                 }
 
@@ -355,7 +670,7 @@ export async function POST(request: Request) {
                     toolCallId,
                     toolName,
                     status: "complete",
-                    output: stringifyToolPayload(data.output),
+                    output: stringifyToolPayload(getToolOutput(data.output)),
                   })
                 }
 
@@ -365,14 +680,22 @@ export async function POST(request: Request) {
                     toolCallId,
                     toolName,
                     status: "error",
-                    error: stringifyToolPayload(data.message ?? data.error),
+                    error: stringifyToolPayload(
+                      getToolOutput(data.message ?? data.error)
+                    ),
                   })
                 }
               }
             }
 
-            await run.output
+            await runOutput
           } catch (error) {
+            if (isAbortLikeError(error, request.signal)) {
+              closeStreamController(controller)
+              return
+            }
+
+            console.error("[studio-chat:tool] stream_failed", error)
             controller.error(error)
             return
           }
@@ -388,6 +711,10 @@ export async function POST(request: Request) {
       }
     )
   } catch (error) {
+    if (isAbortLikeError(error, request.signal)) {
+      return new Response(null, { status: 499 })
+    }
+
     return NextResponse.json(
       {
         ok: false,

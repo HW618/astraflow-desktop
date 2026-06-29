@@ -15,6 +15,7 @@ import {
   RiRefreshLine,
   RiSearchLine,
   RiStopFill,
+  RiTerminalLine,
   RiThumbDownLine,
   RiThumbUpLine,
 } from "@remixicon/react"
@@ -56,6 +57,7 @@ import {
 } from "@/components/ui/dialog"
 import {
   ChainOfThought,
+  ChainOfThoughtContent,
   ChainOfThoughtStep,
   ChainOfThoughtTrigger,
 } from "@/components/ui/chain-of-thought"
@@ -64,7 +66,7 @@ import {
   CodeBlockCode,
   CodeBlockGroup,
 } from "@/components/prompt-kit/code-block"
-import { TextShimmer } from "@/components/ui/text-shimmer"
+import { Shimmer } from "@/components/ai-elements/shimmer"
 import { Button } from "@/components/ui/button"
 import { useI18n } from "@/components/i18n-provider"
 import {
@@ -96,7 +98,7 @@ type StudioChatWorkbenchProps = {
 type PendingAttachment = StudioAttachment & { id: string }
 
 const MAX_ATTACHMENTS = 6
-const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024
+const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024
 
 function readFileAsDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
@@ -105,6 +107,22 @@ function readFileAsDataUrl(file: File) {
     reader.onerror = () => reject(reader.error)
     reader.readAsDataURL(file)
   })
+}
+
+function formatAttachmentSize(bytes: number | null | undefined) {
+  if (typeof bytes !== "number") {
+    return ""
+  }
+
+  if (bytes < 1024) {
+    return `${bytes} B`
+  }
+
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`
+  }
+
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 type ApiResponse<T> =
@@ -161,6 +179,36 @@ const CHAT_REASONING_EFFORT_STORAGE_KEY = "astraflow:chat-reasoning-effort"
 
 const chatModelListeners = new Set<() => void>()
 const chatReasoningEffortListeners = new Set<() => void>()
+
+function shouldDebugStudioChatClient() {
+  if (typeof window === "undefined") {
+    return false
+  }
+
+  return window.localStorage.getItem("astraflow:debug-chat") === "1"
+}
+
+function getActivityDebugSnapshot(activities: StudioMessageActivity[]) {
+  return activities.map((activity) => ({
+    id: activity.id,
+    toolName: activity.toolName,
+    status: activity.status,
+    inputLength: activity.input.length,
+    outputLength: activity.output.length,
+    hasError: Boolean(activity.error),
+  }))
+}
+
+function debugStudioChatClient(
+  label: string,
+  payload: Record<string, unknown>
+) {
+  if (!shouldDebugStudioChatClient()) {
+    return
+  }
+
+  console.info(`[studio-chat:client-tool] ${label}`, payload)
+}
 
 function getStoredChatModel(): SupportedChatModel {
   if (typeof window === "undefined") {
@@ -463,15 +511,70 @@ async function streamAssistantResponse({
   let reasoningDurationMs: number | null = null
   let buffer = ""
   let receivedFirstChunk = false
-  const reasoningStartedAt = performance.now()
+  let clientToolEventSeq = 0
+  let activeReasoningPartId: string | null = null
+  let activeReasoningStartedAt: number | null = null
+  let totalReasoningDurationMs = 0
 
   function markReasoningDone() {
-    if (reasoningContent && reasoningDurationMs === null) {
-      reasoningDurationMs = Math.max(
-        1000,
-        Math.round(performance.now() - reasoningStartedAt)
-      )
+    if (!activeReasoningPartId || activeReasoningStartedAt === null) {
+      return
     }
+
+    const durationMs = Math.max(
+      1000,
+      Math.round(performance.now() - activeReasoningStartedAt)
+    )
+    totalReasoningDurationMs += durationMs
+    reasoningDurationMs = totalReasoningDurationMs
+    parts = parts.map((part) =>
+      part.type === "reasoning" && part.id === activeReasoningPartId
+        ? { ...part, durationMs }
+        : part
+    )
+    activeReasoningPartId = null
+    activeReasoningStartedAt = null
+  }
+
+  function appendReasoningPart(delta: string) {
+    if (!delta) {
+      return
+    }
+
+    reasoningContent += delta
+    const lastPart = parts.at(-1)
+
+    if (lastPart?.type === "reasoning" && lastPart.durationMs === null) {
+      if (!activeReasoningPartId) {
+        activeReasoningPartId = lastPart.id
+      }
+
+      if (activeReasoningStartedAt === null) {
+        activeReasoningStartedAt = performance.now()
+      }
+
+      parts = [
+        ...parts.slice(0, -1),
+        {
+          ...lastPart,
+          content: lastPart.content + delta,
+        },
+      ]
+      return
+    }
+
+    const partId = createClientId()
+    activeReasoningPartId = partId
+    activeReasoningStartedAt = performance.now()
+    parts = [
+      ...parts,
+      {
+        id: partId,
+        type: "reasoning",
+        content: delta,
+        durationMs: null,
+      },
+    ]
   }
 
   function appendTextPart(delta: string) {
@@ -533,45 +636,139 @@ async function streamAssistantResponse({
     }
 
     if (event.type === "reasoning") {
-      reasoningContent += event.delta
+      appendReasoningPart(event.delta)
     } else if (event.type === "content") {
       markReasoningDone()
       content += event.delta
       appendTextPart(event.delta)
     } else if (event.type === "tool_call") {
       markReasoningDone()
-      const activity: StudioMessageActivity = {
-        id: event.toolCallId,
+      const existingById = activities.find(
+        (activity) => activity.id === event.toolCallId
+      )
+      const latestSameTool = activities.findLast(
+        (activity) => activity.toolName === event.toolName
+      )
+
+      debugStudioChatClient("tool_call_received", {
+        seq: ++clientToolEventSeq,
+        toolCallId: event.toolCallId,
         toolName: event.toolName,
-        status: "running",
-        input: event.input,
-        output: "",
-        error: null,
-      }
-      activities = [
-        ...activities.filter((activity) => activity.id !== event.toolCallId),
-        activity,
-      ]
+        inputLength: event.input.length,
+        existingById: existingById
+          ? {
+              status: existingById.status,
+              outputLength: existingById.output.length,
+            }
+          : null,
+        latestSameTool: latestSameTool
+          ? {
+              id: latestSameTool.id,
+              status: latestSameTool.status,
+              outputLength: latestSameTool.output.length,
+            }
+          : null,
+        before: getActivityDebugSnapshot(activities),
+      })
+
+      const activity: StudioMessageActivity = existingById
+        ? {
+            ...existingById,
+            input: existingById.input || event.input,
+          }
+        : {
+            id: event.toolCallId,
+            toolName: event.toolName,
+            status: "running",
+            input: event.input,
+            output: "",
+            error: null,
+          }
+
+      activities = existingById
+        ? activities.map((candidate) =>
+            candidate.id === event.toolCallId ? activity : candidate
+          )
+        : [
+            ...activities.filter(
+              (candidate) => candidate.id !== event.toolCallId
+            ),
+            activity,
+          ]
       upsertToolPart(activity)
+      debugStudioChatClient("tool_call_applied", {
+        seq: clientToolEventSeq,
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        after: getActivityDebugSnapshot(activities),
+      })
     } else if (event.type === "tool_result") {
       markReasoningDone()
-      activities = activities.map((activity) =>
-        activity.id === event.toolCallId
+      let activityIndex = activities.findIndex(
+        (activity) => activity.id === event.toolCallId
+      )
+      let matchStrategy = activityIndex >= 0 ? "id" : "none"
+
+      if (activityIndex < 0) {
+        for (let index = activities.length - 1; index >= 0; index--) {
+          const activity = activities[index]
+
+          if (
+            activity.toolName === event.toolName &&
+            activity.status === "running"
+          ) {
+            activityIndex = index
+            matchStrategy = "latest-running-same-tool"
+            break
+          }
+        }
+      }
+
+      debugStudioChatClient("tool_result_received", {
+        seq: ++clientToolEventSeq,
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        status: event.status,
+        outputLength: event.output?.length ?? 0,
+        errorLength: event.error?.length ?? 0,
+        matchStrategy,
+        matchedIndex: activityIndex,
+        before: getActivityDebugSnapshot(activities),
+      })
+
+      const nextActivity: StudioMessageActivity =
+        activityIndex >= 0
           ? {
-              ...activity,
+              ...activities[activityIndex],
               status: event.status,
               output: event.output ?? "",
               error: event.error ?? null,
             }
-          : activity
-      )
-      const activity = activities.find(
-        (candidate) => candidate.id === event.toolCallId
-      )
+          : {
+              id: event.toolCallId,
+              toolName: event.toolName,
+              status: event.status,
+              input: "",
+              output: event.output ?? "",
+              error: event.error ?? null,
+            }
 
-      if (activity) {
-        upsertToolPart(activity)
-      }
+      activities =
+        activityIndex >= 0
+          ? activities.map((activity, index) =>
+              index === activityIndex ? nextActivity : activity
+            )
+          : [...activities, nextActivity]
+
+      upsertToolPart(nextActivity)
+      debugStudioChatClient("tool_result_applied", {
+        seq: clientToolEventSeq,
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        matchStrategy,
+        activityId: nextActivity.id,
+        after: getActivityDebugSnapshot(activities),
+      })
     }
 
     onChunk({ content, activities, parts, reasoningContent, reasoningDurationMs })
@@ -703,18 +900,19 @@ function StudioChatWorkbench({
       return
     }
 
-    const imageFiles = Array.from(files).filter((file) =>
-      file.type.startsWith("image/")
-    )
+    const acceptedFiles = Array.from(files)
 
     void Promise.all(
-      imageFiles
+      acceptedFiles
         .filter((file) => file.size <= MAX_ATTACHMENT_BYTES)
         .map(async (file) => ({
           id: createClientId(),
-          type: "image" as const,
+          type: file.type.startsWith("image/")
+            ? ("image" as const)
+            : ("file" as const),
           name: file.name,
-          mimeType: file.type,
+          mimeType: file.type || "application/octet-stream",
+          size: file.size,
           dataUrl: await readFileAsDataUrl(file),
         }))
     ).then((next) => {
@@ -792,7 +990,8 @@ function StudioChatWorkbench({
 
       const hasPersistableSnapshot = (snapshot: ChatStreamSnapshot) =>
         snapshot.content.trim().length > 0 ||
-        snapshot.reasoningContent.trim().length > 0
+        snapshot.reasoningContent.trim().length > 0 ||
+        snapshot.activities.some((activity) => activity.status !== "running")
 
       const finalizeStoppedSnapshot = (
         snapshot: ChatStreamSnapshot
@@ -807,10 +1006,13 @@ function StudioChatWorkbench({
         return {
           ...snapshot,
           activities: completedActivities,
-          parts: snapshot.parts.filter(
-            (part) =>
-              part.type === "text" || completedActivityIds.has(part.activity.id)
-          ),
+          parts: snapshot.parts.filter((part) => {
+            if (part.type === "text" || part.type === "reasoning") {
+              return true
+            }
+
+            return completedActivityIds.has(part.activity.id)
+          }),
         }
       }
 
@@ -942,6 +1144,12 @@ function StudioChatWorkbench({
             return
           }
 
+          try {
+            await saveAssistantSnapshot(finalizeStoppedSnapshot(latestSnapshot))
+          } catch {
+            // Keep surfacing the run failure below; partial persistence is best-effort.
+          }
+
           setActiveRuns((current) => {
             const next = { ...current }
             delete next[activeSessionId]
@@ -1023,9 +1231,11 @@ function StudioChatWorkbench({
         role: "user",
         content: prompt,
         attachments: attachments.map((attachment) => ({
+          id: attachment.id,
           type: attachment.type,
           name: attachment.name,
           mimeType: attachment.mimeType,
+          size: attachment.size,
           dataUrl: attachment.dataUrl,
         })),
       })
@@ -1083,9 +1293,9 @@ function StudioChatWorkbench({
 
               {activeRun?.phase === "thinking" ? (
                 <div className="flex w-full justify-start">
-                  <TextShimmer className="text-sm" duration={2}>
+                  <Shimmer className="text-sm">
                     {t.studioThinking}
-                  </TextShimmer>
+                  </Shimmer>
                 </div>
               ) : null}
 
@@ -1183,6 +1393,35 @@ type ChatComposerProps = {
   isBusy: boolean
 }
 
+function FileAttachmentChip({
+  attachment,
+  compact = false,
+}: {
+  attachment: StudioAttachment
+  compact?: boolean
+}) {
+  return (
+    <div
+      className={cn(
+        "flex h-full min-w-0 items-center gap-2 bg-background/70 px-3 py-2",
+        compact ? "text-xs" : "rounded-2xl border text-sm shadow-sm"
+      )}
+    >
+      <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+        <RiFileTextLine aria-hidden className="size-4" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="truncate font-medium">{attachment.name}</div>
+        <div className="truncate text-muted-foreground">
+          {[attachment.mimeType, formatAttachmentSize(attachment.size)]
+            .filter(Boolean)
+            .join(" · ")}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function ChatComposer({
   value,
   model,
@@ -1227,12 +1466,8 @@ function ChatComposer({
   const handlePaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const files = event.clipboardData?.files
 
-    if (
-      files &&
-      files.length > 0 &&
-      Array.from(files).some((file) => file.type.startsWith("image/"))
-    ) {
-      // Pasted an image/file (e.g. a screenshot) — attach it instead of
+    if (files && files.length > 0) {
+      // Pasted a file (e.g. a screenshot or document) — attach it instead of
       // letting the textarea insert a placeholder. Plain text still pastes
       // normally because clipboardData.files is empty for text.
       event.preventDefault()
@@ -1256,14 +1491,21 @@ function ChatComposer({
           {attachments.map((attachment) => (
             <div
               key={attachment.id}
-              className="group relative size-16 overflow-hidden rounded-2xl border bg-muted"
+              className={cn(
+                "group relative overflow-hidden rounded-2xl border bg-muted",
+                attachment.type === "image" ? "size-16" : "h-16 w-52 max-w-full"
+              )}
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={attachment.dataUrl}
-                alt={attachment.name}
-                className="size-full object-cover"
-              />
+              {attachment.type === "image" && attachment.dataUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={attachment.dataUrl}
+                  alt={attachment.name}
+                  className="size-full object-cover"
+                />
+              ) : (
+                <FileAttachmentChip attachment={attachment} compact />
+              )}
               <button
                 type="button"
                 aria-label={t.studioRemoveAttachment}
@@ -1308,7 +1550,6 @@ function ChatComposer({
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*"
             multiple
             className="hidden"
             onChange={(event) => {
@@ -1425,15 +1666,22 @@ function ChatMessageBubble({
         <div className="flex max-w-[70%] flex-col items-end gap-2">
           {message.attachments.length > 0 ? (
             <div className="flex flex-wrap justify-end gap-2">
-              {message.attachments.map((attachment, index) => (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  key={`${message.id}-${index}`}
-                  src={attachment.dataUrl}
-                  alt={attachment.name}
-                  className="max-h-60 max-w-full rounded-2xl border object-contain"
-                />
-              ))}
+              {message.attachments.map((attachment, index) =>
+                attachment.type === "image" && attachment.dataUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    key={`${message.id}-${index}`}
+                    src={attachment.dataUrl}
+                    alt={attachment.name}
+                    className="max-h-60 max-w-full rounded-2xl border object-contain"
+                  />
+                ) : (
+                  <FileAttachmentChip
+                    key={`${message.id}-${index}`}
+                    attachment={attachment}
+                  />
+                )
+              )}
             </div>
           ) : null}
           {message.content ? (
@@ -1459,6 +1707,14 @@ const markdownClassName =
 
 const reasoningMarkdownClassName =
   "max-w-none leading-6 prose-p:my-2 prose-headings:my-2 prose-code:rounded-sm prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:font-mono prose-pre:my-3"
+
+const assistantTraceContainerClassName = "not-prose my-0 text-muted-foreground"
+
+const assistantTraceTriggerClassName =
+  "min-h-7 max-w-full text-sm leading-6 [&>div]:min-w-0 [&>div]:gap-2 [&>div>span:last-child]:min-w-0"
+
+const assistantTraceLabelClassName =
+  "block max-w-full truncate leading-6"
 
 const streamingPulseDotClassName =
   "[&>*:last-child]:after:ml-1.5 [&>*:last-child]:after:inline-block [&>*:last-child]:after:size-2.5 [&>*:last-child]:after:translate-y-[1px] [&>*:last-child]:after:rounded-full [&>*:last-child]:after:bg-foreground [&>*:last-child]:after:align-middle [&>*:last-child]:after:content-[''] [&>*:last-child]:after:animate-[studio-pulse-dot_1.1s_ease-in-out_infinite]"
@@ -1486,7 +1742,7 @@ function AssistantReasoning({
   isStreaming?: boolean
   durationMs?: number | null
 }) {
-  const { locale } = useI18n()
+  const { locale, t } = useI18n()
 
   if (!content.trim()) {
     return null
@@ -1498,17 +1754,25 @@ function AssistantReasoning({
       : formatReasoningDuration(locale, durationMs)
 
   return (
-    <Reasoning isStreaming={isStreaming} className="flex flex-col gap-1">
-      <ReasoningTrigger className="w-fit">
+    <Reasoning
+      isStreaming={isStreaming}
+      className={cn(assistantTraceContainerClassName, "flex flex-col")}
+    >
+      <ReasoningTrigger
+        className={cn(
+          "min-h-7 w-fit max-w-full text-sm leading-6",
+          "[&>span]:min-w-0 [&>span]:truncate"
+        )}
+      >
         {isStreaming ? (
-          <TextShimmer duration={2}>Reasoning</TextShimmer>
+          <Shimmer as="span">{t.studioThinking}</Shimmer>
         ) : (
           label
         )}
       </ReasoningTrigger>
       <ReasoningContent
         markdown
-        className="ml-2 border-l-2 border-l-border px-3 pb-1"
+        className="ml-1.75 border-l border-l-border/70 pl-6 pb-1"
         contentClassName={reasoningMarkdownClassName}
       >
         {content}
@@ -1530,14 +1794,18 @@ function StreamingAssistantMessage({
   reasoningContent: string
   reasoningDurationMs: number | null
 }) {
+  const showTopLevelReasoning = !hasRenderableReasoningParts(parts)
+
   return (
     <Message className="justify-start">
       <div className="flex w-full flex-col gap-2">
-        <AssistantReasoning
-          content={reasoningContent}
-          durationMs={reasoningDurationMs}
-          isStreaming={reasoningDurationMs === null}
-        />
+        {showTopLevelReasoning ? (
+          <AssistantReasoning
+            content={reasoningContent}
+            durationMs={reasoningDurationMs}
+            isStreaming={reasoningDurationMs === null}
+          />
+        ) : null}
         <AssistantContentParts
           content={content}
           activities={activities}
@@ -1568,6 +1836,12 @@ function getFallbackMessageParts(
   }
 
   return fallbackParts
+}
+
+function hasRenderableReasoningParts(parts: StudioMessagePart[]) {
+  return parts.some(
+    (part) => part.type === "reasoning" && part.content.trim().length > 0
+  )
 }
 
 function getRenderableMessageParts({
@@ -1644,6 +1918,104 @@ function getRunCodePayload(input: string) {
   }
 }
 
+function getRunCommandPayload(input: string) {
+  try {
+    const parsed = JSON.parse(input) as {
+      command?: unknown
+      cwd?: unknown
+    }
+
+    return {
+      command: typeof parsed.command === "string" ? parsed.command : input,
+      cwd:
+        typeof parsed.cwd === "string" && parsed.cwd.trim()
+          ? parsed.cwd.trim()
+          : null,
+    }
+  } catch {
+    // Fall back to a generic label below.
+  }
+
+  return {
+    command: input,
+    cwd: null,
+  }
+}
+
+function formatCommandActivityLabel({
+  command,
+  running,
+  t,
+}: {
+  command: string
+  running: boolean
+  t: ReturnType<typeof useI18n>["t"]
+}) {
+  const isZh = t.studioThinking === "正在思考"
+  const fallback = running
+    ? isZh
+      ? command
+        ? `正在执行命令 ${command}`
+        : "正在执行命令"
+      : command
+        ? `Running command ${command}`
+        : "Running command"
+    : isZh
+      ? command
+        ? `已执行命令 ${command}`
+        : "已执行命令"
+      : command
+        ? `Ran command ${command}`
+        : "Ran command"
+  const formatter = running
+    ? (t as Partial<typeof t>).studioToolRunningCommand
+    : (t as Partial<typeof t>).studioToolRanCommand
+
+  return typeof formatter === "function" ? formatter(command) : fallback
+}
+
+function parseToolInputObject(input: string) {
+  try {
+    const parsed = JSON.parse(input) as Record<string, unknown>
+
+    return typeof parsed === "object" && parsed !== null ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function getFileToolTarget(input: string) {
+  const parsed = parseToolInputObject(input)
+
+  if (!parsed) {
+    return input.trim()
+  }
+
+  const path = typeof parsed.path === "string" ? parsed.path.trim() : ""
+  const name = typeof parsed.name === "string" ? parsed.name.trim() : ""
+  const fileId =
+    typeof parsed.file_id === "string" ? parsed.file_id.trim() : ""
+
+  return path || name || fileId || ""
+}
+
+function getFileToolOutputTarget(output: string) {
+  const match = output.match(
+    /^(?:Uploaded file|Saved sandbox file for download|Read file|Wrote file|Files in):\s*(.+)$/m
+  )
+
+  return match?.[1]?.trim() ?? ""
+}
+
+function getFileActivityTarget(activity: StudioMessageActivity) {
+  const inputTarget = getFileToolTarget(activity.input)
+  const outputTarget = getFileToolOutputTarget(activity.output)
+
+  return activity.status === "complete"
+    ? outputTarget || inputTarget
+    : inputTarget || outputTarget
+}
+
 function getActivityLabel(
   activity: StudioMessageActivity,
   t: ReturnType<typeof useI18n>["t"]
@@ -1668,11 +2040,176 @@ function getActivityLabel(
       : t.studioToolRanCode(language)
   }
 
+  if (activity.toolName === "run_command") {
+    const { command } = getRunCommandPayload(activity.input)
+
+    return formatCommandActivityLabel({
+      command,
+      running: activity.status === "running",
+      t,
+    })
+  }
+
+  if (
+    activity.toolName === "upload_file" ||
+    activity.toolName === "list_files" ||
+    activity.toolName === "read_file" ||
+    activity.toolName === "write_file" ||
+    activity.toolName === "download_file"
+  ) {
+    const target = getFileActivityTarget(activity)
+
+    if (activity.toolName === "upload_file") {
+      return activity.status === "running"
+        ? t.studioToolUploadingFile(target)
+        : t.studioToolUploadedFile(target)
+    }
+
+    if (activity.toolName === "list_files") {
+      return activity.status === "running"
+        ? t.studioToolListingFiles(target)
+        : t.studioToolListedFiles(target)
+    }
+
+    if (activity.toolName === "read_file") {
+      return activity.status === "running"
+        ? t.studioToolReadingFile(target)
+        : t.studioToolReadFile(target)
+    }
+
+    if (activity.toolName === "write_file") {
+      return activity.status === "running"
+        ? t.studioToolWritingFile(target)
+        : t.studioToolWroteFile(target)
+    }
+
+    return activity.status === "running"
+      ? t.studioToolSavingFile(target)
+      : t.studioToolSavedFile(target)
+  }
+
   const query = getWebSearchQuery(activity.input)
 
   return activity.status === "running"
     ? t.studioToolSearching(query)
     : t.studioToolAnalyzed(query)
+}
+
+function renderActivityInlineLabel(
+  activity: StudioMessageActivity,
+  t: ReturnType<typeof useI18n>["t"]
+) {
+  const label =
+    activity.status === "error"
+      ? t.studioToolError
+      : getActivityLabel(activity, t)
+
+  return (
+    <span className={assistantTraceLabelClassName}>
+      {activity.status === "running" ? (
+        <Shimmer as="span">{label}</Shimmer>
+      ) : (
+        label
+      )}
+    </span>
+  )
+}
+
+function FileToolActivity({ activity }: { activity: StudioMessageActivity }) {
+  const { t } = useI18n()
+
+  return (
+    <ChainOfThought className={assistantTraceContainerClassName}>
+      <ChainOfThoughtStep key={`${activity.id}-${activity.status}`} disabled>
+        <ChainOfThoughtTrigger
+          className={cn(assistantTraceTriggerClassName, "cursor-default")}
+          leftIcon={
+            activity.status === "complete" ? (
+              <RiCheckLine aria-hidden className="size-4" />
+            ) : (
+              <RiFileTextLine aria-hidden className="size-4" />
+            )
+          }
+        >
+          {renderActivityInlineLabel(activity, t)}
+        </ChainOfThoughtTrigger>
+      </ChainOfThoughtStep>
+    </ChainOfThought>
+  )
+}
+
+function RunCommandActivity({ activity }: { activity: StudioMessageActivity }) {
+  const { t } = useI18n()
+  const payload = getRunCommandPayload(activity.input)
+  const output =
+    activity.status === "error"
+      ? activity.error || t.studioToolError
+      : activity.output.trim()
+  const defaultOpen = activity.status === "running" || activity.status === "error"
+
+  return (
+    <ChainOfThought className={assistantTraceContainerClassName}>
+      <ChainOfThoughtStep
+        key={`${activity.id}-${activity.status}`}
+        defaultOpen={defaultOpen}
+      >
+        <ChainOfThoughtTrigger
+          className={assistantTraceTriggerClassName}
+          leftIcon={
+            activity.status === "complete" ? (
+              <RiCheckLine aria-hidden className="size-4" />
+            ) : (
+              <RiTerminalLine aria-hidden className="size-4" />
+            )
+          }
+        >
+          {renderActivityInlineLabel(activity, t)}
+        </ChainOfThoughtTrigger>
+
+        <ChainOfThoughtContent>
+          <CodeBlock className="rounded-2xl shadow-sm">
+            <CodeBlockGroup className="gap-3 border-b bg-muted/40 px-3 py-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <RiTerminalLine
+                  aria-hidden
+                  className="size-4 text-muted-foreground"
+                />
+                <span className="truncate text-sm font-medium">
+                  {t.input} · bash
+                </span>
+              </div>
+              {payload.cwd ? (
+                <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                  <span className="max-w-52 truncate">{payload.cwd}</span>
+                </div>
+              ) : null}
+            </CodeBlockGroup>
+            <CodeBlockCode code={payload.command} language="bash" />
+          </CodeBlock>
+
+          {activity.status === "running" ? null : (
+            <div className="space-y-2 border-l pl-3">
+              <div className="text-xs font-semibold uppercase text-muted-foreground">
+                {t.output}
+              </div>
+              {output ? (
+                <MessageContent
+                  markdown
+                  className={cn("bg-transparent p-0", markdownClassName)}
+                >
+                  {output}
+                </MessageContent>
+              ) : (
+                <div className="text-sm text-muted-foreground">
+                  {t.studioToolNoOutput}
+                </div>
+              )}
+            </div>
+          )}
+        </ChainOfThoughtContent>
+      </ChainOfThoughtStep>
+    </ChainOfThought>
+  )
 }
 
 function RunCodeActivity({ activity }: { activity: StudioMessageActivity }) {
@@ -1688,64 +2225,71 @@ function RunCodeActivity({ activity }: { activity: StudioMessageActivity }) {
       : payload.autoPause
         ? t.studioToolAutoPause
         : t.studioToolKillAfterRun
+  const defaultOpen = activity.status === "running" || activity.status === "error"
 
   return (
-    <div className="not-prose my-3 w-full space-y-3">
-      <div className="flex min-w-0 items-center gap-2 text-sm font-medium text-muted-foreground">
-        {activity.status === "complete" ? (
-          <RiCheckLine aria-hidden className="size-4 shrink-0" />
-        ) : (
-          <RiCodeLine aria-hidden className="size-4 shrink-0" />
-        )}
-        {activity.status === "running" ? (
-          <TextShimmer duration={2}>
-            {getActivityLabel(activity, t)}
-          </TextShimmer>
-        ) : activity.status === "error" ? (
-          <span>{t.studioToolError}</span>
-        ) : (
-          <span>{getActivityLabel(activity, t)}</span>
-        )}
-      </div>
+    <ChainOfThought className={assistantTraceContainerClassName}>
+      <ChainOfThoughtStep
+        key={`${activity.id}-${activity.status}`}
+        defaultOpen={defaultOpen}
+      >
+        <ChainOfThoughtTrigger
+          className={assistantTraceTriggerClassName}
+          leftIcon={
+            activity.status === "complete" ? (
+              <RiCheckLine aria-hidden className="size-4" />
+            ) : (
+              <RiCodeLine aria-hidden className="size-4" />
+            )
+          }
+        >
+          {renderActivityInlineLabel(activity, t)}
+        </ChainOfThoughtTrigger>
 
-      <CodeBlock className="rounded-2xl shadow-sm">
-        <CodeBlockGroup className="gap-3 border-b bg-muted/40 px-3 py-2">
-          <div className="flex min-w-0 items-center gap-2">
-            <RiCodeLine aria-hidden className="size-4 text-muted-foreground" />
-            <span className="truncate text-sm font-medium">
-              {t.input} · {payload.language}
-            </span>
-          </div>
-          <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-            {lifecycleLabel ? <span>{lifecycleLabel}</span> : null}
-            {payload.sandboxId ? (
-              <span className="max-w-40 truncate">{payload.sandboxId}</span>
-            ) : null}
-          </div>
-        </CodeBlockGroup>
-        <CodeBlockCode code={payload.code} language={payload.language} />
-      </CodeBlock>
+        <ChainOfThoughtContent>
+          <CodeBlock className="rounded-2xl shadow-sm">
+            <CodeBlockGroup className="gap-3 border-b bg-muted/40 px-3 py-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <RiCodeLine
+                  aria-hidden
+                  className="size-4 text-muted-foreground"
+                />
+                <span className="truncate text-sm font-medium">
+                  {t.input} · {payload.language}
+                </span>
+              </div>
+              <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                {lifecycleLabel ? <span>{lifecycleLabel}</span> : null}
+                {payload.sandboxId ? (
+                  <span className="max-w-40 truncate">{payload.sandboxId}</span>
+                ) : null}
+              </div>
+            </CodeBlockGroup>
+            <CodeBlockCode code={payload.code} language={payload.language} />
+          </CodeBlock>
 
-      {activity.status === "running" ? null : (
-        <div className="space-y-2 border-l pl-3">
-          <div className="text-xs font-semibold uppercase text-muted-foreground">
-            {t.output}
-          </div>
-          {output ? (
-            <MessageContent
-              markdown
-              className={cn("bg-transparent p-0", markdownClassName)}
-            >
-              {output}
-            </MessageContent>
-          ) : (
-            <div className="text-sm text-muted-foreground">
-              {t.studioToolNoOutput}
+          {activity.status === "running" ? null : (
+            <div className="space-y-2 border-l pl-3">
+              <div className="text-xs font-semibold uppercase text-muted-foreground">
+                {t.output}
+              </div>
+              {output ? (
+                <MessageContent
+                  markdown
+                  className={cn("bg-transparent p-0", markdownClassName)}
+                >
+                  {output}
+                </MessageContent>
+              ) : (
+                <div className="text-sm text-muted-foreground">
+                  {t.studioToolNoOutput}
+                </div>
+              )}
             </div>
           )}
-        </div>
-      )}
-    </div>
+        </ChainOfThoughtContent>
+      </ChainOfThoughtStep>
+    </ChainOfThought>
   )
 }
 
@@ -1756,6 +2300,20 @@ function AssistantActivity({ activity }: { activity: StudioMessageActivity }) {
     return <RunCodeActivity activity={activity} />
   }
 
+  if (activity.toolName === "run_command") {
+    return <RunCommandActivity activity={activity} />
+  }
+
+  if (
+    activity.toolName === "upload_file" ||
+    activity.toolName === "list_files" ||
+    activity.toolName === "read_file" ||
+    activity.toolName === "write_file" ||
+    activity.toolName === "download_file"
+  ) {
+    return <FileToolActivity activity={activity} />
+  }
+
   if (
     activity.toolName !== "web_search" &&
     activity.toolName !== "web_fetch"
@@ -1764,29 +2322,21 @@ function AssistantActivity({ activity }: { activity: StudioMessageActivity }) {
   }
 
   return (
-    <ChainOfThought className="my-1">
+    <ChainOfThought className={assistantTraceContainerClassName}>
       <ChainOfThoughtStep key={`${activity.id}-${activity.status}`} disabled>
         <ChainOfThoughtTrigger
-          className="cursor-default"
+          className={cn(assistantTraceTriggerClassName, "cursor-default")}
           leftIcon={
             activity.status === "complete" ? (
-              <RiCheckLine aria-hidden />
+              <RiCheckLine aria-hidden className="size-4" />
             ) : activity.toolName === "web_fetch" ? (
-              <RiFileTextLine aria-hidden />
+              <RiFileTextLine aria-hidden className="size-4" />
             ) : (
-              <RiSearchLine aria-hidden />
+              <RiSearchLine aria-hidden className="size-4" />
             )
           }
         >
-          {activity.status === "running" ? (
-            <TextShimmer duration={2}>
-              {getActivityLabel(activity, t)}
-            </TextShimmer>
-          ) : activity.status === "error" ? (
-            t.studioToolError
-          ) : (
-            getActivityLabel(activity, t)
-          )}
+          {renderActivityInlineLabel(activity, t)}
         </ChainOfThoughtTrigger>
       </ChainOfThoughtStep>
     </ChainOfThought>
@@ -1812,30 +2362,54 @@ function AssistantContentParts({
   const lastTextPartIndex = renderableParts.findLastIndex(
     (part) => part.type === "text" && part.content.trim()
   )
+  const lastReasoningPartIndex = renderableParts.findLastIndex(
+    (part) => part.type === "reasoning" && part.content.trim()
+  )
 
-  return renderableParts.map((part, index) => {
-    if (part.type === "tool") {
-      return <AssistantActivity key={part.id} activity={part.activity} />
-    }
+  return (
+    <div className="flex w-full min-w-0 flex-col gap-1.5">
+      {renderableParts.map((part, index) => {
+        if (part.type === "tool") {
+          return <AssistantActivity key={part.id} activity={part.activity} />
+        }
 
-    if (!part.content.trim()) {
-      return null
-    }
+        if (part.type === "reasoning") {
+          return (
+            <AssistantReasoning
+              key={part.id}
+              content={part.content}
+              durationMs={part.durationMs}
+              isStreaming={
+                streaming &&
+                index === lastReasoningPartIndex &&
+                part.durationMs === null
+              }
+            />
+          )
+        }
 
-    return (
-      <MessageContent
-        key={part.id}
-        markdown
-        className={cn(
-          "bg-transparent p-0",
-          markdownClassName,
-          streaming && index === lastTextPartIndex && streamingPulseDotClassName
-        )}
-      >
-        {part.content}
-      </MessageContent>
-    )
-  })
+        if (!part.content.trim()) {
+          return null
+        }
+
+        return (
+          <MessageContent
+            key={part.id}
+            markdown
+            className={cn(
+              "bg-transparent p-0",
+              markdownClassName,
+              streaming &&
+                index === lastTextPartIndex &&
+                streamingPulseDotClassName
+            )}
+          >
+            {part.content}
+          </MessageContent>
+        )
+      })}
+    </div>
+  )
 }
 
 function getStoredChatModelLabel(model: string | null) {
@@ -1900,6 +2474,9 @@ function MessageVersionsDialog({
 
   const activeVersion = versions[activeIndex] ?? message
   const modelLabel = getStoredChatModelLabel(activeVersion.model)
+  const showTopLevelReasoning = !hasRenderableReasoningParts(
+    activeVersion.parts
+  )
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1942,10 +2519,12 @@ function MessageVersionsDialog({
         </DialogHeader>
 
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-3">
-          <AssistantReasoning
-            content={activeVersion.reasoningContent}
-            durationMs={activeVersion.reasoningDurationMs}
-          />
+          {showTopLevelReasoning ? (
+            <AssistantReasoning
+              content={activeVersion.reasoningContent}
+              durationMs={activeVersion.reasoningDurationMs}
+            />
+          ) : null}
           <AssistantContentParts
             content={activeVersion.content}
             activities={activeVersion.activities}
@@ -1970,6 +2549,7 @@ function AssistantMessage({
   const [versionsOpen, setVersionsOpen] = React.useState(false)
   const copyableContent = message.content || message.reasoningContent
   const modelLabel = getStoredChatModelLabel(message.model)
+  const showTopLevelReasoning = !hasRenderableReasoningParts(message.parts)
 
   function handleCopy() {
     void navigator.clipboard.writeText(copyableContent)
@@ -1980,10 +2560,12 @@ function AssistantMessage({
   return (
     <Message className="justify-start">
       <div className="flex w-full flex-col gap-2">
-        <AssistantReasoning
-          content={message.reasoningContent}
-          durationMs={message.reasoningDurationMs}
-        />
+        {showTopLevelReasoning ? (
+          <AssistantReasoning
+            content={message.reasoningContent}
+            durationMs={message.reasoningDurationMs}
+          />
+        ) : null}
         <AssistantContentParts
           content={message.content}
           activities={message.activities}

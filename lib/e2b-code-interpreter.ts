@@ -1,15 +1,17 @@
 import {
+  CommandExitError,
   Sandbox,
+  type CommandResult,
   type Execution,
   type RunCodeLanguage,
   type SandboxOpts,
 } from "@e2b/code-interpreter"
 
-const E2B_CODE_INTERPRETER_TEMPLATE = "code-interpreter-v1"
-const E2B_DEFAULT_DOMAIN = "cn-wlcb.sandbox.ucloudai.com"
-const E2B_REQUEST_TIMEOUT_MS = 30_000
-const E2B_DEFAULT_RUN_TIMEOUT_SECONDS = 60
-const E2B_DEFAULT_AUTO_PAUSE_TIMEOUT_SECONDS = 300
+export const E2B_CODE_INTERPRETER_TEMPLATE = "code-interpreter-v1"
+export const E2B_DEFAULT_DOMAIN = "cn-wlcb.sandbox.ucloudai.com"
+export const E2B_REQUEST_TIMEOUT_MS = 30_000
+export const E2B_DEFAULT_RUN_TIMEOUT_SECONDS = 60
+export const E2B_DEFAULT_AUTO_PAUSE_TIMEOUT_SECONDS = 300
 const E2B_MAX_OUTPUT_CHARS = 18_000
 const E2B_MAX_SECTION_CHARS = 8_000
 
@@ -35,7 +37,17 @@ export type RunE2BCodeInput = {
   autoPauseTimeoutSeconds?: number
 }
 
-type E2BConnectionOptions = Pick<
+export type RunE2BCommandInput = {
+  sandbox: Sandbox
+  command: string
+  cwd?: string
+  env?: Record<string, string>
+  timeoutSeconds?: number
+  lifecycleLine: string
+  cleanupLine: string
+}
+
+export type E2BConnectionOptions = Pick<
   SandboxOpts,
   | "apiKey"
   | "validateApiKey"
@@ -64,7 +76,7 @@ function normalizeUrl(value: string | undefined) {
   return trimmed || undefined
 }
 
-function getConnectionOptions(apiKey: string): E2BConnectionOptions {
+export function getE2BConnectionOptions(apiKey: string): E2BConnectionOptions {
   const options: E2BConnectionOptions = {
     apiKey,
     validateApiKey: false,
@@ -100,6 +112,15 @@ function clampSeconds(
   }
 
   return Math.min(Math.max(Math.trunc(value), min), max)
+}
+
+export function clampE2BSeconds(
+  value: number | undefined,
+  fallback: number,
+  min: number,
+  max: number
+) {
+  return clampSeconds(value, fallback, min, max)
 }
 
 function truncateText(text: string, maxChars = E2B_MAX_SECTION_CHARS) {
@@ -200,6 +221,62 @@ function formatExecution({
   return truncateText(sections.join("\n\n"), E2B_MAX_OUTPUT_CHARS)
 }
 
+function normalizeCommandResult(error: unknown): CommandResult | null {
+  if (error instanceof CommandExitError) {
+    return {
+      exitCode: error.exitCode,
+      error: error.error,
+      stdout: error.stdout,
+      stderr: error.stderr,
+    }
+  }
+
+  return null
+}
+
+function formatCommandExecution({
+  command,
+  cwd,
+  result,
+  sandboxId,
+  lifecycleLine,
+  cleanupLine,
+}: {
+  command: string
+  cwd?: string
+  result: CommandResult
+  sandboxId: string
+  lifecycleLine: string
+  cleanupLine: string
+}) {
+  const sections = [
+    "Shell command execution complete.",
+    `Template: ${E2B_CODE_INTERPRETER_TEMPLATE}`,
+    `Sandbox ID: ${sandboxId}`,
+    `Command: ${command}`,
+    cwd ? `Working directory: ${cwd}` : "Working directory: sandbox default",
+    `Exit code: ${result.exitCode}`,
+    lifecycleLine,
+    cleanupLine,
+  ]
+  const stdout = result.stdout.trim()
+  const stderr = result.stderr.trim()
+
+  if (stdout) {
+    sections.push(`STDOUT:\n${codeFence("text", truncateText(stdout))}`)
+  }
+
+  if (stderr) {
+    sections.push(`STDERR:\n${codeFence("text", truncateText(stderr))}`)
+  }
+
+  if (result.error) {
+    sections.push(`ERROR:\n${truncateText(result.error)}`)
+  }
+
+  return truncateText(sections.join("\n\n"), E2B_MAX_OUTPUT_CHARS)
+}
+
 export async function runE2BCode({
   apiKey,
   code,
@@ -224,7 +301,7 @@ export async function runE2BCode({
   const runTimeoutMs = runTimeoutSeconds * 1000
   const autoPauseTimeoutMs = autoPauseSeconds * 1000
   const oneShotTimeoutMs = Math.max(runTimeoutMs + 30_000, 60_000)
-  const connectionOptions = getConnectionOptions(apiKey)
+  const connectionOptions = getE2BConnectionOptions(apiKey)
   let sandbox: Sandbox | null = null
   let killed = false
 
@@ -290,4 +367,86 @@ export async function runE2BCode({
       )
     }
   }
+}
+
+export async function runCodeInE2BSandbox({
+  sandbox,
+  code,
+  language,
+  timeoutSeconds,
+  lifecycleLine,
+  cleanupLine,
+}: {
+  sandbox: Sandbox
+  code: string
+  language: E2BCodeInterpreterLanguage
+  timeoutSeconds?: number
+  lifecycleLine: string
+  cleanupLine: string
+}) {
+  const runTimeoutSeconds = clampSeconds(
+    timeoutSeconds,
+    E2B_DEFAULT_RUN_TIMEOUT_SECONDS,
+    1,
+    300
+  )
+  const runTimeoutMs = runTimeoutSeconds * 1000
+  const execution = await sandbox.runCode(code, {
+    language: language as RunCodeLanguage,
+    timeoutMs: runTimeoutMs,
+    requestTimeoutMs: Math.max(runTimeoutMs + 10_000, E2B_REQUEST_TIMEOUT_MS),
+  })
+
+  return formatExecution({
+    execution,
+    language,
+    sandboxId: sandbox.sandboxId,
+    lifecycleLine,
+    cleanupLine,
+  })
+}
+
+export async function runCommandInE2BSandbox({
+  sandbox,
+  command,
+  cwd,
+  env,
+  timeoutSeconds,
+  lifecycleLine,
+  cleanupLine,
+}: RunE2BCommandInput) {
+  const runTimeoutSeconds = clampSeconds(
+    timeoutSeconds,
+    E2B_DEFAULT_RUN_TIMEOUT_SECONDS,
+    1,
+    300
+  )
+  const runTimeoutMs = runTimeoutSeconds * 1000
+  let result: CommandResult
+
+  try {
+    result = await sandbox.commands.run(command, {
+      cwd,
+      envs: env,
+      timeoutMs: runTimeoutMs,
+      requestTimeoutMs: Math.max(runTimeoutMs + 10_000, E2B_REQUEST_TIMEOUT_MS),
+    })
+  } catch (error) {
+    const commandResult = normalizeCommandResult(error)
+
+    if (!commandResult) {
+      throw error
+    }
+
+    result = commandResult
+  }
+
+  return formatCommandExecution({
+    command,
+    cwd,
+    result,
+    sandboxId: sandbox.sandboxId,
+    lifecycleLine,
+    cleanupLine,
+  })
 }

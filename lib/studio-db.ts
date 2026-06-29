@@ -15,11 +15,15 @@ import type {
   StudioMessagePart,
   StudioMessageStatus,
   StudioExaApiKey,
+  StudioGenericLibraryFile,
   StudioModelverseApiKey,
   StudioMode,
   StudioOAuthStatus,
   StudioOAuthTokens,
   StudioSession,
+  StudioSessionFile,
+  StudioSessionFileKind,
+  StudioSessionSandbox,
 } from "@/lib/studio-types"
 
 type DbSessionRow = {
@@ -55,12 +59,41 @@ type DbSettingRow = {
   updated_at: string
 }
 
+type DbSessionSandboxRow = {
+  session_id: string
+  sandbox_id: string
+  sandbox_domain: string | null
+  template: string
+  status: StudioSessionSandbox["status"]
+  auto_pause_timeout_seconds: number
+  created_at: string
+  updated_at: string
+  last_used_at: string
+}
+
+type DbSessionFileRow = {
+  id: string
+  session_id: string
+  message_id: string | null
+  kind: StudioSessionFileKind
+  original_name: string
+  mime_type: string | null
+  size: number | null
+  storage_path: string
+  sandbox_path: string | null
+  source_tool_call_id: string | null
+  saved_at: string | null
+  created_at: string
+  updated_at: string
+}
+
 type CreateSessionInput = {
   mode: StudioMode
   title?: string
 }
 
 type CreateMessageInput = {
+  id?: string
   sessionId: string
   role: StudioMessageRole
   content: string
@@ -73,6 +106,29 @@ type CreateMessageInput = {
   reasoningDurationMs?: number | null
   status?: StudioMessageStatus
   attachments?: StudioAttachment[]
+}
+
+type UpsertSessionSandboxInput = {
+  sessionId: string
+  sandboxId: string
+  sandboxDomain?: string | null
+  template: string
+  status?: StudioSessionSandbox["status"]
+  autoPauseTimeoutSeconds: number
+}
+
+type CreateSessionFileInput = {
+  id?: string
+  sessionId: string
+  messageId?: string | null
+  kind: StudioSessionFileKind
+  originalName: string
+  mimeType?: string | null
+  size?: number | null
+  storagePath: string
+  sandboxPath?: string | null
+  sourceToolCallId?: string | null
+  savedAt?: string | null
 }
 
 type DbImageGenerationRow = {
@@ -222,6 +278,43 @@ function initializeSchema(database: Database.Database) {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS studio_session_sandboxes (
+      session_id TEXT PRIMARY KEY,
+      sandbox_id TEXT NOT NULL,
+      sandbox_domain TEXT,
+      template TEXT NOT NULL,
+      status TEXT NOT NULL,
+      auto_pause_timeout_seconds INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_used_at TEXT NOT NULL,
+      FOREIGN KEY (session_id) REFERENCES studio_sessions(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS studio_session_files (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      message_id TEXT,
+      kind TEXT NOT NULL,
+      original_name TEXT NOT NULL,
+      mime_type TEXT,
+      size INTEGER,
+      storage_path TEXT NOT NULL,
+      sandbox_path TEXT,
+      source_tool_call_id TEXT,
+      saved_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (session_id) REFERENCES studio_sessions(id) ON DELETE CASCADE,
+      FOREIGN KEY (message_id) REFERENCES studio_messages(id) ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS studio_session_files_session_idx
+      ON studio_session_files(session_id, created_at ASC);
+
+    CREATE INDEX IF NOT EXISTS studio_session_files_saved_idx
+      ON studio_session_files(saved_at DESC, created_at DESC);
+
     CREATE TABLE IF NOT EXISTS studio_image_generations (
       id TEXT PRIMARY KEY,
       session_id TEXT NOT NULL,
@@ -351,11 +444,45 @@ function parseAttachments(raw: string | null): StudioAttachment[] {
       (item): item is StudioAttachment =>
         typeof item === "object" &&
         item !== null &&
-        (item as StudioAttachment).type === "image" &&
-        typeof (item as StudioAttachment).dataUrl === "string"
+        ((item as StudioAttachment).type === "image" ||
+          (item as StudioAttachment).type === "file") &&
+        typeof (item as StudioAttachment).name === "string" &&
+        typeof (item as StudioAttachment).mimeType === "string"
     )
   } catch {
     return []
+  }
+}
+
+function mapSessionSandbox(row: DbSessionSandboxRow): StudioSessionSandbox {
+  return {
+    sessionId: row.session_id,
+    sandboxId: row.sandbox_id,
+    sandboxDomain: row.sandbox_domain,
+    template: row.template,
+    status: row.status,
+    autoPauseTimeoutSeconds: row.auto_pause_timeout_seconds,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    lastUsedAt: row.last_used_at,
+  }
+}
+
+function mapSessionFile(row: DbSessionFileRow): StudioSessionFile {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    messageId: row.message_id,
+    kind: row.kind,
+    originalName: row.original_name,
+    mimeType: row.mime_type,
+    size: row.size,
+    storagePath: row.storage_path,
+    sandboxPath: row.sandbox_path,
+    sourceToolCallId: row.source_tool_call_id,
+    savedAt: row.saved_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   }
 }
 
@@ -418,6 +545,10 @@ function parseParts(raw: string | null): StudioMessagePart[] {
       const part = item as StudioMessagePart
 
       if (part.type === "text") {
+        return typeof part.id === "string" && typeof part.content === "string"
+      }
+
+      if (part.type === "reasoning") {
         return typeof part.id === "string" && typeof part.content === "string"
       }
 
@@ -674,6 +805,7 @@ export function listStudioMessageVersions(
 }
 
 export function createStudioMessage({
+  id,
   sessionId,
   role,
   content,
@@ -689,7 +821,7 @@ export function createStudioMessage({
 }: CreateMessageInput) {
   const database = getDb()
   const createdAt = nowIso()
-  const messageId = randomUUID()
+  const messageId = id ?? randomUUID()
 
   const createMessageTransaction = database.transaction(() => {
     let resolvedVersionGroupId: string | null = null
@@ -855,6 +987,240 @@ export function createStudioMessage({
   })
 
   return createMessageTransaction()
+}
+
+export function updateStudioMessageAttachments(
+  messageId: string,
+  attachments: StudioAttachment[]
+) {
+  getDb()
+    .prepare(
+      `
+        UPDATE studio_messages
+        SET attachments = ?
+        WHERE id = ?
+      `
+    )
+    .run(attachments.length ? JSON.stringify(attachments) : null, messageId)
+}
+
+export function getStudioSessionSandbox(sessionId: string) {
+  const row = getDb()
+    .prepare(
+      `
+        SELECT session_id, sandbox_id, sandbox_domain, template, status,
+               auto_pause_timeout_seconds, created_at, updated_at, last_used_at
+        FROM studio_session_sandboxes
+        WHERE session_id = ?
+      `
+    )
+    .get(sessionId) as DbSessionSandboxRow | undefined
+
+  return row ? mapSessionSandbox(row) : null
+}
+
+export function upsertStudioSessionSandbox({
+  sessionId,
+  sandboxId,
+  sandboxDomain = null,
+  template,
+  status = "running",
+  autoPauseTimeoutSeconds,
+}: UpsertSessionSandboxInput) {
+  const existing = getStudioSessionSandbox(sessionId)
+  const timestamp = nowIso()
+
+  getDb()
+    .prepare(
+      `
+        INSERT INTO studio_session_sandboxes
+          (session_id, sandbox_id, sandbox_domain, template, status,
+           auto_pause_timeout_seconds, created_at, updated_at, last_used_at)
+        VALUES
+          (@sessionId, @sandboxId, @sandboxDomain, @template, @status,
+           @autoPauseTimeoutSeconds, @createdAt, @updatedAt, @lastUsedAt)
+        ON CONFLICT(session_id) DO UPDATE SET
+          sandbox_id = excluded.sandbox_id,
+          sandbox_domain = excluded.sandbox_domain,
+          template = excluded.template,
+          status = excluded.status,
+          auto_pause_timeout_seconds = excluded.auto_pause_timeout_seconds,
+          updated_at = excluded.updated_at,
+          last_used_at = excluded.last_used_at
+      `
+    )
+    .run({
+      sessionId,
+      sandboxId,
+      sandboxDomain,
+      template,
+      status,
+      autoPauseTimeoutSeconds,
+      createdAt: existing?.createdAt ?? timestamp,
+      updatedAt: timestamp,
+      lastUsedAt: timestamp,
+    })
+
+  return getStudioSessionSandbox(sessionId)
+}
+
+export function touchStudioSessionSandbox(
+  sessionId: string,
+  status: StudioSessionSandbox["status"] = "running"
+) {
+  const timestamp = nowIso()
+
+  getDb()
+    .prepare(
+      `
+        UPDATE studio_session_sandboxes
+        SET status = ?,
+            updated_at = ?,
+            last_used_at = ?
+        WHERE session_id = ?
+      `
+    )
+    .run(status, timestamp, timestamp, sessionId)
+}
+
+export function createStudioSessionFile({
+  id = randomUUID(),
+  sessionId,
+  messageId = null,
+  kind,
+  originalName,
+  mimeType = null,
+  size = null,
+  storagePath,
+  sandboxPath = null,
+  sourceToolCallId = null,
+  savedAt = null,
+}: CreateSessionFileInput) {
+  const timestamp = nowIso()
+
+  getDb()
+    .prepare(
+      `
+        INSERT INTO studio_session_files
+          (id, session_id, message_id, kind, original_name, mime_type, size,
+           storage_path, sandbox_path, source_tool_call_id, saved_at,
+           created_at, updated_at)
+        VALUES
+          (@id, @sessionId, @messageId, @kind, @originalName, @mimeType, @size,
+           @storagePath, @sandboxPath, @sourceToolCallId, @savedAt,
+           @createdAt, @updatedAt)
+        ON CONFLICT(id) DO UPDATE SET
+          message_id = excluded.message_id,
+          kind = excluded.kind,
+          original_name = excluded.original_name,
+          mime_type = excluded.mime_type,
+          size = excluded.size,
+          storage_path = excluded.storage_path,
+          sandbox_path = excluded.sandbox_path,
+          source_tool_call_id = excluded.source_tool_call_id,
+          saved_at = excluded.saved_at,
+          updated_at = excluded.updated_at
+      `
+    )
+    .run({
+      id,
+      sessionId,
+      messageId,
+      kind,
+      originalName,
+      mimeType,
+      size,
+      storagePath,
+      sandboxPath,
+      sourceToolCallId,
+      savedAt,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    })
+
+  return getStudioSessionFile(id)
+}
+
+export function getStudioSessionFile(fileId: string) {
+  const row = getDb()
+    .prepare(
+      `
+        SELECT id, session_id, message_id, kind, original_name, mime_type, size,
+               storage_path, sandbox_path, source_tool_call_id, saved_at,
+               created_at, updated_at
+        FROM studio_session_files
+        WHERE id = ?
+      `
+    )
+    .get(fileId) as DbSessionFileRow | undefined
+
+  return row ? mapSessionFile(row) : null
+}
+
+export function listStudioSessionFiles(sessionId: string) {
+  const rows = getDb()
+    .prepare(
+      `
+        SELECT id, session_id, message_id, kind, original_name, mime_type, size,
+               storage_path, sandbox_path, source_tool_call_id, saved_at,
+               created_at, updated_at
+        FROM studio_session_files
+        WHERE session_id = ?
+        ORDER BY created_at ASC
+      `
+    )
+    .all(sessionId) as DbSessionFileRow[]
+
+  return rows.map(mapSessionFile)
+}
+
+export function updateStudioSessionFileSandboxPath(
+  fileId: string,
+  sandboxPath: string
+) {
+  getDb()
+    .prepare(
+      `
+        UPDATE studio_session_files
+        SET sandbox_path = ?,
+            updated_at = ?
+        WHERE id = ?
+      `
+    )
+    .run(sandboxPath, nowIso(), fileId)
+}
+
+export function listStudioSavedGenericFiles(): StudioGenericLibraryFile[] {
+  const rows = getDb()
+    .prepare(
+      `
+        SELECT id, session_id, message_id, kind, original_name, mime_type, size,
+               storage_path, sandbox_path, source_tool_call_id, saved_at,
+               created_at, updated_at
+        FROM studio_session_files
+        WHERE kind = 'generated'
+          AND saved_at IS NOT NULL
+        ORDER BY saved_at DESC, created_at DESC
+      `
+    )
+    .all() as DbSessionFileRow[]
+
+  return rows.map((row) => ({
+    id: row.id,
+    kind: "file",
+    sessionId: row.session_id,
+    messageId: row.message_id,
+    name: row.original_name,
+    prompt: row.original_name,
+    modelName: "Code Interpreter",
+    manufacturer: "E2B",
+    mimeType: row.mime_type,
+    size: row.size,
+    sandboxPath: row.sandbox_path,
+    downloadUrl: `/api/studio/files/${row.id}/content?download=1`,
+    savedAt: row.saved_at ?? row.created_at,
+    createdAt: row.created_at,
+  }))
 }
 
 export function getStudioOAuthTokens(): StudioOAuthTokens | null {

@@ -78,6 +78,30 @@ const en = {
     input ? `Running ${input} code` : "Running code",
   studioToolRanCode: (input: string) =>
     input ? `Ran ${input} code` : "Ran code",
+  studioToolRunningCommand: (input: string) =>
+    input ? `Running command ${input}` : "Running command",
+  studioToolRanCommand: (input: string) =>
+    input ? `Ran command ${input}` : "Ran command",
+  studioToolUploadingFile: (input: string) =>
+    input ? `Uploading file ${input}` : "Uploading file",
+  studioToolUploadedFile: (input: string) =>
+    input ? `Uploaded file ${input}` : "Uploaded file",
+  studioToolListingFiles: (input: string) =>
+    input ? `Listing files ${input}` : "Listing files",
+  studioToolListedFiles: (input: string) =>
+    input ? `Listed files ${input}` : "Listed files",
+  studioToolReadingFile: (input: string) =>
+    input ? `Reading file ${input}` : "Reading file",
+  studioToolReadFile: (input: string) =>
+    input ? `Read file ${input}` : "Read file",
+  studioToolWritingFile: (input: string) =>
+    input ? `Writing file ${input}` : "Writing file",
+  studioToolWroteFile: (input: string) =>
+    input ? `Wrote file ${input}` : "Wrote file",
+  studioToolSavingFile: (input: string) =>
+    input ? `Saving file ${input}` : "Saving file",
+  studioToolSavedFile: (input: string) =>
+    input ? `Saved file ${input}` : "Saved file",
   studioToolAutoPause: "Auto pause",
   studioToolKillAfterRun: "Kill after run",
   studioToolNoOutput: "No output.",
@@ -159,6 +183,7 @@ const en = {
   fileLibraryImage: "Image",
   fileLibraryVideo: "Video",
   fileLibraryAudio: "Audio",
+  fileLibraryFile: "File",
   fileLibrarySearch: "Search files",
   fileLibrarySummary: (visibleCount: number, totalCount: number) =>
     `${visibleCount} shown · ${totalCount} total`,
@@ -278,6 +303,30 @@ const zh: Dictionary = {
     input ? `正在运行 ${input} 代码` : "正在运行代码",
   studioToolRanCode: (input: string) =>
     input ? `已运行 ${input} 代码` : "已运行代码",
+  studioToolRunningCommand: (input: string) =>
+    input ? `正在执行命令 ${input}` : "正在执行命令",
+  studioToolRanCommand: (input: string) =>
+    input ? `已执行命令 ${input}` : "已执行命令",
+  studioToolUploadingFile: (input: string) =>
+    input ? `正在上传文件 ${input}` : "正在上传文件",
+  studioToolUploadedFile: (input: string) =>
+    input ? `已上传文件 ${input}` : "已上传文件",
+  studioToolListingFiles: (input: string) =>
+    input ? `正在查看文件 ${input}` : "正在查看文件",
+  studioToolListedFiles: (input: string) =>
+    input ? `已查看文件 ${input}` : "已查看文件",
+  studioToolReadingFile: (input: string) =>
+    input ? `正在读取文件 ${input}` : "正在读取文件",
+  studioToolReadFile: (input: string) =>
+    input ? `已读取文件 ${input}` : "已读取文件",
+  studioToolWritingFile: (input: string) =>
+    input ? `正在写入文件 ${input}` : "正在写入文件",
+  studioToolWroteFile: (input: string) =>
+    input ? `已写入文件 ${input}` : "已写入文件",
+  studioToolSavingFile: (input: string) =>
+    input ? `正在保存文件 ${input}` : "正在保存文件",
+  studioToolSavedFile: (input: string) =>
+    input ? `已保存文件 ${input}` : "已保存文件",
   studioToolAutoPause: "自动暂停",
   studioToolKillAfterRun: "执行后销毁",
   studioToolNoOutput: "无输出。",
@@ -356,6 +405,7 @@ const zh: Dictionary = {
   fileLibraryImage: "图像",
   fileLibraryVideo: "视频",
   fileLibraryAudio: "音频",
+  fileLibraryFile: "文件",
   fileLibrarySearch: "搜索文件",
   fileLibrarySummary: (visibleCount: number, totalCount: number) =>
     `已显示 ${visibleCount} 个 · 共 ${totalCount} 个`,

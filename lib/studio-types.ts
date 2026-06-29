@@ -23,15 +23,27 @@ export type StudioMessagePart =
     }
   | {
       id: string
+      type: "reasoning"
+      content: string
+      durationMs: number | null
+    }
+  | {
+      id: string
       type: "tool"
       activity: StudioMessageActivity
     }
 
+export type StudioAttachmentKind = "image" | "file"
+
 export type StudioAttachment = {
-  type: "image"
+  id?: string
+  type: StudioAttachmentKind
   name: string
   mimeType: string
-  dataUrl: string
+  size?: number | null
+  dataUrl?: string | null
+  storagePath?: string | null
+  sandboxPath?: string | null
 }
 
 export type StudioSession = {
@@ -240,10 +252,58 @@ export type StudioLibraryVideoFile =
 export type StudioLibraryAudioFile =
   import("@/lib/studio-audio-types").StudioAudioLibraryFile
 
+export type StudioGenericLibraryFile = {
+  id: string
+  kind: "file"
+  sessionId: string
+  messageId: string | null
+  name: string
+  prompt: string
+  modelName: string
+  manufacturer: string | null
+  mimeType: string | null
+  size: number | null
+  sandboxPath: string | null
+  downloadUrl: string
+  savedAt: string
+  createdAt: string
+}
+
 export type StudioLibraryFile =
   | StudioLibraryImageFile
   | StudioLibraryVideoFile
   | StudioLibraryAudioFile
+  | StudioGenericLibraryFile
+
+export type StudioSessionSandbox = {
+  sessionId: string
+  sandboxId: string
+  sandboxDomain: string | null
+  template: string
+  status: "running" | "paused" | "unknown"
+  autoPauseTimeoutSeconds: number
+  createdAt: string
+  updatedAt: string
+  lastUsedAt: string
+}
+
+export type StudioSessionFileKind = "attachment" | "generated"
+
+export type StudioSessionFile = {
+  id: string
+  sessionId: string
+  messageId: string | null
+  kind: StudioSessionFileKind
+  originalName: string
+  mimeType: string | null
+  size: number | null
+  storagePath: string
+  sandboxPath: string | null
+  sourceToolCallId: string | null
+  savedAt: string | null
+  createdAt: string
+  updatedAt: string
+}
 
 export type StudioImageGeneration = {
   id: string

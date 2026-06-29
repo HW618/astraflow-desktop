@@ -1,27 +1,36 @@
 import { NextResponse } from "next/server"
+import { randomUUID } from "node:crypto"
 import { z } from "zod"
 
 import {
+  createStudioSessionFile,
   createStudioMessage,
   getStudioSession,
   listStudioMessageVersions,
   listStudioMessages,
 } from "@/lib/studio-db"
+import {
+  createAttachmentStoragePath,
+  parseDataUrl,
+  writeStudioFile,
+} from "@/lib/studio-file-storage"
+import type { StudioAttachment } from "@/lib/studio-types"
 
 export const runtime = "nodejs"
 
+const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024
+
 const attachmentSchema = z.object({
-  type: z.literal("image"),
+  id: z.string().trim().min(1).max(120).optional(),
+  type: z.enum(["image", "file"]),
   name: z.string().trim().min(1).max(255),
-  mimeType: z
-    .string()
-    .trim()
-    .regex(/^image\/[a-z0-9.+-]+$/i, "Only image attachments are supported."),
+  mimeType: z.string().trim().min(1).max(255),
+  size: z.number().int().nonnegative().max(MAX_ATTACHMENT_BYTES).optional(),
   dataUrl: z
     .string()
     .trim()
-    .regex(/^data:image\//i, "Attachment must be a base64 data URL.")
-    .max(12_000_000),
+    .regex(/^data:/i, "Attachment must be a data URL.")
+    .max(Math.ceil(MAX_ATTACHMENT_BYTES * 1.4)),
 })
 
 const activitySchema = z.object({
@@ -38,6 +47,18 @@ const messagePartSchema = z.discriminatedUnion("type", [
     id: z.string().trim().min(1).max(120),
     type: z.literal("text"),
     content: z.string().max(80_000),
+  }),
+  z.object({
+    id: z.string().trim().min(1).max(120),
+    type: z.literal("reasoning"),
+    content: z.string().max(160_000),
+    durationMs: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(86_400_000)
+      .nullable()
+      .default(null),
   }),
   z.object({
     id: z.string().trim().min(1).max(120),
@@ -76,12 +97,78 @@ const createMessageSchema = z
     (value) =>
       value.content.length > 0 ||
       value.reasoningContent.length > 0 ||
-      value.attachments.length > 0,
-    { message: "Message must include text or an attachment." }
+      value.attachments.length > 0 ||
+      value.activities.length > 0 ||
+      value.parts.length > 0,
+    { message: "Message must include text, an attachment, or activity." }
   )
 
 type RouteContext = {
   params: Promise<{ sessionId: string }>
+}
+
+type PendingSessionFileRecord = {
+  id: string
+  originalName: string
+  mimeType: string
+  size: number
+  storagePath: string
+}
+
+function processAttachments({
+  sessionId,
+  messageId,
+  attachments,
+}: {
+  sessionId: string
+  messageId: string
+  attachments: z.infer<typeof attachmentSchema>[]
+}): {
+  attachments: StudioAttachment[]
+  files: PendingSessionFileRecord[]
+} {
+  const files: PendingSessionFileRecord[] = []
+  const processedAttachments = attachments.map((attachment) => {
+    const attachmentId = attachment.id || randomUUID()
+    const parsed = parseDataUrl(attachment.dataUrl)
+
+    if (parsed.buffer.byteLength > MAX_ATTACHMENT_BYTES) {
+      throw new Error(`Attachment ${attachment.name} is larger than 50 MB.`)
+    }
+
+    const mimeType = parsed.mimeType || attachment.mimeType
+    const type: StudioAttachment["type"] = mimeType.startsWith("image/")
+      ? "image"
+      : "file"
+    const storagePath = createAttachmentStoragePath({
+      sessionId,
+      messageId,
+      attachmentId,
+      name: attachment.name,
+    })
+
+    writeStudioFile(storagePath, parsed.buffer)
+    files.push({
+      id: attachmentId,
+      originalName: attachment.name,
+      mimeType,
+      size: parsed.buffer.byteLength,
+      storagePath,
+    })
+
+    return {
+      id: attachmentId,
+      type,
+      name: attachment.name,
+      mimeType,
+      size: parsed.buffer.byteLength,
+      dataUrl: type === "image" ? attachment.dataUrl : null,
+      storagePath,
+      sandboxPath: null,
+    }
+  })
+
+  return { attachments: processedAttachments, files }
 }
 
 export async function GET(_request: Request, context: RouteContext) {
@@ -123,10 +210,43 @@ export async function POST(request: Request, context: RouteContext) {
     )
   }
 
-  const message = createStudioMessage({
-    sessionId,
-    ...parsed.data,
-  })
+  const messageId = randomUUID()
 
-  return NextResponse.json({ ok: true, data: message }, { status: 201 })
+  try {
+    const processed = processAttachments({
+      sessionId,
+      messageId,
+      attachments: parsed.data.attachments,
+    })
+    const message = createStudioMessage({
+      id: messageId,
+      sessionId,
+      ...parsed.data,
+      attachments: processed.attachments,
+    })
+
+    for (const file of processed.files) {
+      createStudioSessionFile({
+        id: file.id,
+        sessionId,
+        messageId,
+        kind: "attachment",
+        originalName: file.originalName,
+        mimeType: file.mimeType,
+        size: file.size,
+        storagePath: file.storagePath,
+      })
+    }
+
+    return NextResponse.json({ ok: true, data: message }, { status: 201 })
+  } catch (error) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          error instanceof Error ? error.message : "Failed to save attachment.",
+      },
+      { status: 400 }
+    )
+  }
 }
