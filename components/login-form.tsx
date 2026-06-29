@@ -155,6 +155,8 @@ async function saveModelverseApiKey(apiKeyId: string, projectId: string) {
 
 function LoginForm() {
   const router = useRouter()
+  const initialStatusLoadedRef = React.useRef(false)
+  const finalizeStartedRef = React.useRef(false)
   const [auth, setAuth] = React.useState<OAuthStatus>({
     configured: false,
     email: null,
@@ -169,23 +171,32 @@ function LoginForm() {
   const [error, setError] = React.useState("")
 
   const finalizeLogin = React.useCallback(async () => {
+    if (finalizeStartedRef.current) {
+      return
+    }
+
+    finalizeStartedRef.current = true
     setPhase("syncing")
     setError("")
     setMessage("Synchronizing Modelverse access...")
 
-    const apiKeys = await fetchModelverseApiKeys()
-    const preferredKeyId = apiKeys.selected?.id ?? apiKeys.items[0]?.id
+    try {
+      const apiKeys = await fetchModelverseApiKeys()
+      const preferredKeyId = apiKeys.selected?.id ?? apiKeys.items[0]?.id
 
-    if (!preferredKeyId) {
-      throw new Error("This UCloud account has no active Modelverse API key.")
+      if (!preferredKeyId) {
+        throw new Error("This UCloud account has no active Modelverse API key.")
+      }
+
+      await saveModelverseApiKey(preferredKeyId, apiKeys.projectId)
+
+      setPhase("done")
+      setMessage("Login complete. Redirecting to Explore...")
+      router.replace("/explore")
+    } catch (nextError) {
+      finalizeStartedRef.current = false
+      throw nextError
     }
-
-    await saveModelverseApiKey(preferredKeyId, apiKeys.projectId)
-
-    setPhase("done")
-    setMessage("Login complete. Redirecting to Explore...")
-    router.replace("/explore")
-    router.refresh()
   }, [router])
 
   const reloadStatus = React.useCallback(
@@ -209,8 +220,14 @@ function LoginForm() {
   )
 
   React.useEffect(() => {
+    if (initialStatusLoadedRef.current) {
+      return
+    }
+
+    initialStatusLoadedRef.current = true
     queueMicrotask(() => {
       void reloadStatus().catch((nextError) => {
+        setPhase("idle")
         setError(
           nextError instanceof Error
             ? nextError.message
