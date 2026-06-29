@@ -23,6 +23,11 @@ import {
   MessageContent,
 } from "@/components/ui/message"
 import {
+  Reasoning,
+  ReasoningContent,
+  ReasoningTrigger,
+} from "@/components/prompt-kit/reasoning"
+import {
   PromptInput,
   PromptInputAction,
   PromptInputActions,
@@ -85,6 +90,19 @@ type ChatPhase = "idle" | "thinking" | "streaming"
 type ActiveChatRun = {
   phase: Exclude<ChatPhase, "idle">
   content: string
+  reasoningContent: string
+  reasoningDurationMs: number | null
+}
+
+type ChatStreamEvent = {
+  type: "content" | "reasoning"
+  delta: string
+}
+
+type ChatStreamSnapshot = {
+  content: string
+  reasoningContent: string
+  reasoningDurationMs: number | null
 }
 
 const CHAT_MODEL_STORAGE_KEY = "astraflow:chat-model"
@@ -172,7 +190,9 @@ async function createMessage(
   sessionId: string,
   role: StudioMessage["role"],
   content: string,
-  attachments: StudioAttachment[] = []
+  attachments: StudioAttachment[] = [],
+  reasoningContent = "",
+  reasoningDurationMs: number | null = null
 ) {
   const response = await fetch(`/api/studio/sessions/${sessionId}/messages`, {
     method: "POST",
@@ -180,6 +200,8 @@ async function createMessage(
     body: JSON.stringify({
       role,
       content,
+      reasoningContent,
+      reasoningDurationMs,
       status: "complete",
       attachments,
     }),
@@ -207,8 +229,8 @@ async function streamAssistantResponse({
   model: SupportedChatModel
   signal: AbortSignal
   onFirstChunk?: () => void
-  onChunk: (content: string) => void
-}) {
+  onChunk: (snapshot: ChatStreamSnapshot) => void
+}): Promise<ChatStreamSnapshot> {
   const response = await fetch("/api/studio/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -242,7 +264,54 @@ async function streamAssistantResponse({
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let content = ""
+  let reasoningContent = ""
+  let reasoningDurationMs: number | null = null
+  let buffer = ""
   let receivedFirstChunk = false
+  const reasoningStartedAt = performance.now()
+
+  function markReasoningDone() {
+    if (reasoningContent && reasoningDurationMs === null) {
+      reasoningDurationMs = Math.max(
+        1000,
+        Math.round(performance.now() - reasoningStartedAt)
+      )
+    }
+  }
+
+  function handleEvent(event: ChatStreamEvent) {
+    if (!receivedFirstChunk) {
+      receivedFirstChunk = true
+      onFirstChunk?.()
+    }
+
+    if (event.type === "reasoning") {
+      reasoningContent += event.delta
+    } else {
+      markReasoningDone()
+      content += event.delta
+    }
+
+    onChunk({ content, reasoningContent, reasoningDurationMs })
+  }
+
+  function parseLine(line: string) {
+    if (!line.trim()) {
+      return
+    }
+
+    const event = JSON.parse(line) as Partial<ChatStreamEvent>
+
+    if (
+      (event.type === "content" || event.type === "reasoning") &&
+      typeof event.delta === "string"
+    ) {
+      handleEvent({
+        type: event.type,
+        delta: event.delta,
+      })
+    }
+  }
 
   while (true) {
     const { value, done } = await reader.read()
@@ -257,18 +326,25 @@ async function streamAssistantResponse({
       continue
     }
 
-    if (!receivedFirstChunk) {
-      receivedFirstChunk = true
-      onFirstChunk?.()
-    }
+    buffer += chunk
 
-    content += chunk
-    onChunk(content)
+    const lines = buffer.split("\n")
+    buffer = lines.pop() ?? ""
+
+    for (const line of lines) {
+      parseLine(line)
+    }
   }
 
-  content += decoder.decode()
+  buffer += decoder.decode()
 
-  return content
+  if (buffer) {
+    parseLine(buffer)
+  }
+
+  markReasoningDone()
+
+  return { content, reasoningContent, reasoningDurationMs }
 }
 
 function StudioChatWorkbench({
@@ -390,7 +466,12 @@ function StudioChatWorkbench({
       })
       setActiveRuns((current) => ({
         ...current,
-        [activeSessionId]: { phase: "thinking", content: "" },
+        [activeSessionId]: {
+          phase: "thinking",
+          content: "",
+          reasoningContent: "",
+          reasoningDurationMs: null,
+        },
       }))
 
       void streamAssistantResponse({
@@ -408,26 +489,37 @@ function StudioChatWorkbench({
             }
           })
         },
-        onChunk(content) {
+        onChunk(snapshot) {
           setActiveRuns((current) => {
             const run = current[activeSessionId]
             if (!run) return current
 
             return {
               ...current,
-              [activeSessionId]: { phase: "streaming", content },
+              [activeSessionId]: {
+                phase: "streaming",
+                content: snapshot.content,
+                reasoningContent: snapshot.reasoningContent,
+                reasoningDurationMs: snapshot.reasoningDurationMs,
+              },
             }
           })
         },
       })
-        .then(async (assistantContent) => {
+        .then(async (assistantMessage) => {
           abortControllersRef.current.delete(activeSessionId)
 
-          if (assistantContent.trim()) {
+          if (
+            assistantMessage.content.trim() ||
+            assistantMessage.reasoningContent.trim()
+          ) {
             const savedMessage = await createMessage(
               activeSessionId,
               "assistant",
-              assistantContent
+              assistantMessage.content,
+              [],
+              assistantMessage.reasoningContent,
+              assistantMessage.reasoningDurationMs
             )
 
             if (sessionIdRef.current === activeSessionId) {
@@ -571,8 +663,13 @@ function StudioChatWorkbench({
                 </div>
               ) : null}
 
-              {activeRun?.phase === "streaming" && activeRun.content ? (
-                <StreamingAssistantMessage content={activeRun.content} />
+              {activeRun?.phase === "streaming" &&
+              (activeRun.content || activeRun.reasoningContent) ? (
+                <StreamingAssistantMessage
+                  content={activeRun.content}
+                  reasoningContent={activeRun.reasoningContent}
+                  reasoningDurationMs={activeRun.reasoningDurationMs}
+                />
               ) : null}
 
               {error ? (
@@ -855,40 +952,127 @@ function ChatMessageBubble({ message }: { message: StudioMessage }) {
     )
   }
 
-  return <AssistantMessage content={message.content} />
+  return (
+    <AssistantMessage
+      content={message.content}
+      reasoningContent={message.reasoningContent}
+      reasoningDurationMs={message.reasoningDurationMs}
+    />
+  )
 }
 
 const markdownClassName =
   "prose-sm max-w-none leading-7 text-foreground dark:prose-invert prose-headings:font-heading prose-headings:text-foreground prose-h1:text-xl prose-h2:mt-4 prose-h2:text-lg prose-h3:mt-3 prose-h3:text-base prose-p:my-2 prose-a:text-primary prose-code:rounded-sm prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:font-mono prose-pre:my-3 prose-table:my-3 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2"
 
+const reasoningMarkdownClassName =
+  "max-w-none leading-6 prose-p:my-2 prose-headings:my-2 prose-code:rounded-sm prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:font-mono prose-pre:my-3"
+
 const streamingPulseDotClassName =
   "[&>*:last-child]:after:ml-1.5 [&>*:last-child]:after:inline-block [&>*:last-child]:after:size-2.5 [&>*:last-child]:after:translate-y-[1px] [&>*:last-child]:after:rounded-full [&>*:last-child]:after:bg-foreground [&>*:last-child]:after:align-middle [&>*:last-child]:after:content-[''] [&>*:last-child]:after:animate-[studio-pulse-dot_1.1s_ease-in-out_infinite]"
 
-function StreamingAssistantMessage({ content }: { content: string }) {
+function formatReasoningDuration(locale: "en" | "zh", durationMs: number) {
+  const seconds = Math.max(1, Math.round(durationMs / 1000))
+
+  if (locale === "zh") {
+    return `思考了 ${seconds} 秒`
+  }
+
+  if (seconds <= 3) {
+    return "Thought for a few seconds"
+  }
+
+  return `Thought for ${seconds} seconds`
+}
+
+function AssistantReasoning({
+  content,
+  isStreaming = false,
+  durationMs,
+}: {
+  content: string
+  isStreaming?: boolean
+  durationMs?: number | null
+}) {
+  const { locale } = useI18n()
+
+  if (!content.trim()) {
+    return null
+  }
+
+  const label =
+    durationMs === null || durationMs === undefined
+      ? "Reasoning"
+      : formatReasoningDuration(locale, durationMs)
+
+  return (
+    <Reasoning isStreaming={isStreaming} className="flex flex-col gap-1">
+      <ReasoningTrigger className="w-fit">
+        {isStreaming ? (
+          <TextShimmer duration={2}>Reasoning</TextShimmer>
+        ) : (
+          label
+        )}
+      </ReasoningTrigger>
+      <ReasoningContent
+        markdown
+        className="ml-2 border-l-2 border-l-border px-3 pb-1"
+        contentClassName={reasoningMarkdownClassName}
+      >
+        {content}
+      </ReasoningContent>
+    </Reasoning>
+  )
+}
+
+function StreamingAssistantMessage({
+  content,
+  reasoningContent,
+  reasoningDurationMs,
+}: {
+  content: string
+  reasoningContent: string
+  reasoningDurationMs: number | null
+}) {
   return (
     <Message className="justify-start">
       <div className="flex w-full flex-col gap-2">
-        <MessageContent
-          markdown
-          className={cn(
-            "bg-transparent p-0",
-            markdownClassName,
-            streamingPulseDotClassName
-          )}
-        >
-          {content}
-        </MessageContent>
+        <AssistantReasoning
+          content={reasoningContent}
+          durationMs={reasoningDurationMs}
+          isStreaming={reasoningDurationMs === null}
+        />
+        {content.trim() ? (
+          <MessageContent
+            markdown
+            className={cn(
+              "bg-transparent p-0",
+              markdownClassName,
+              streamingPulseDotClassName
+            )}
+          >
+            {content}
+          </MessageContent>
+        ) : null}
       </div>
     </Message>
   )
 }
 
-function AssistantMessage({ content }: { content: string }) {
+function AssistantMessage({
+  content,
+  reasoningContent,
+  reasoningDurationMs,
+}: {
+  content: string
+  reasoningContent: string
+  reasoningDurationMs: number | null
+}) {
   const [liked, setLiked] = React.useState<boolean | null>(null)
   const [copied, setCopied] = React.useState(false)
+  const copyableContent = content || reasoningContent
 
   function handleCopy() {
-    void navigator.clipboard.writeText(content)
+    void navigator.clipboard.writeText(copyableContent)
     setCopied(true)
     window.setTimeout(() => setCopied(false), 2000)
   }
@@ -896,12 +1080,18 @@ function AssistantMessage({ content }: { content: string }) {
   return (
     <Message className="justify-start">
       <div className="flex w-full flex-col gap-2">
-        <MessageContent
-          markdown
-          className={cn("bg-transparent p-0", markdownClassName)}
-        >
-          {content}
-        </MessageContent>
+        <AssistantReasoning
+          content={reasoningContent}
+          durationMs={reasoningDurationMs}
+        />
+        {content.trim() ? (
+          <MessageContent
+            markdown
+            className={cn("bg-transparent p-0", markdownClassName)}
+          >
+            {content}
+          </MessageContent>
+        ) : null}
         <MessageActions className="gap-1.5">
           <MessageAction tooltip="Copy to clipboard">
             <Button

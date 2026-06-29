@@ -21,6 +21,7 @@
     "better-sqlite3": "^12.11.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "lucide-react": "^1.22.0",
     "marked": "^18.0.5",
     "media-chrome": "^4.19.2",
     "next": "16.2.6",

@@ -27,11 +27,22 @@ const createMessageSchema = z
   .object({
     role: z.enum(["user", "assistant"]),
     content: z.string().trim().max(80_000).default(""),
+    reasoningContent: z.string().trim().max(160_000).default(""),
+    reasoningDurationMs: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(86_400_000)
+      .nullable()
+      .default(null),
     status: z.enum(["complete", "streaming", "error"]).default("complete"),
     attachments: z.array(attachmentSchema).max(6).default([]),
   })
   .refine(
-    (value) => value.content.length > 0 || value.attachments.length > 0,
+    (value) =>
+      value.content.length > 0 ||
+      value.reasoningContent.length > 0 ||
+      value.attachments.length > 0,
     { message: "Message must include text or an attachment." }
   )
 

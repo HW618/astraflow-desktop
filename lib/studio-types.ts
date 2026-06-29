@@ -26,6 +26,8 @@ export type StudioMessage = {
   sessionId: string
   role: StudioMessageRole
   content: string
+  reasoningContent: string
+  reasoningDurationMs: number | null
   status: StudioMessageStatus
   attachments: StudioAttachment[]
   createdAt: string

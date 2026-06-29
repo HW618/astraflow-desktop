@@ -32,6 +32,8 @@ type DbMessageRow = {
   session_id: string
   role: StudioMessageRole
   content: string
+  reasoning_content: string | null
+  reasoning_duration_ms: number | null
   status: StudioMessageStatus
   attachments: string | null
   created_at: string
@@ -52,6 +54,8 @@ type CreateMessageInput = {
   sessionId: string
   role: StudioMessageRole
   content: string
+  reasoningContent?: string
+  reasoningDurationMs?: number | null
   status?: StudioMessageStatus
   attachments?: StudioAttachment[]
 }
@@ -176,6 +180,8 @@ function initializeSchema(database: Database.Database) {
       session_id TEXT NOT NULL,
       role TEXT NOT NULL,
       content TEXT NOT NULL,
+      reasoning_content TEXT NOT NULL DEFAULT '',
+      reasoning_duration_ms INTEGER,
       status TEXT NOT NULL DEFAULT 'complete',
       attachments TEXT,
       created_at TEXT NOT NULL,
@@ -243,6 +249,16 @@ function migrateSchema(database: Database.Database) {
   if (!columns.some((column) => column.name === "attachments")) {
     database.exec(`ALTER TABLE studio_messages ADD COLUMN attachments TEXT`)
   }
+
+  if (!columns.some((column) => column.name === "reasoning_content")) {
+    database.exec(
+      `ALTER TABLE studio_messages ADD COLUMN reasoning_content TEXT NOT NULL DEFAULT ''`
+    )
+  }
+
+  if (!columns.some((column) => column.name === "reasoning_duration_ms")) {
+    database.exec(`ALTER TABLE studio_messages ADD COLUMN reasoning_duration_ms INTEGER`)
+  }
 }
 
 function nowIso() {
@@ -299,6 +315,8 @@ function mapMessage(row: DbMessageRow): StudioMessage {
     sessionId: row.session_id,
     role: row.role,
     content: row.content,
+    reasoningContent: row.reasoning_content ?? "",
+    reasoningDurationMs: row.reasoning_duration_ms,
     status: row.status,
     attachments: parseAttachments(row.attachments),
     createdAt: row.created_at,
@@ -426,7 +444,16 @@ export function listStudioMessages(sessionId: string) {
   const rows = getDb()
     .prepare(
       `
-        SELECT id, session_id, role, content, status, attachments, created_at
+        SELECT
+          id,
+          session_id,
+          role,
+          content,
+          reasoning_content,
+          reasoning_duration_ms,
+          status,
+          attachments,
+          created_at
         FROM studio_messages
         WHERE session_id = ?
         ORDER BY created_at ASC
@@ -441,6 +468,8 @@ export function createStudioMessage({
   sessionId,
   role,
   content,
+  reasoningContent = "",
+  reasoningDurationMs = null,
   status = "complete",
   attachments = [],
 }: CreateMessageInput) {
@@ -451,6 +480,8 @@ export function createStudioMessage({
     sessionId,
     role,
     content,
+    reasoningContent,
+    reasoningDurationMs,
     status,
     attachments,
     createdAt,
@@ -461,9 +492,29 @@ export function createStudioMessage({
       .prepare(
         `
           INSERT INTO studio_messages
-            (id, session_id, role, content, status, attachments, created_at)
+            (
+              id,
+              session_id,
+              role,
+              content,
+              reasoning_content,
+              reasoning_duration_ms,
+              status,
+              attachments,
+              created_at
+            )
           VALUES
-            (@id, @sessionId, @role, @content, @status, @attachments, @createdAt)
+            (
+              @id,
+              @sessionId,
+              @role,
+              @content,
+              @reasoningContent,
+              @reasoningDurationMs,
+              @status,
+              @attachments,
+              @createdAt
+            )
         `
       )
       .run({
@@ -471,6 +522,8 @@ export function createStudioMessage({
         sessionId: message.sessionId,
         role: message.role,
         content: message.content,
+        reasoningContent: message.reasoningContent,
+        reasoningDurationMs: message.reasoningDurationMs,
         status: message.status,
         attachments: attachments.length
           ? JSON.stringify(attachments)

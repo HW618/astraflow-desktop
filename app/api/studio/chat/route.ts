@@ -15,6 +15,20 @@ const chatRequestSchema = z.object({
   model: z.enum(SUPPORTED_CHAT_MODELS).default(DEFAULT_CHAT_MODEL),
 })
 
+type ChatCompletionDeltaWithReasoning =
+  OpenAI.Chat.Completions.ChatCompletionChunk.Choice.Delta & {
+    reasoning_content?: string | null
+  }
+
+type ChatStreamEvent = {
+  type: "content" | "reasoning"
+  delta: string
+}
+
+function encodeStreamEvent(encoder: TextEncoder, event: ChatStreamEvent) {
+  return encoder.encode(`${JSON.stringify(event)}\n`)
+}
+
 function toChatMessages(
   sessionId: string
 ): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
@@ -93,10 +107,28 @@ export async function POST(request: Request) {
         async start(controller) {
           try {
             for await (const chunk of stream) {
-              const content = chunk.choices[0]?.delta?.content
+              const delta = chunk.choices[0]?.delta as
+                | ChatCompletionDeltaWithReasoning
+                | undefined
+              const reasoningContent = delta?.reasoning_content
+              const content = delta?.content
+
+              if (reasoningContent) {
+                controller.enqueue(
+                  encodeStreamEvent(encoder, {
+                    type: "reasoning",
+                    delta: reasoningContent,
+                  })
+                )
+              }
 
               if (content) {
-                controller.enqueue(encoder.encode(content))
+                controller.enqueue(
+                  encodeStreamEvent(encoder, {
+                    type: "content",
+                    delta: content,
+                  })
+                )
               }
             }
           } catch (error) {
@@ -109,7 +141,7 @@ export async function POST(request: Request) {
       }),
       {
         headers: {
-          "Content-Type": "text/plain; charset=utf-8",
+          "Content-Type": "application/x-ndjson; charset=utf-8",
           "Cache-Control": "no-store",
         },
       }
