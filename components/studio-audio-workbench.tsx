@@ -41,7 +41,7 @@ import {
 import { Slider } from "@/components/ui/slider"
 import { Textarea } from "@/components/ui/textarea"
 import { Toggle } from "@/components/ui/toggle"
-import { cn } from "@/lib/utils"
+import { cn, createClientId } from "@/lib/utils"
 import type {
   StudioAudioGeneration,
   StudioAudioModelOption,
@@ -439,7 +439,7 @@ function StudioAudioWorkbench({
 
     const next = await Promise.all(
       audioFiles.slice(0, 1).map(async (file) => ({
-        id: crypto.randomUUID(),
+        id: createClientId(),
         name: file.name,
         mimeType: file.type,
         dataUrl: await readFileAsDataUrl(file),
@@ -463,7 +463,7 @@ function StudioAudioWorkbench({
 
     setSubmitError("")
 
-    const optimisticId = `pending-${crypto.randomUUID()}`
+    const optimisticId = `pending-${createClientId()}`
     const promptText = prompt.trim()
     const promptModel = selectedModel
     const promptOperation = selectedOperation

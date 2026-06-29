@@ -48,7 +48,7 @@ import type {
   StudioMessage,
   StudioSession,
 } from "@/lib/studio-types"
-import { cn } from "@/lib/utils"
+import { cn, createClientId } from "@/lib/utils"
 
 type StudioChatWorkbenchProps = {
   sessionId: string
@@ -301,7 +301,7 @@ function StudioChatWorkbench({
       imageFiles
         .filter((file) => file.size <= MAX_ATTACHMENT_BYTES)
         .map(async (file) => ({
-          id: crypto.randomUUID(),
+          id: createClientId(),
           type: "image" as const,
           name: file.name,
           mimeType: file.type,

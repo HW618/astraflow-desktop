@@ -28,7 +28,7 @@ import { Slider } from "@/components/ui/slider"
 import { Textarea } from "@/components/ui/textarea"
 import { Toggle } from "@/components/ui/toggle"
 import { VideoPlayer } from "@/components/ui/video-player"
-import { cn } from "@/lib/utils"
+import { cn, createClientId } from "@/lib/utils"
 import type { StudioSession } from "@/lib/studio-types"
 import type {
   StudioVideoGeneration,
@@ -441,7 +441,7 @@ function StudioVideoWorkbench({
 
     const next: PendingReferenceImage[] = await Promise.all(
       imageFiles.map(async (file) => ({
-        id: crypto.randomUUID(),
+        id: createClientId(),
         name: file.name,
         mimeType: file.type,
         dataUrl: await readFileAsDataUrl(file),
@@ -470,7 +470,7 @@ function StudioVideoWorkbench({
         [fieldKey]: [
           ...existing,
           {
-            id: crypto.randomUUID(),
+            id: createClientId(),
             name: trimmed,
             mimeType: "image/url",
             url: trimmed,
@@ -496,7 +496,7 @@ function StudioVideoWorkbench({
 
     setSubmitError("")
 
-    const optimisticId = `pending-${crypto.randomUUID()}`
+    const optimisticId = `pending-${createClientId()}`
     const promptText = prompt.trim()
     const promptModel = selectedModel
     const promptOpenapi = selectedModel.openapi

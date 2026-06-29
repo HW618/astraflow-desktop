@@ -29,7 +29,7 @@ import { Slider } from "@/components/ui/slider"
 import { Textarea } from "@/components/ui/textarea"
 import { Toggle } from "@/components/ui/toggle"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { cn } from "@/lib/utils"
+import { cn, createClientId } from "@/lib/utils"
 import type {
   StudioImageGeneration,
   StudioImageModelOption,
@@ -382,7 +382,7 @@ function StudioImageWorkbench({
 
     void Promise.all(
       imageFiles.map(async (file) => ({
-        id: crypto.randomUUID(),
+        id: createClientId(),
         name: file.name || "pasted-image.png",
         mimeType: file.type,
         dataUrl: await readFileAsDataUrl(file),
@@ -452,7 +452,7 @@ function StudioImageWorkbench({
       [
         ...current,
         {
-          id: crypto.randomUUID(),
+          id: createClientId(),
           name: trimmed,
           mimeType: "image/url",
           url: trimmed,
@@ -480,7 +480,7 @@ function StudioImageWorkbench({
 
     setSubmitError("")
 
-    const optimisticId = `pending-${crypto.randomUUID()}`
+    const optimisticId = `pending-${createClientId()}`
     const promptText = prompt.trim()
     const promptModel = selectedModel
     const promptOperation = selectedOperation
