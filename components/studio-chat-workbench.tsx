@@ -82,6 +82,11 @@ type ApiResponse<T> =
 
 type ChatPhase = "idle" | "thinking" | "streaming"
 
+type ActiveChatRun = {
+  phase: Exclude<ChatPhase, "idle">
+  content: string
+}
+
 const CHAT_MODEL_STORAGE_KEY = "astraflow:chat-model"
 
 const chatModelListeners = new Set<() => void>()
@@ -278,15 +283,28 @@ function StudioChatWorkbench({
   const [pendingAttachments, setPendingAttachments] = React.useState<
     PendingAttachment[]
   >([])
-  const [phase, setPhase] = React.useState<ChatPhase>("idle")
-  const [streamContent, setStreamContent] = React.useState("")
-  const [error, setError] = React.useState("")
-  const abortControllerRef = React.useRef<AbortController | null>(null)
+  const [activeRuns, setActiveRuns] = React.useState<
+    Record<string, ActiveChatRun>
+  >({})
+  const [loadFailed, setLoadFailed] = React.useState(false)
+  const [chatErrors, setChatErrors] = React.useState<Record<string, boolean>>(
+    {}
+  )
+  const abortControllersRef = React.useRef(new Map<string, AbortController>())
+  const sessionIdRef = React.useRef(sessionId)
 
-  const isBusy = phase !== "idle"
-  const hasMessages = messages.length > 0 || isBusy
+  const activeRun = sessionId ? activeRuns[sessionId] : undefined
+  const isBusy = Boolean(activeRun)
+  const visibleMessages = sessionId ? messages : []
+  const hasMessages = visibleMessages.length > 0 || isBusy
   const canSubmit =
     (input.trim().length > 0 || pendingAttachments.length > 0) && !isBusy
+  const error =
+    sessionId && chatErrors[sessionId]
+      ? "chat-failed"
+      : sessionId && loadFailed
+        ? "load-failed"
+        : ""
 
   const addFiles = React.useCallback((files: FileList | null) => {
     if (!files || files.length === 0) {
@@ -325,6 +343,10 @@ function StudioChatWorkbench({
   }, [])
 
   React.useEffect(() => {
+    sessionIdRef.current = sessionId
+  }, [sessionId])
+
+  React.useEffect(() => {
     let cancelled = false
 
     Promise.resolve()
@@ -332,12 +354,12 @@ function StudioChatWorkbench({
       .then((nextMessages) => {
         if (!cancelled) {
           setMessages(nextMessages)
-          setError("")
+          setLoadFailed(false)
         }
       })
       .catch(() => {
         if (!cancelled) {
-          setError("load-failed")
+          setLoadFailed(true)
         }
       })
 
@@ -347,31 +369,123 @@ function StudioChatWorkbench({
   }, [sessionId])
 
   React.useEffect(() => {
+    const abortControllers = abortControllersRef.current
+
     return () => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort()
-      }
+      abortControllers.forEach((controller) => controller.abort())
+      abortControllers.clear()
     }
   }, [])
 
-  const persistAssistantMessage = React.useCallback(
-    async (activeSessionId: string, content: string) => {
-      try {
-        const savedMessage = await createMessage(
-          activeSessionId,
-          "assistant",
-          content
-        )
-        setMessages((current) => [...current, savedMessage])
-        setStreamContent("")
-        setPhase("idle")
-        onSessionsChange()
-      } catch {
-        setPhase("idle")
-        setError("chat-failed")
-      }
+  const startAssistantRun = React.useCallback(
+    (activeSessionId: string, model: SupportedChatModel) => {
+      const abortController = new AbortController()
+      abortControllersRef.current.set(activeSessionId, abortController)
+      setChatErrors((current) => {
+        if (!current[activeSessionId]) return current
+
+        const next = { ...current }
+        delete next[activeSessionId]
+        return next
+      })
+      setActiveRuns((current) => ({
+        ...current,
+        [activeSessionId]: { phase: "thinking", content: "" },
+      }))
+
+      void streamAssistantResponse({
+        sessionId: activeSessionId,
+        model,
+        signal: abortController.signal,
+        onFirstChunk() {
+          setActiveRuns((current) => {
+            const run = current[activeSessionId]
+            if (!run) return current
+
+            return {
+              ...current,
+              [activeSessionId]: { ...run, phase: "streaming" },
+            }
+          })
+        },
+        onChunk(content) {
+          setActiveRuns((current) => {
+            const run = current[activeSessionId]
+            if (!run) return current
+
+            return {
+              ...current,
+              [activeSessionId]: { phase: "streaming", content },
+            }
+          })
+        },
+      })
+        .then(async (assistantContent) => {
+          abortControllersRef.current.delete(activeSessionId)
+
+          if (assistantContent.trim()) {
+            const savedMessage = await createMessage(
+              activeSessionId,
+              "assistant",
+              assistantContent
+            )
+
+            if (sessionIdRef.current === activeSessionId) {
+              setMessages((current) => [...current, savedMessage])
+            }
+
+            onSessionsChange()
+          }
+
+          setActiveRuns((current) => {
+            const next = { ...current }
+            delete next[activeSessionId]
+            return next
+          })
+        })
+        .catch((nextError) => {
+          abortControllersRef.current.delete(activeSessionId)
+          setActiveRuns((current) => {
+            const next = { ...current }
+            delete next[activeSessionId]
+            return next
+          })
+
+          if (
+            nextError instanceof DOMException &&
+            nextError.name === "AbortError"
+          ) {
+            return
+          }
+
+          setChatErrors((current) => ({
+            ...current,
+            [activeSessionId]: true,
+          }))
+        })
     },
     [onSessionsChange]
+  )
+
+  const stopAssistantRun = React.useCallback((activeSessionId: string) => {
+    const controller = abortControllersRef.current.get(activeSessionId)
+    controller?.abort()
+    abortControllersRef.current.delete(activeSessionId)
+    setActiveRuns((current) => {
+      const next = { ...current }
+      delete next[activeSessionId]
+      return next
+    })
+  }, [])
+
+  const appendMessageIfActive = React.useCallback(
+    (activeSessionId: string, message: StudioMessage) => {
+      if (sessionIdRef.current !== activeSessionId) {
+        return
+      }
+      setMessages((current) => [...current, message])
+    },
+    []
   )
 
   async function handleSubmit() {
@@ -384,8 +498,6 @@ function StudioChatWorkbench({
 
     setInput("")
     setPendingAttachments([])
-    setError("")
-    setPhase("thinking")
 
     const isNewSession = !sessionId
 
@@ -395,10 +507,6 @@ function StudioChatWorkbench({
           ? { id: sessionId }
           : await createSession(prompt || attachments[0]?.name || "New chat")
       const activeSessionId = activeSession.id
-
-      if (!sessionId) {
-        onSessionChange(activeSessionId)
-      }
 
       const userMessage = await createMessage(
         activeSessionId,
@@ -411,8 +519,14 @@ function StudioChatWorkbench({
           dataUrl: attachment.dataUrl,
         }))
       )
-      setMessages((current) => [...current, userMessage])
-      setStreamContent("")
+
+      if (!sessionId) {
+        setMessages([userMessage])
+        onSessionChange(activeSessionId)
+      } else {
+        appendMessageIfActive(activeSessionId, userMessage)
+      }
+
       onSessionsChange()
 
       if (isNewSession && prompt) {
@@ -423,49 +537,20 @@ function StudioChatWorkbench({
           })
       }
 
-      const abortController = new AbortController()
-      abortControllerRef.current = abortController
-
-      const assistantContent = await streamAssistantResponse({
-        sessionId: activeSessionId,
-        model: selectedModel,
-        signal: abortController.signal,
-        onFirstChunk() {
-          setPhase("streaming")
-        },
-        onChunk(content) {
-          setStreamContent(content)
-        },
-      })
-
-      abortControllerRef.current = null
-
-      if (assistantContent.trim()) {
-        await persistAssistantMessage(activeSessionId, assistantContent)
+      startAssistantRun(activeSessionId, selectedModel)
+    } catch {
+      if (sessionId) {
+        setChatErrors((current) => ({ ...current, [sessionId]: true }))
       } else {
-        setStreamContent("")
-        setPhase("idle")
-      }
-    } catch (nextError) {
-      abortControllerRef.current = null
-      setStreamContent("")
-      setPhase("idle")
-
-      if (!(
-        nextError instanceof DOMException && nextError.name === "AbortError"
-      )) {
-        setError("chat-failed")
+        setLoadFailed(true)
       }
     }
   }
 
   function handleStop() {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort()
-      abortControllerRef.current = null
+    if (sessionId) {
+      stopAssistantRun(sessionId)
     }
-    setStreamContent("")
-    setPhase("idle")
   }
 
   return (
@@ -474,11 +559,11 @@ function StudioChatWorkbench({
         {hasMessages ? (
           <ChatContainerRoot className="h-full min-h-0">
             <ChatContainerContent className="mx-auto flex min-h-full w-full max-w-5xl gap-6 px-8 py-10">
-              {messages.map((message) => (
+              {visibleMessages.map((message) => (
                 <ChatMessageBubble key={message.id} message={message} />
               ))}
 
-              {phase === "thinking" ? (
+              {activeRun?.phase === "thinking" ? (
                 <div className="flex w-full justify-start">
                   <TextShimmer className="text-sm" duration={2}>
                     {t.studioThinking}
@@ -486,8 +571,8 @@ function StudioChatWorkbench({
                 </div>
               ) : null}
 
-              {phase === "streaming" && streamContent ? (
-                <StreamingAssistantMessage content={streamContent} />
+              {activeRun?.phase === "streaming" && activeRun.content ? (
+                <StreamingAssistantMessage content={activeRun.content} />
               ) : null}
 
               {error ? (
@@ -774,7 +859,7 @@ function ChatMessageBubble({ message }: { message: StudioMessage }) {
 }
 
 const markdownClassName =
-  "max-w-none text-base leading-8 text-foreground [&_a]:text-primary [&_code]:rounded-sm [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_h1]:font-heading [&_h1]:text-2xl [&_h1]:font-semibold [&_h2]:mt-5 [&_h2]:font-heading [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mt-4 [&_h3]:font-medium [&_li]:my-1 [&_ol]:ml-5 [&_ol]:list-decimal [&_p]:my-3 [&_pre]:my-3 [&_ul]:ml-5 [&_ul]:list-disc"
+  "prose-sm max-w-none leading-7 text-foreground dark:prose-invert prose-headings:font-heading prose-headings:text-foreground prose-h1:text-xl prose-h2:mt-4 prose-h2:text-lg prose-h3:mt-3 prose-h3:text-base prose-p:my-2 prose-a:text-primary prose-code:rounded-sm prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:font-mono prose-pre:my-3 prose-table:my-3 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2"
 
 const streamingPulseDotClassName =
   "[&>*:last-child]:after:ml-1.5 [&>*:last-child]:after:inline-block [&>*:last-child]:after:size-2.5 [&>*:last-child]:after:translate-y-[1px] [&>*:last-child]:after:rounded-full [&>*:last-child]:after:bg-foreground [&>*:last-child]:after:align-middle [&>*:last-child]:after:content-[''] [&>*:last-child]:after:animate-[studio-pulse-dot_1.1s_ease-in-out_infinite]"

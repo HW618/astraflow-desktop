@@ -1,8 +1,9 @@
 "use client"
 
-import { cn } from "@/lib/utils"
-import React, { useEffect, useState } from "react"
+import * as React from "react"
 import { codeToHtml } from "shiki"
+
+import { cn } from "@/lib/utils"
 
 export type CodeBlockProps = {
   children?: React.ReactNode
@@ -14,7 +15,7 @@ function CodeBlock({ children, className, ...props }: CodeBlockProps) {
     <div
       className={cn(
         "not-prose flex w-full flex-col overflow-clip border",
-        "border-border bg-card text-card-foreground rounded-xl",
+        "rounded-xl border-border bg-card text-card-foreground",
         className
       )}
       {...props}
@@ -38,19 +39,39 @@ function CodeBlockCode({
   className,
   ...props
 }: CodeBlockCodeProps) {
-  const [highlightedHtml, setHighlightedHtml] = useState<string | null>(null)
+  const [highlightedHtml, setHighlightedHtml] = React.useState<string | null>(
+    null
+  )
 
-  useEffect(() => {
+  React.useEffect(() => {
+    let isMounted = true
+
     async function highlight() {
       if (!code) {
-        setHighlightedHtml("<pre><code></code></pre>")
+        if (isMounted) {
+          setHighlightedHtml("<pre><code></code></pre>")
+        }
         return
       }
 
-      const html = await codeToHtml(code, { lang: language, theme })
-      setHighlightedHtml(html)
+      try {
+        const html = await codeToHtml(code, { lang: language, theme })
+        if (isMounted) {
+          setHighlightedHtml(html)
+        }
+      } catch {
+        const html = await codeToHtml(code, { lang: "plaintext", theme })
+        if (isMounted) {
+          setHighlightedHtml(html)
+        }
+      }
     }
-    highlight()
+
+    void highlight()
+
+    return () => {
+      isMounted = false
+    }
   }, [code, language, theme])
 
   const classNames = cn(
@@ -58,7 +79,6 @@ function CodeBlockCode({
     className
   )
 
-  // SSR fallback: render plain code if not hydrated yet
   return highlightedHtml ? (
     <div
       className={classNames}

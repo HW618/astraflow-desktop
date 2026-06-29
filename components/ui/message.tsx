@@ -5,8 +5,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { Markdown } from "@/components/prompt-kit/markdown"
 import { cn } from "@/lib/utils"
-import { Markdown } from "./markdown"
 
 export type MessageProps = {
   children: React.ReactNode
