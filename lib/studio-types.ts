@@ -6,6 +6,15 @@ export type StudioMessageRole = "user" | "assistant"
 
 export type StudioMessageStatus = "complete" | "streaming" | "error"
 
+export type StudioMessageActivity = {
+  id: string
+  toolName: string
+  status: "running" | "complete" | "error"
+  input: string
+  output: string
+  error: string | null
+}
+
 export type StudioAttachment = {
   type: "image"
   name: string
@@ -26,6 +35,12 @@ export type StudioMessage = {
   sessionId: string
   role: StudioMessageRole
   content: string
+  model: string | null
+  versionGroupId: string | null
+  versionIndex: number
+  versionCount: number
+  isActiveVersion: boolean
+  activities: StudioMessageActivity[]
   reasoningContent: string
   reasoningDurationMs: number | null
   status: StudioMessageStatus
@@ -69,6 +84,16 @@ export type StudioModelverseApiKey = StudioModelverseApiKeyOption & {
   key: string
   projectId: string
   updatedAt: string
+}
+
+export type StudioExaApiKey = {
+  key: string
+  updatedAt: string
+}
+
+export type StudioApiKeyStatus = {
+  configured: boolean
+  updatedAt: string | null
 }
 
 export type StudioImageAdapter =

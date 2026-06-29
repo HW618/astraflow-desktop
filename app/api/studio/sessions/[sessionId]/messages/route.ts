@@ -4,6 +4,7 @@ import { z } from "zod"
 import {
   createStudioMessage,
   getStudioSession,
+  listStudioMessageVersions,
   listStudioMessages,
 } from "@/lib/studio-db"
 
@@ -23,10 +24,29 @@ const attachmentSchema = z.object({
     .max(12_000_000),
 })
 
+const activitySchema = z.object({
+  id: z.string().trim().min(1).max(120),
+  toolName: z.string().trim().min(1).max(120),
+  status: z.enum(["running", "complete", "error"]),
+  input: z.string().trim().max(20_000).default(""),
+  output: z.string().trim().max(120_000).default(""),
+  error: z.string().trim().max(10_000).nullable().default(null),
+})
+
 const createMessageSchema = z
   .object({
     role: z.enum(["user", "assistant"]),
     content: z.string().trim().max(80_000).default(""),
+    model: z.string().trim().min(1).max(120).nullable().default(null),
+    versionGroupId: z.string().trim().min(1).max(120).nullable().default(null),
+    replacesMessageId: z
+      .string()
+      .trim()
+      .min(1)
+      .max(120)
+      .nullable()
+      .default(null),
+    activities: z.array(activitySchema).max(20).default([]),
     reasoningContent: z.string().trim().max(160_000).default(""),
     reasoningDurationMs: z
       .number()
@@ -52,6 +72,8 @@ type RouteContext = {
 
 export async function GET(_request: Request, context: RouteContext) {
   const { sessionId } = await context.params
+  const url = new URL(_request.url)
+  const versionGroupId = url.searchParams.get("versionGroupId")?.trim()
 
   if (!getStudioSession(sessionId)) {
     return NextResponse.json(
@@ -62,7 +84,9 @@ export async function GET(_request: Request, context: RouteContext) {
 
   return NextResponse.json({
     ok: true,
-    data: listStudioMessages(sessionId),
+    data: versionGroupId
+      ? listStudioMessageVersions(sessionId, versionGroupId)
+      : listStudioMessages(sessionId),
   })
 }
 

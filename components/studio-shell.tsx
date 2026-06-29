@@ -97,10 +97,26 @@ type ModelverseApiKeysPayload = {
   selected: StudioModelverseApiKeyOption | null
 }
 
+type ExaApiKeyPayload = {
+  configured: boolean
+  updatedAt: string | null
+}
+
 type ModelverseApiKeysResponse =
   | {
       ok: true
       data: ModelverseApiKeysPayload
+    }
+  | {
+      ok: false
+      message?: string
+      error?: unknown
+    }
+
+type ExaApiKeyResponse =
+  | {
+      ok: true
+      data: ExaApiKeyPayload
     }
   | {
       ok: false
@@ -269,6 +285,36 @@ async function saveModelverseApiKey(apiKeyId: string, projectId: string) {
   return payload.data
 }
 
+async function fetchExaApiKeyStatus() {
+  const response = await fetch("/api/studio/exa-api-key")
+  const payload = (await response.json()) as ExaApiKeyResponse
+
+  if (!response.ok || !payload.ok) {
+    throw new Error(
+      (!payload.ok && payload.message) || "Failed to load Exa API key status"
+    )
+  }
+
+  return payload.data
+}
+
+async function saveExaApiKey(apiKey: string) {
+  const response = await fetch("/api/studio/exa-api-key", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ apiKey }),
+  })
+  const payload = (await response.json()) as ExaApiKeyResponse
+
+  if (!response.ok || !payload.ok) {
+    throw new Error(
+      (!payload.ok && payload.message) || "Failed to save Exa API key"
+    )
+  }
+
+  return payload.data
+}
+
 function formatExpiry(expiresAt: number | null) {
   if (!expiresAt) {
     return null
@@ -320,6 +366,10 @@ function StudioShell() {
   const [modelverseApiKeySaving, setModelverseApiKeySaving] =
     React.useState(false)
   const [modelverseApiKeyError, setModelverseApiKeyError] = React.useState("")
+  const [exaApiKeyInput, setExaApiKeyInput] = React.useState("")
+  const [exaApiKeyConfigured, setExaApiKeyConfigured] = React.useState(false)
+  const [exaApiKeySaving, setExaApiKeySaving] = React.useState(false)
+  const [exaApiKeyError, setExaApiKeyError] = React.useState("")
 
   const selectedSession = sessions.find(
     (session) => session.id === selectedSessionId
@@ -356,6 +406,9 @@ function StudioShell() {
         setSelectedModelverseApiKeyId("")
         setSavedModelverseApiKeyId("")
         setModelverseApiKeyError("")
+        setExaApiKeyInput("")
+        setExaApiKeyConfigured(false)
+        setExaApiKeyError("")
         setOauthDialogOpen(true)
       }
 
@@ -398,6 +451,23 @@ function StudioShell() {
     },
     [projectId, t.studioModelverseApiKeyEmpty]
   )
+
+  const reloadExaApiKeyStatus = React.useCallback(async () => {
+    try {
+      const next = await fetchExaApiKeyStatus()
+
+      setExaApiKeyConfigured(next.configured)
+      setExaApiKeyInput("")
+      setExaApiKeyError("")
+
+      return next
+    } catch (error) {
+      setExaApiKeyError(
+        error instanceof Error ? error.message : t.studioExaApiKeyError
+      )
+      return null
+    }
+  }, [t.studioExaApiKeyError])
 
   React.useEffect(() => {
     queueMicrotask(() => {
@@ -454,6 +524,25 @@ function StudioShell() {
       }
     }
   }, [oauthStatus.configured, reloadModelverseApiKeys])
+
+  React.useEffect(() => {
+    if (!oauthStatus.configured) {
+      queueMicrotask(() => {
+        setExaApiKeyInput("")
+        setExaApiKeyConfigured(false)
+        setExaApiKeyError("")
+      })
+      return
+    }
+
+    const timer = window.setTimeout(() => {
+      void reloadExaApiKeyStatus()
+    }, 0)
+
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [oauthStatus.configured, reloadExaApiKeyStatus])
 
   React.useEffect(() => {
     if (!oauthFlow || oauthFlow.status !== "pending") {
@@ -515,6 +604,24 @@ function StudioShell() {
       )
     } finally {
       setModelverseApiKeySaving(false)
+    }
+  }
+
+  async function handleExaApiKeySave() {
+    try {
+      setExaApiKeySaving(true)
+      setExaApiKeyError("")
+
+      const next = await saveExaApiKey(exaApiKeyInput)
+
+      setExaApiKeyConfigured(next.configured)
+      setExaApiKeyInput("")
+    } catch (error) {
+      setExaApiKeyError(
+        error instanceof Error ? error.message : t.studioExaApiKeyError
+      )
+    } finally {
+      setExaApiKeySaving(false)
     }
   }
 
@@ -894,6 +1001,70 @@ function StudioShell() {
                   <p className="text-xs text-destructive">
                     {modelverseApiKeyError}
                   </p>
+                ) : null}
+              </div>
+            ) : null}
+
+            {oauthStatus.configured ? (
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between gap-3">
+                  <label className="text-sm font-medium text-foreground">
+                    {t.studioExaApiKeyLabel}
+                  </label>
+                  <a
+                    href="https://dashboard.exa.ai/api-keys"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-xs text-muted-foreground transition hover:text-foreground"
+                  >
+                    <span>{t.studioApiKeyGetLink}</span>
+                    <RiExternalLinkLine aria-hidden className="size-3.5" />
+                  </a>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Input
+                    type="password"
+                    value={exaApiKeyInput}
+                    placeholder={t.studioExaApiKeyPlaceholder}
+                    disabled={exaApiKeySaving}
+                    onChange={(event) => {
+                      setExaApiKeyInput(event.target.value)
+                      setExaApiKeyError("")
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="shrink-0"
+                    onClick={handleExaApiKeySave}
+                    disabled={
+                      exaApiKeySaving ||
+                      (!exaApiKeyInput.trim() && !exaApiKeyConfigured)
+                    }
+                  >
+                    {exaApiKeySaving ? (
+                      <RiLoader4Line className="animate-spin" aria-hidden />
+                    ) : (
+                      <RiKey2Line aria-hidden />
+                    )}
+                    <span>
+                      {exaApiKeySaving
+                        ? t.studioExaApiKeySaving
+                        : !exaApiKeyInput.trim() && exaApiKeyConfigured
+                          ? t.studioExaApiKeyClear
+                          : t.studioExaApiKeySave}
+                    </span>
+                  </Button>
+                </div>
+
+                <p className="text-xs text-muted-foreground">
+                  {exaApiKeyConfigured
+                    ? t.studioExaApiKeySaved
+                    : t.studioExaApiKeyHint}
+                </p>
+
+                {exaApiKeyError ? (
+                  <p className="text-xs text-destructive">{exaApiKeyError}</p>
                 ) : null}
               </div>
             ) : null}

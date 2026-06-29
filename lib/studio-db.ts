@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto"
 
 import type {
   StudioAttachment,
+  StudioMessageActivity,
   StudioImageGeneration,
   StudioImageOutput,
   StudioSavedImageOutput,
@@ -12,6 +13,7 @@ import type {
   StudioMessage,
   StudioMessageRole,
   StudioMessageStatus,
+  StudioExaApiKey,
   StudioModelverseApiKey,
   StudioMode,
   StudioOAuthStatus,
@@ -32,6 +34,12 @@ type DbMessageRow = {
   session_id: string
   role: StudioMessageRole
   content: string
+  model: string | null
+  version_group_id: string | null
+  version_index: number | null
+  version_count: number | null
+  active_version: number | null
+  activities: string | null
   reasoning_content: string | null
   reasoning_duration_ms: number | null
   status: StudioMessageStatus
@@ -54,6 +62,10 @@ type CreateMessageInput = {
   sessionId: string
   role: StudioMessageRole
   content: string
+  model?: string | null
+  versionGroupId?: string | null
+  replacesMessageId?: string | null
+  activities?: StudioMessageActivity[]
   reasoningContent?: string
   reasoningDurationMs?: number | null
   status?: StudioMessageStatus
@@ -138,6 +150,7 @@ type UpdateImageGenerationInput = {
 
 const DEFAULT_SESSION_TITLE = "New chat"
 const STUDIO_MODELVERSE_API_KEY_SETTING = "modelverse_api_key"
+const STUDIO_EXA_API_KEY_SETTING = "exa_api_key"
 const STUDIO_OAUTH_SETTING = "ucloud_oauth_tokens"
 
 let db: Database.Database | undefined
@@ -180,6 +193,11 @@ function initializeSchema(database: Database.Database) {
       session_id TEXT NOT NULL,
       role TEXT NOT NULL,
       content TEXT NOT NULL,
+      model TEXT,
+      version_group_id TEXT,
+      version_index INTEGER NOT NULL DEFAULT 1,
+      active_version INTEGER NOT NULL DEFAULT 1,
+      activities TEXT,
       reasoning_content TEXT NOT NULL DEFAULT '',
       reasoning_duration_ms INTEGER,
       status TEXT NOT NULL DEFAULT 'complete',
@@ -259,6 +277,30 @@ function migrateSchema(database: Database.Database) {
   if (!columns.some((column) => column.name === "reasoning_duration_ms")) {
     database.exec(`ALTER TABLE studio_messages ADD COLUMN reasoning_duration_ms INTEGER`)
   }
+
+  if (!columns.some((column) => column.name === "model")) {
+    database.exec(`ALTER TABLE studio_messages ADD COLUMN model TEXT`)
+  }
+
+  if (!columns.some((column) => column.name === "version_group_id")) {
+    database.exec(`ALTER TABLE studio_messages ADD COLUMN version_group_id TEXT`)
+  }
+
+  if (!columns.some((column) => column.name === "version_index")) {
+    database.exec(
+      `ALTER TABLE studio_messages ADD COLUMN version_index INTEGER NOT NULL DEFAULT 1`
+    )
+  }
+
+  if (!columns.some((column) => column.name === "active_version")) {
+    database.exec(
+      `ALTER TABLE studio_messages ADD COLUMN active_version INTEGER NOT NULL DEFAULT 1`
+    )
+  }
+
+  if (!columns.some((column) => column.name === "activities")) {
+    database.exec(`ALTER TABLE studio_messages ADD COLUMN activities TEXT`)
+  }
 }
 
 function nowIso() {
@@ -309,12 +351,45 @@ function parseAttachments(raw: string | null): StudioAttachment[] {
   }
 }
 
+function parseActivities(raw: string | null): StudioMessageActivity[] {
+  if (!raw) {
+    return []
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown
+
+    if (!Array.isArray(parsed)) {
+      return []
+    }
+
+    return parsed.filter(
+      (item): item is StudioMessageActivity =>
+        typeof item === "object" &&
+        item !== null &&
+        typeof (item as StudioMessageActivity).id === "string" &&
+        typeof (item as StudioMessageActivity).toolName === "string" &&
+        ((item as StudioMessageActivity).status === "running" ||
+          (item as StudioMessageActivity).status === "complete" ||
+          (item as StudioMessageActivity).status === "error")
+    )
+  } catch {
+    return []
+  }
+}
+
 function mapMessage(row: DbMessageRow): StudioMessage {
   return {
     id: row.id,
     sessionId: row.session_id,
     role: row.role,
     content: row.content,
+    model: row.model,
+    versionGroupId: row.version_group_id,
+    versionIndex: row.version_index ?? 1,
+    versionCount: row.version_count ?? 1,
+    isActiveVersion: row.active_version !== 0,
+    activities: parseActivities(row.activities),
     reasoningContent: row.reasoning_content ?? "",
     reasoningDurationMs: row.reasoning_duration_ms,
     status: row.status,
@@ -445,21 +520,98 @@ export function listStudioMessages(sessionId: string) {
     .prepare(
       `
         SELECT
-          id,
-          session_id,
-          role,
-          content,
-          reasoning_content,
-          reasoning_duration_ms,
-          status,
-          attachments,
-          created_at
-        FROM studio_messages
-        WHERE session_id = ?
-        ORDER BY created_at ASC
+          message.id,
+          message.session_id,
+          message.role,
+          message.content,
+          message.model,
+          message.version_group_id,
+          message.version_index,
+          CASE
+            WHEN message.version_group_id IS NULL THEN 1
+            ELSE (
+              SELECT COUNT(*)
+              FROM studio_messages AS version
+              WHERE version.session_id = message.session_id
+                AND version.role = 'assistant'
+                AND version.version_group_id = message.version_group_id
+            )
+          END AS version_count,
+          message.active_version,
+          message.activities,
+          message.reasoning_content,
+          message.reasoning_duration_ms,
+          message.status,
+          message.attachments,
+          message.created_at
+        FROM studio_messages AS message
+        WHERE message.session_id = ?
+          AND (
+            message.role != 'assistant'
+            OR message.active_version = 1
+          )
+        ORDER BY
+          CASE
+            WHEN message.version_group_id IS NULL THEN message.created_at
+            ELSE (
+              SELECT MIN(version.created_at)
+              FROM studio_messages AS version
+              WHERE version.session_id = message.session_id
+                AND version.role = 'assistant'
+                AND version.version_group_id = message.version_group_id
+            )
+          END ASC,
+          message.created_at ASC
       `
     )
     .all(sessionId) as DbMessageRow[]
+
+  return rows.map(mapMessage)
+}
+
+export function listStudioMessageVersions(
+  sessionId: string,
+  versionGroupId: string
+) {
+  const rows = getDb()
+    .prepare(
+      `
+        SELECT
+          message.id,
+          message.session_id,
+          message.role,
+          message.content,
+          message.model,
+          message.version_group_id,
+          message.version_index,
+          CASE
+            WHEN message.version_group_id IS NULL THEN 1
+            ELSE (
+              SELECT COUNT(*)
+              FROM studio_messages AS version
+              WHERE version.session_id = message.session_id
+                AND version.role = 'assistant'
+                AND version.version_group_id = message.version_group_id
+            )
+          END AS version_count,
+          message.active_version,
+          message.activities,
+          message.reasoning_content,
+          message.reasoning_duration_ms,
+          message.status,
+          message.attachments,
+          message.created_at
+        FROM studio_messages AS message
+        WHERE message.session_id = ?
+          AND message.role = 'assistant'
+          AND (
+            message.version_group_id = ?
+            OR message.id = ?
+          )
+        ORDER BY message.version_index ASC, message.created_at ASC
+      `
+    )
+    .all(sessionId, versionGroupId, versionGroupId) as DbMessageRow[]
 
   return rows.map(mapMessage)
 }
@@ -468,6 +620,10 @@ export function createStudioMessage({
   sessionId,
   role,
   content,
+  model = null,
+  versionGroupId = null,
+  replacesMessageId = null,
+  activities = [],
   reasoningContent = "",
   reasoningDurationMs = null,
   status = "complete",
@@ -475,19 +631,97 @@ export function createStudioMessage({
 }: CreateMessageInput) {
   const database = getDb()
   const createdAt = nowIso()
-  const message: StudioMessage = {
-    id: randomUUID(),
-    sessionId,
-    role,
-    content,
-    reasoningContent,
-    reasoningDurationMs,
-    status,
-    attachments,
-    createdAt,
-  }
+  const messageId = randomUUID()
 
   const createMessageTransaction = database.transaction(() => {
+    let resolvedVersionGroupId: string | null = null
+    let versionIndex = 1
+
+    if (role === "assistant") {
+      const replacement = replacesMessageId
+        ? (database
+            .prepare(
+              `
+                SELECT id, version_group_id
+                FROM studio_messages
+                WHERE id = ?
+                  AND session_id = ?
+                  AND role = 'assistant'
+              `
+            )
+            .get(replacesMessageId, sessionId) as
+            | { id: string; version_group_id: string | null }
+            | undefined)
+        : undefined
+
+      resolvedVersionGroupId =
+        replacement?.version_group_id ?? versionGroupId ?? messageId
+
+      if (replacement && !replacement.version_group_id) {
+        database
+          .prepare(
+            `
+              UPDATE studio_messages
+              SET version_group_id = ?,
+                  version_index = 1
+              WHERE id = ?
+            `
+          )
+          .run(resolvedVersionGroupId, replacement.id)
+      }
+
+      if (replacesMessageId || versionGroupId) {
+        database
+          .prepare(
+            `
+              UPDATE studio_messages
+              SET active_version = 0
+              WHERE session_id = ?
+                AND role = 'assistant'
+                AND version_group_id = ?
+            `
+          )
+          .run(sessionId, resolvedVersionGroupId)
+      }
+
+      const latestVersion = database
+        .prepare(
+          `
+            SELECT MAX(version_index) AS version_index
+            FROM studio_messages
+            WHERE session_id = ?
+              AND role = 'assistant'
+              AND version_group_id = ?
+          `
+        )
+        .get(sessionId, resolvedVersionGroupId) as
+        | { version_index: number | null }
+        | undefined
+
+      versionIndex =
+        typeof latestVersion?.version_index === "number"
+          ? latestVersion.version_index + 1
+          : 1
+    }
+
+    const message: StudioMessage = {
+      id: messageId,
+      sessionId,
+      role,
+      content,
+      model,
+      versionGroupId: resolvedVersionGroupId,
+      versionIndex,
+      versionCount: versionIndex,
+      isActiveVersion: true,
+      activities,
+      reasoningContent,
+      reasoningDurationMs,
+      status,
+      attachments,
+      createdAt,
+    }
+
     database
       .prepare(
         `
@@ -497,6 +731,11 @@ export function createStudioMessage({
               session_id,
               role,
               content,
+              model,
+              version_group_id,
+              version_index,
+              active_version,
+              activities,
               reasoning_content,
               reasoning_duration_ms,
               status,
@@ -509,6 +748,11 @@ export function createStudioMessage({
               @sessionId,
               @role,
               @content,
+              @model,
+              @versionGroupId,
+              @versionIndex,
+              1,
+              @activities,
               @reasoningContent,
               @reasoningDurationMs,
               @status,
@@ -522,6 +766,10 @@ export function createStudioMessage({
         sessionId: message.sessionId,
         role: message.role,
         content: message.content,
+        model: message.model,
+        versionGroupId: message.versionGroupId,
+        versionIndex: message.versionIndex,
+        activities: activities.length ? JSON.stringify(activities) : null,
         reasoningContent: message.reasoningContent,
         reasoningDurationMs: message.reasoningDurationMs,
         status: message.status,
@@ -540,11 +788,11 @@ export function createStudioMessage({
         `
       )
       .run(createdAt, sessionId)
+
+    return message
   })
 
-  createMessageTransaction()
-
-  return message
+  return createMessageTransaction()
 }
 
 export function getStudioOAuthTokens(): StudioOAuthTokens | null {
@@ -669,6 +917,47 @@ export function saveStudioModelverseApiKey(
 
 export function clearStudioModelverseApiKey() {
   deleteStudioSetting(STUDIO_MODELVERSE_API_KEY_SETTING)
+}
+
+export function getStudioExaApiKey(): StudioExaApiKey | null {
+  const row = readStudioSetting(STUDIO_EXA_API_KEY_SETTING)
+
+  if (!row?.value) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(row.value) as {
+      key?: string
+    }
+
+    if (!parsed.key) {
+      return null
+    }
+
+    return {
+      key: parsed.key,
+      updatedAt: row.updated_at,
+    }
+  } catch {
+    return null
+  }
+}
+
+export function saveStudioExaApiKey(key: string) {
+  const updatedAt = writeStudioSetting(
+    STUDIO_EXA_API_KEY_SETTING,
+    JSON.stringify({ key })
+  )
+
+  return {
+    key,
+    updatedAt,
+  } satisfies StudioExaApiKey
+}
+
+export function clearStudioExaApiKey() {
+  deleteStudioSetting(STUDIO_EXA_API_KEY_SETTING)
 }
 
 function parseJsonRecord(raw: string): Record<string, unknown> {

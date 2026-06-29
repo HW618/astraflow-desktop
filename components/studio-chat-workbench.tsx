@@ -3,10 +3,15 @@
 import * as React from "react"
 import {
   RiAddLine,
+  RiArrowLeftSLine,
+  RiArrowRightSLine,
   RiArrowUpLine,
   RiBrainLine,
+  RiCheckLine,
   RiCloseLine,
   RiFileCopyLine,
+  RiRefreshLine,
+  RiSearchLine,
   RiStopFill,
   RiThumbDownLine,
   RiThumbUpLine,
@@ -41,6 +46,17 @@ import {
   SelectItem,
   SelectTrigger,
 } from "@/components/ui/select"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
+  ChainOfThought,
+  ChainOfThoughtStep,
+  ChainOfThoughtTrigger,
+} from "@/components/ui/chain-of-thought"
 import { TextShimmer } from "@/components/ui/text-shimmer"
 import { Button } from "@/components/ui/button"
 import { useI18n } from "@/components/i18n-provider"
@@ -57,6 +73,7 @@ import {
 } from "@/lib/chat-models"
 import type {
   StudioAttachment,
+  StudioMessageActivity,
   StudioMessage,
   StudioSession,
 } from "@/lib/studio-types"
@@ -97,17 +114,34 @@ type ChatPhase = "idle" | "thinking" | "streaming"
 type ActiveChatRun = {
   phase: Exclude<ChatPhase, "idle">
   content: string
+  activities: StudioMessageActivity[]
   reasoningContent: string
   reasoningDurationMs: number | null
 }
 
-type ChatStreamEvent = {
-  type: "content" | "reasoning"
-  delta: string
-}
+type ChatStreamEvent =
+  | {
+      type: "content" | "reasoning"
+      delta: string
+    }
+  | {
+      type: "tool_call"
+      toolCallId: string
+      toolName: string
+      input: string
+    }
+  | {
+      type: "tool_result"
+      toolCallId: string
+      toolName: string
+      status: "complete" | "error"
+      output?: string
+      error?: string
+    }
 
 type ChatStreamSnapshot = {
   content: string
+  activities: StudioMessageActivity[]
   reasoningContent: string
   reasoningDurationMs: number | null
 }
@@ -305,27 +339,50 @@ async function listMessages(sessionId: string) {
 }
 
 async function createMessage(
-  sessionId: string,
-  role: StudioMessage["role"],
-  content: string,
-  attachments: StudioAttachment[] = [],
-  reasoningContent = "",
-  reasoningDurationMs: number | null = null
+  input: {
+    sessionId: string
+    role: StudioMessage["role"]
+    content: string
+    attachments?: StudioAttachment[]
+    activities?: StudioMessageActivity[]
+    reasoningContent?: string
+    reasoningDurationMs?: number | null
+    model?: string | null
+    versionGroupId?: string | null
+    replacesMessageId?: string | null
+  }
 ) {
-  const response = await fetch(`/api/studio/sessions/${sessionId}/messages`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      role,
-      content,
-      reasoningContent,
-      reasoningDurationMs,
-      status: "complete",
-      attachments,
-    }),
-  })
+  const response = await fetch(
+    `/api/studio/sessions/${input.sessionId}/messages`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        role: input.role,
+        content: input.content,
+        model: input.model ?? null,
+        versionGroupId: input.versionGroupId ?? null,
+        replacesMessageId: input.replacesMessageId ?? null,
+        activities: input.activities ?? [],
+        reasoningContent: input.reasoningContent ?? "",
+        reasoningDurationMs: input.reasoningDurationMs ?? null,
+        status: "complete",
+        attachments: input.attachments ?? [],
+      }),
+    }
+  )
 
   return readJson<StudioMessage>(response)
+}
+
+async function listMessageVersions(sessionId: string, versionGroupId: string) {
+  const response = await fetch(
+    `/api/studio/sessions/${sessionId}/messages?versionGroupId=${encodeURIComponent(
+      versionGroupId
+    )}`
+  )
+
+  return readJson<StudioMessage[]>(response)
 }
 
 async function generateSessionTitle(sessionId: string, prompt: string) {
@@ -340,6 +397,7 @@ async function streamAssistantResponse({
   sessionId,
   model,
   reasoningEffort,
+  retryMessageId,
   signal,
   onFirstChunk,
   onChunk,
@@ -347,6 +405,7 @@ async function streamAssistantResponse({
   sessionId: string
   model: SupportedChatModel
   reasoningEffort: ChatReasoningEffort
+  retryMessageId?: string
   signal: AbortSignal
   onFirstChunk?: () => void
   onChunk: (snapshot: ChatStreamSnapshot) => void
@@ -358,6 +417,7 @@ async function streamAssistantResponse({
       sessionId,
       model,
       reasoningEffort,
+      retryMessageId,
     }),
     signal,
   })
@@ -385,6 +445,7 @@ async function streamAssistantResponse({
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let content = ""
+  let activities: StudioMessageActivity[] = []
   let reasoningContent = ""
   let reasoningDurationMs: number | null = null
   let buffer = ""
@@ -408,12 +469,37 @@ async function streamAssistantResponse({
 
     if (event.type === "reasoning") {
       reasoningContent += event.delta
-    } else {
+    } else if (event.type === "content") {
       markReasoningDone()
       content += event.delta
+    } else if (event.type === "tool_call") {
+      markReasoningDone()
+      activities = [
+        ...activities.filter((activity) => activity.id !== event.toolCallId),
+        {
+          id: event.toolCallId,
+          toolName: event.toolName,
+          status: "running",
+          input: event.input,
+          output: "",
+          error: null,
+        },
+      ]
+    } else if (event.type === "tool_result") {
+      markReasoningDone()
+      activities = activities.map((activity) =>
+        activity.id === event.toolCallId
+          ? {
+              ...activity,
+              status: event.status,
+              output: event.output ?? "",
+              error: event.error ?? null,
+            }
+          : activity
+      )
     }
 
-    onChunk({ content, reasoningContent, reasoningDurationMs })
+    onChunk({ content, activities, reasoningContent, reasoningDurationMs })
   }
 
   function parseLine(line: string) {
@@ -430,6 +516,38 @@ async function streamAssistantResponse({
       handleEvent({
         type: event.type,
         delta: event.delta,
+      })
+      return
+    }
+
+    if (
+      event.type === "tool_call" &&
+      typeof event.toolCallId === "string" &&
+      typeof event.toolName === "string" &&
+      typeof event.input === "string"
+    ) {
+      handleEvent({
+        type: "tool_call",
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        input: event.input,
+      })
+      return
+    }
+
+    if (
+      event.type === "tool_result" &&
+      typeof event.toolCallId === "string" &&
+      typeof event.toolName === "string" &&
+      (event.status === "complete" || event.status === "error")
+    ) {
+      handleEvent({
+        type: "tool_result",
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        status: event.status,
+        output: typeof event.output === "string" ? event.output : undefined,
+        error: typeof event.error === "string" ? event.error : undefined,
       })
     }
   }
@@ -465,7 +583,7 @@ async function streamAssistantResponse({
 
   markReasoningDone()
 
-  return { content, reasoningContent, reasoningDurationMs }
+  return { content, activities, reasoningContent, reasoningDurationMs }
 }
 
 function StudioChatWorkbench({
@@ -580,7 +698,12 @@ function StudioChatWorkbench({
     (
       activeSessionId: string,
       model: SupportedChatModel,
-      reasoningEffort: ChatReasoningEffort
+      reasoningEffort: ChatReasoningEffort,
+      options: {
+        retryMessageId?: string
+        versionGroupId?: string | null
+        replacesMessageId?: string | null
+      } = {}
     ) => {
       const abortController = new AbortController()
       abortControllersRef.current.set(activeSessionId, abortController)
@@ -596,6 +719,7 @@ function StudioChatWorkbench({
         [activeSessionId]: {
           phase: "thinking",
           content: "",
+          activities: [],
           reasoningContent: "",
           reasoningDurationMs: null,
         },
@@ -605,6 +729,7 @@ function StudioChatWorkbench({
         sessionId: activeSessionId,
         model,
         reasoningEffort,
+        retryMessageId: options.retryMessageId,
         signal: abortController.signal,
         onFirstChunk() {
           setActiveRuns((current) => {
@@ -627,6 +752,7 @@ function StudioChatWorkbench({
               [activeSessionId]: {
                 phase: "streaming",
                 content: snapshot.content,
+                activities: snapshot.activities,
                 reasoningContent: snapshot.reasoningContent,
                 reasoningDurationMs: snapshot.reasoningDurationMs,
               },
@@ -642,16 +768,29 @@ function StudioChatWorkbench({
             assistantMessage.reasoningContent.trim()
           ) {
             const savedMessage = await createMessage(
-              activeSessionId,
-              "assistant",
-              assistantMessage.content,
-              [],
-              assistantMessage.reasoningContent,
-              assistantMessage.reasoningDurationMs
+              {
+                sessionId: activeSessionId,
+                role: "assistant",
+                content: assistantMessage.content,
+                model,
+                activities: assistantMessage.activities,
+                reasoningContent: assistantMessage.reasoningContent,
+                reasoningDurationMs: assistantMessage.reasoningDurationMs,
+                versionGroupId: options.versionGroupId,
+                replacesMessageId: options.replacesMessageId,
+              }
             )
 
             if (sessionIdRef.current === activeSessionId) {
-              setMessages((current) => [...current, savedMessage])
+              setMessages((current) =>
+                options.replacesMessageId
+                  ? current.map((message) =>
+                      message.id === options.replacesMessageId
+                        ? savedMessage
+                        : message
+                    )
+                  : [...current, savedMessage]
+              )
             }
 
             onSessionsChange()
@@ -708,6 +847,32 @@ function StudioChatWorkbench({
     []
   )
 
+  const handleRetryMessage = React.useCallback(
+    (message: StudioMessage) => {
+      if (!sessionId || isBusy || message.role !== "assistant") {
+        return
+      }
+
+      startAssistantRun(
+        sessionId,
+        selectedModel,
+        selectedReasoningEffort,
+        {
+          retryMessageId: message.id,
+          versionGroupId: message.versionGroupId ?? message.id,
+          replacesMessageId: message.id,
+        }
+      )
+    },
+    [
+      isBusy,
+      selectedModel,
+      selectedReasoningEffort,
+      sessionId,
+      startAssistantRun,
+    ]
+  )
+
   async function handleSubmit() {
     const prompt = input.trim()
     const attachments = pendingAttachments
@@ -728,17 +893,17 @@ function StudioChatWorkbench({
           : await createSession(prompt || attachments[0]?.name || "New chat")
       const activeSessionId = activeSession.id
 
-      const userMessage = await createMessage(
-        activeSessionId,
-        "user",
-        prompt,
-        attachments.map((attachment) => ({
+      const userMessage = await createMessage({
+        sessionId: activeSessionId,
+        role: "user",
+        content: prompt,
+        attachments: attachments.map((attachment) => ({
           type: attachment.type,
           name: attachment.name,
           mimeType: attachment.mimeType,
           dataUrl: attachment.dataUrl,
-        }))
-      )
+        })),
+      })
 
       if (!sessionId) {
         setMessages([userMessage])
@@ -784,7 +949,11 @@ function StudioChatWorkbench({
           <ChatContainerRoot className="h-full min-h-0">
             <ChatContainerContent className="mx-auto flex min-h-full w-full max-w-5xl gap-6 px-8 py-10">
               {visibleMessages.map((message) => (
-                <ChatMessageBubble key={message.id} message={message} />
+                <ChatMessageBubble
+                  key={message.id}
+                  message={message}
+                  onRetry={handleRetryMessage}
+                />
               ))}
 
               {activeRun?.phase === "thinking" ? (
@@ -796,9 +965,12 @@ function StudioChatWorkbench({
               ) : null}
 
               {activeRun?.phase === "streaming" &&
-              (activeRun.content || activeRun.reasoningContent) ? (
+              (activeRun.content ||
+                activeRun.reasoningContent ||
+                activeRun.activities.length > 0) ? (
                 <StreamingAssistantMessage
                   content={activeRun.content}
+                  activities={activeRun.activities}
                   reasoningContent={activeRun.reasoningContent}
                   reasoningDurationMs={activeRun.reasoningDurationMs}
                 />
@@ -1114,7 +1286,13 @@ function ChatComposer({
   )
 }
 
-function ChatMessageBubble({ message }: { message: StudioMessage }) {
+function ChatMessageBubble({
+  message,
+  onRetry,
+}: {
+  message: StudioMessage
+  onRetry: (message: StudioMessage) => void
+}) {
   if (message.role === "user") {
     return (
       <Message className="justify-end">
@@ -1144,9 +1322,8 @@ function ChatMessageBubble({ message }: { message: StudioMessage }) {
 
   return (
     <AssistantMessage
-      content={message.content}
-      reasoningContent={message.reasoningContent}
-      reasoningDurationMs={message.reasoningDurationMs}
+      message={message}
+      onRetry={onRetry}
     />
   )
 }
@@ -1216,10 +1393,12 @@ function AssistantReasoning({
 
 function StreamingAssistantMessage({
   content,
+  activities,
   reasoningContent,
   reasoningDurationMs,
 }: {
   content: string
+  activities: StudioMessageActivity[]
   reasoningContent: string
   reasoningDurationMs: number | null
 }) {
@@ -1231,6 +1410,7 @@ function StreamingAssistantMessage({
           durationMs={reasoningDurationMs}
           isStreaming={reasoningDurationMs === null}
         />
+        <AssistantActivities activities={activities} />
         {content.trim() ? (
           <MessageContent
             markdown
@@ -1248,18 +1428,202 @@ function StreamingAssistantMessage({
   )
 }
 
-function AssistantMessage({
-  content,
-  reasoningContent,
-  reasoningDurationMs,
+function getWebSearchQuery(input: string) {
+  try {
+    const parsed = JSON.parse(input) as { query?: unknown }
+
+    if (typeof parsed.query === "string" && parsed.query.trim()) {
+      return parsed.query.trim()
+    }
+  } catch {
+    // Fall back to the raw input below.
+  }
+
+  return input.trim()
+}
+
+function AssistantActivities({
+  activities,
 }: {
-  content: string
-  reasoningContent: string
-  reasoningDurationMs: number | null
+  activities: StudioMessageActivity[]
 }) {
+  const { t } = useI18n()
+  const visibleActivities = activities.filter(
+    (activity) => activity.toolName === "web_search"
+  )
+
+  if (visibleActivities.length === 0) {
+    return null
+  }
+
+  return (
+    <ChainOfThought className="my-1">
+      {visibleActivities.map((activity) => (
+        <ChainOfThoughtStep
+          key={`${activity.id}-${activity.status}`}
+          disabled
+        >
+          <ChainOfThoughtTrigger
+            className="cursor-default"
+            leftIcon={
+              activity.status === "complete" ? (
+                <RiCheckLine aria-hidden />
+              ) : (
+                <RiSearchLine aria-hidden />
+              )
+            }
+          >
+            {activity.status === "running" ? (
+              <TextShimmer duration={2}>
+                {t.studioToolSearching(getWebSearchQuery(activity.input))}
+              </TextShimmer>
+            ) : activity.status === "error" ? (
+              t.studioToolError
+            ) : (
+              t.studioToolAnalyzed(getWebSearchQuery(activity.input))
+            )}
+          </ChainOfThoughtTrigger>
+        </ChainOfThoughtStep>
+      ))}
+    </ChainOfThought>
+  )
+}
+
+function getStoredChatModelLabel(model: string | null) {
+  if (!model) {
+    return ""
+  }
+
+  return (
+    CHAT_MODEL_OPTIONS.find((option) => option.value === model)?.label ?? model
+  )
+}
+
+function MessageVersionsDialog({
+  message,
+  open,
+  onOpenChange,
+}: {
+  message: StudioMessage
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  const { t } = useI18n()
+  const [versions, setVersions] = React.useState<StudioMessage[]>([message])
+  const [activeIndex, setActiveIndex] = React.useState(0)
+
+  React.useEffect(() => {
+    if (!open) {
+      return
+    }
+
+    let cancelled = false
+    const versionGroupId = message.versionGroupId ?? message.id
+
+    void listMessageVersions(message.sessionId, versionGroupId)
+      .then((nextVersions) => {
+        if (cancelled) {
+          return
+        }
+
+        const effectiveVersions =
+          nextVersions.length > 0 ? nextVersions : [message]
+        const nextIndex = effectiveVersions.findIndex(
+          (version) => version.id === message.id
+        )
+
+        setVersions(effectiveVersions)
+        setActiveIndex(
+          nextIndex >= 0 ? nextIndex : effectiveVersions.length - 1
+        )
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setVersions([message])
+          setActiveIndex(0)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [message, open])
+
+  const activeVersion = versions[activeIndex] ?? message
+  const modelLabel = getStoredChatModelLabel(activeVersion.model)
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-4xl">
+        <DialogHeader className="items-center">
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="rounded-full"
+              disabled={activeIndex <= 0}
+              onClick={() =>
+                setActiveIndex((current) => Math.max(0, current - 1))
+              }
+            >
+              <RiArrowLeftSLine aria-hidden />
+            </Button>
+            <DialogTitle>
+              {t.studioVersionTitle(activeVersion.versionIndex)}
+            </DialogTitle>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="rounded-full"
+              disabled={activeIndex >= versions.length - 1}
+              onClick={() =>
+                setActiveIndex((current) =>
+                  Math.min(versions.length - 1, current + 1)
+                )
+              }
+            >
+              <RiArrowRightSLine aria-hidden />
+            </Button>
+          </div>
+          {modelLabel ? (
+            <p className="text-xs text-muted-foreground">
+              {t.studioUsedModel(modelLabel)}
+            </p>
+          ) : null}
+        </DialogHeader>
+
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-3">
+          <AssistantReasoning
+            content={activeVersion.reasoningContent}
+            durationMs={activeVersion.reasoningDurationMs}
+          />
+          {activeVersion.content.trim() ? (
+            <MessageContent
+              markdown
+              className={cn("bg-transparent p-0", markdownClassName)}
+            >
+              {activeVersion.content}
+            </MessageContent>
+          ) : null}
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function AssistantMessage({
+  message,
+  onRetry,
+}: {
+  message: StudioMessage
+  onRetry: (message: StudioMessage) => void
+}) {
+  const { t } = useI18n()
   const [liked, setLiked] = React.useState<boolean | null>(null)
   const [copied, setCopied] = React.useState(false)
-  const copyableContent = content || reasoningContent
+  const [versionsOpen, setVersionsOpen] = React.useState(false)
+  const copyableContent = message.content || message.reasoningContent
+  const modelLabel = getStoredChatModelLabel(message.model)
 
   function handleCopy() {
     void navigator.clipboard.writeText(copyableContent)
@@ -1271,19 +1635,58 @@ function AssistantMessage({
     <Message className="justify-start">
       <div className="flex w-full flex-col gap-2">
         <AssistantReasoning
-          content={reasoningContent}
-          durationMs={reasoningDurationMs}
+          content={message.reasoningContent}
+          durationMs={message.reasoningDurationMs}
         />
-        {content.trim() ? (
+        <AssistantActivities activities={message.activities} />
+        {message.content.trim() ? (
           <MessageContent
             markdown
             className={cn("bg-transparent p-0", markdownClassName)}
           >
-            {content}
+            {message.content}
           </MessageContent>
         ) : null}
         <MessageActions className="gap-1.5">
-          <MessageAction tooltip="Copy to clipboard">
+          {message.versionCount > 1 ? (
+            <MessageAction tooltip={t.studioViewVersions}>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 gap-1 rounded-xl px-2"
+                onClick={() => setVersionsOpen(true)}
+              >
+                <span className="text-sm font-medium">
+                  {message.versionCount}
+                </span>
+                <RiRefreshLine className="size-4" aria-hidden />
+              </Button>
+            </MessageAction>
+          ) : null}
+
+          <MessageAction
+            tooltip={
+              <span className="flex flex-col items-center gap-0.5">
+                <span>{t.studioRetry}</span>
+                {modelLabel ? (
+                  <span className="text-[11px] text-background/70">
+                    {t.studioUsedModel(modelLabel)}
+                  </span>
+                ) : null}
+              </span>
+            }
+          >
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="rounded-full"
+              onClick={() => onRetry(message)}
+            >
+              <RiRefreshLine aria-hidden />
+            </Button>
+          </MessageAction>
+
+          <MessageAction tooltip={copied ? t.copied : t.studioCopy}>
             <Button
               variant="ghost"
               size="icon-sm"
@@ -1325,6 +1728,11 @@ function AssistantMessage({
             </Button>
           </MessageAction>
         </MessageActions>
+        <MessageVersionsDialog
+          message={message}
+          open={versionsOpen}
+          onOpenChange={setVersionsOpen}
+        />
       </div>
     </Message>
   )

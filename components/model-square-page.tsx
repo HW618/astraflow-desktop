@@ -79,7 +79,11 @@ type SquareModel = {
   ChineseName?: string
   Manufacturer?: string
   SimpleDescribe?: string
+  SimpleDescribeEn?: string
   Describe?: string
+  DescribeEn?: string
+  Description?: string
+  DescriptionEn?: string
   Language?: string[] | null
   MaxModelLen?: number | string | Array<number | string>
   MaxInputTokens?: number | string | Array<number | string>
@@ -283,8 +287,32 @@ function isHiddenCapability(capability: string) {
   )
 }
 
-function getPrimaryDescription(model: SquareModel, fallback: string) {
-  return model.SimpleDescribe || model.Describe || fallback
+function getPrimaryDescription(
+  model: SquareModel,
+  locale: string,
+  fallback: string
+) {
+  if (locale === "en") {
+    return (
+      model.DescriptionEn ||
+      model.SimpleDescribeEn ||
+      model.DescribeEn ||
+      model.Description ||
+      model.SimpleDescribe ||
+      model.Describe ||
+      fallback
+    )
+  }
+
+  return (
+    model.SimpleDescribe ||
+    model.Describe ||
+    model.Description ||
+    model.DescriptionEn ||
+    model.SimpleDescribeEn ||
+    model.DescribeEn ||
+    fallback
+  )
 }
 
 function modalityLabel(value: string) {
@@ -1010,7 +1038,7 @@ function ModelCard({
   projectId?: string
 }) {
   const { t } = useI18n()
-  const description = getPrimaryDescription(model, t.noModelDescription)
+  const description = getPrimaryDescription(model, locale, t.noModelDescription)
   const contextLength = getModelContextLength(model)
   const inputModalities = model.InputModalities ?? []
   const outputModalities = model.OutputModalities ?? []

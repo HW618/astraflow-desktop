@@ -3,10 +3,10 @@ import { z } from "zod"
 import {
   AIMessage,
   HumanMessage,
-  SystemMessage,
   type BaseMessage,
   type MessageContent,
 } from "@langchain/core/messages"
+import { createAgent } from "langchain"
 
 import { getAppAuthState } from "@/lib/app-auth"
 import {
@@ -15,6 +15,7 @@ import {
   SUPPORTED_CHAT_MODELS,
   SUPPORTED_CHAT_REASONING_EFFORTS,
 } from "@/lib/chat-models"
+import { createStudioAgentTools } from "@/lib/exa-tools"
 import { createModelverseChatModel } from "@/lib/modelverse-langchain"
 import { DEFAULT_SYSTEM_PROMPT } from "@/lib/modelverse-openai"
 import { getStudioSession, listStudioMessages } from "@/lib/studio-db"
@@ -25,21 +26,69 @@ const chatRequestSchema = z.object({
   sessionId: z.string().trim().min(1),
   model: z.enum(SUPPORTED_CHAT_MODELS).default(DEFAULT_CHAT_MODEL),
   reasoningEffort: z.enum(SUPPORTED_CHAT_REASONING_EFFORTS).optional(),
+  retryMessageId: z.string().trim().min(1).optional(),
 })
 
-type ChatStreamEvent = {
-  type: "content" | "reasoning"
-  delta: string
-}
+type ChatStreamEvent =
+  | {
+      type: "content" | "reasoning"
+      delta: string
+    }
+  | {
+      type: "tool_call"
+      toolCallId: string
+      toolName: string
+      input: string
+    }
+  | {
+      type: "tool_result"
+      toolCallId: string
+      toolName: string
+      status: "complete" | "error"
+      output?: string
+      error?: string
+    }
 
 function encodeStreamEvent(encoder: TextEncoder, event: ChatStreamEvent) {
   return encoder.encode(`${JSON.stringify(event)}\n`)
 }
 
-function toLangChainMessages(sessionId: string): BaseMessage[] {
-  const history = listStudioMessages(sessionId)
+function stringifyToolPayload(value: unknown) {
+  if (typeof value === "string") {
+    return value
+  }
 
-  const messages = history.map((message) => {
+  if (value === null || value === undefined) {
+    return ""
+  }
+
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
+function getToolCallId(call: { callId?: unknown }) {
+  if (typeof call.callId === "string") {
+    return call.callId
+  }
+
+  return crypto.randomUUID()
+}
+
+function toLangChainMessages(
+  sessionId: string,
+  retryMessageId?: string
+): BaseMessage[] {
+  const history = listStudioMessages(sessionId)
+  const retryMessageIndex = retryMessageId
+    ? history.findIndex((message) => message.id === retryMessageId)
+    : -1
+  const effectiveHistory =
+    retryMessageIndex >= 0 ? history.slice(0, retryMessageIndex) : history
+
+  const messages = effectiveHistory.map((message) => {
     if (message.role === "user" && message.attachments.length > 0) {
       const parts: MessageContent = []
 
@@ -64,43 +113,17 @@ function toLangChainMessages(sessionId: string): BaseMessage[] {
     return new AIMessage(message.content)
   })
 
-  return [new SystemMessage(DEFAULT_SYSTEM_PROMPT), ...messages]
+  return messages
 }
 
-function extractTextDelta(content: MessageContent) {
-  if (typeof content === "string") {
-    return content
+function getAgentSystemPrompt(hasWebSearch: boolean) {
+  if (!hasWebSearch) {
+    return DEFAULT_SYSTEM_PROMPT
   }
 
-  return content
-    .map((part) =>
-      part.type === "text" && "text" in part && typeof part.text === "string"
-        ? part.text
-        : ""
-    )
-    .join("")
-}
+  return `${DEFAULT_SYSTEM_PROMPT}
 
-function extractReasoningDelta(chunk: BaseMessage) {
-  const providerReasoning = chunk.additional_kwargs.reasoning_content
-
-  if (typeof providerReasoning === "string") {
-    return providerReasoning
-  }
-
-  if (Array.isArray(chunk.content)) {
-    return chunk.content
-      .map((part) =>
-        part.type === "reasoning" &&
-        "reasoning" in part &&
-        typeof part.reasoning === "string"
-          ? part.reasoning
-          : ""
-      )
-      .join("")
-  }
-
-  return ""
+You have access to a web_search tool backed by Exa. Use it when the user asks for web search, latest/current information, source-backed facts, or details that may have changed recently. When using web_search, cite source URLs in the final answer.`
 }
 
 export async function POST(request: Request) {
@@ -137,8 +160,24 @@ export async function POST(request: Request) {
       parsed.data.reasoningEffort
     )
     const model = createModelverseChatModel(parsed.data.model, reasoningEffort)
-    const stream = await model.stream(
-      toLangChainMessages(parsed.data.sessionId)
+    const tools = createStudioAgentTools()
+    const agent = createAgent({
+      model,
+      tools,
+      systemPrompt: getAgentSystemPrompt(tools.length > 0),
+    })
+    const run = await agent.streamEvents(
+      {
+        messages: toLangChainMessages(
+          parsed.data.sessionId,
+          parsed.data.retryMessageId
+        ),
+      },
+      {
+        version: "v3",
+        signal: request.signal,
+        recursionLimit: tools.length > 0 ? 8 : 2,
+      }
     )
 
     const encoder = new TextEncoder()
@@ -147,28 +186,74 @@ export async function POST(request: Request) {
       new ReadableStream({
         async start(controller) {
           try {
-            for await (const chunk of stream) {
-              const reasoningContent = extractReasoningDelta(chunk)
-              const content = extractTextDelta(chunk.content)
-
-              if (reasoningContent) {
-                controller.enqueue(
-                  encodeStreamEvent(encoder, {
-                    type: "reasoning",
-                    delta: reasoningContent,
-                  })
-                )
-              }
-
-              if (content) {
-                controller.enqueue(
-                  encodeStreamEvent(encoder, {
-                    type: "content",
-                    delta: content,
-                  })
-                )
-              }
+            const enqueue = (event: ChatStreamEvent) => {
+              controller.enqueue(encodeStreamEvent(encoder, event))
             }
+
+            const messagesTask = (async () => {
+              for await (const message of run.messages) {
+                for await (const event of message) {
+                  if (event.event !== "content-block-delta") {
+                    continue
+                  }
+
+                  if (event.delta.type === "reasoning-delta") {
+                    enqueue({
+                      type: "reasoning",
+                      delta: event.delta.reasoning,
+                    })
+                  }
+
+                  if (event.delta.type === "text-delta") {
+                    enqueue({
+                      type: "content",
+                      delta: event.delta.text,
+                    })
+                  }
+                }
+              }
+            })()
+
+            const toolCallsTask = (async () => {
+              for await (const call of run.toolCalls) {
+                if (call.name !== "web_search") {
+                  continue
+                }
+
+                const toolCallId = getToolCallId(call)
+
+                enqueue({
+                  type: "tool_call",
+                  toolCallId,
+                  toolName: call.name,
+                  input: stringifyToolPayload(call.input),
+                })
+
+                const status = await call.status
+
+                if (status === "finished") {
+                  enqueue({
+                    type: "tool_result",
+                    toolCallId,
+                    toolName: call.name,
+                    status: "complete",
+                    output: stringifyToolPayload(await call.output),
+                  })
+                } else if (status === "error") {
+                  enqueue({
+                    type: "tool_result",
+                    toolCallId,
+                    toolName: call.name,
+                    status: "error",
+                    error: stringifyToolPayload(await call.error),
+                  })
+                }
+              }
+            })()
+
+            await Promise.all([messagesTask, toolCallsTask])
+
+            await run.output
           } catch (error) {
             controller.error(error)
             return

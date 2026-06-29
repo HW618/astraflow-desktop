@@ -47,7 +47,11 @@ type SquareModel = {
   ChineseName?: string
   Manufacturer?: string
   SimpleDescribe?: string
+  SimpleDescribeEn?: string
   Describe?: string
+  DescribeEn?: string
+  Description?: string
+  DescriptionEn?: string
   Language?: string[] | null
   MaxModelLen?: number | string | Array<number | string>
   MaxInputTokens?: number | string | Array<number | string>
@@ -176,7 +180,11 @@ function searchableText(model: SquareModel) {
     model.Manufacturer,
     model.ModelType,
     model.SimpleDescribe,
+    model.SimpleDescribeEn,
     model.Describe,
+    model.DescribeEn,
+    model.Description,
+    model.DescriptionEn,
     ...(model.ModalTypes ?? []),
     ...(model.SupportedCapabilities ?? []),
     ...(model.InputModalities ?? []),
