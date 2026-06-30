@@ -2,12 +2,13 @@ import { Sandbox } from "@e2b/code-interpreter"
 import { posix } from "node:path"
 
 import {
-  E2B_CODE_INTERPRETER_TEMPLATE,
-  E2B_DEFAULT_AUTO_PAUSE_TIMEOUT_SECONDS,
-  E2B_DEFAULT_DOMAIN,
-  E2B_REQUEST_TIMEOUT_MS,
-  getE2BConnectionOptions,
-} from "@/lib/e2b-code-interpreter"
+  ASTRAFLOW_SANDBOX_TEMPLATE,
+  ASTRAFLOW_SANDBOX_DEFAULT_AUTO_PAUSE_TIMEOUT_SECONDS,
+  ASTRAFLOW_SANDBOX_DEFAULT_DOMAIN,
+  ASTRAFLOW_SANDBOX_REQUEST_TIMEOUT_MS,
+  getAstraFlowSandboxConnectionOptions,
+  readAstraFlowSandboxEnv,
+} from "@/lib/astraflow-sandbox-runtime"
 import {
   getStudioSessionSandbox,
   listStudioMessages,
@@ -36,10 +37,12 @@ export type SessionSandboxContext = {
 }
 
 function getAutoPauseTimeoutSeconds() {
-  const value = Number(process.env.E2B_SESSION_AUTO_PAUSE_TIMEOUT_SECONDS)
+  const value = Number(
+    readAstraFlowSandboxEnv("sessionAutoPauseTimeoutSeconds")
+  )
 
   if (!Number.isFinite(value)) {
-    return E2B_DEFAULT_AUTO_PAUSE_TIMEOUT_SECONDS
+    return ASTRAFLOW_SANDBOX_DEFAULT_AUTO_PAUSE_TIMEOUT_SECONDS
   }
 
   return Math.min(Math.max(Math.trunc(value), 60), 3_600)
@@ -50,7 +53,7 @@ function getAutoPauseTimeoutMs() {
 }
 
 function createConnectionOptions(apiKey: string) {
-  return getE2BConnectionOptions(apiKey)
+  return getAstraFlowSandboxConnectionOptions(apiKey)
 }
 
 function createSandboxOptions(apiKey: string, sessionId: string) {
@@ -163,15 +166,16 @@ function updateAttachmentSandboxPath(
 
 async function createFreshSandbox(apiKey: string, sessionId: string) {
   const sandbox = await Sandbox.create(
-    E2B_CODE_INTERPRETER_TEMPLATE,
+    ASTRAFLOW_SANDBOX_TEMPLATE,
     createSandboxOptions(apiKey, sessionId)
   )
 
   upsertStudioSessionSandbox({
     sessionId,
     sandboxId: sandbox.sandboxId,
-    sandboxDomain: process.env.E2B_DOMAIN?.trim() || E2B_DEFAULT_DOMAIN,
-    template: E2B_CODE_INTERPRETER_TEMPLATE,
+    sandboxDomain:
+      readAstraFlowSandboxEnv("domain") ?? ASTRAFLOW_SANDBOX_DEFAULT_DOMAIN,
+    template: ASTRAFLOW_SANDBOX_TEMPLATE,
     status: "running",
     autoPauseTimeoutSeconds: getAutoPauseTimeoutSeconds(),
   })
@@ -195,7 +199,7 @@ export async function getOrCreateSessionSandbox({
         createConnectOptions(apiKey)
       )
       await sandbox.setTimeout(getAutoPauseTimeoutMs(), {
-        requestTimeoutMs: E2B_REQUEST_TIMEOUT_MS,
+        requestTimeoutMs: ASTRAFLOW_SANDBOX_REQUEST_TIMEOUT_MS,
       })
       touchStudioSessionSandbox(sessionId, "running")
 
@@ -228,7 +232,7 @@ async function uploadFileToSandbox({
   const buffer = readStudioFile(file.storagePath)
 
   await sandbox.files.write(sandboxPath, bufferToArrayBuffer(buffer), {
-    requestTimeoutMs: E2B_REQUEST_TIMEOUT_MS,
+    requestTimeoutMs: ASTRAFLOW_SANDBOX_REQUEST_TIMEOUT_MS,
   })
   updateStudioSessionFileSandboxPath(file.id, sandboxPath)
   updateAttachmentSandboxPath(sessionId, file.id, sandboxPath)
@@ -279,7 +283,7 @@ export function createAvailableSessionFilesManifest(sessionId: string) {
   }
 
   return [
-    "Session files available for on-demand upload to the code interpreter sandbox:",
+    "Session files available for on-demand upload to AstraFlow Sandbox:",
     ...files.map((file) =>
       [
         `- ${file.originalName}`,
@@ -291,7 +295,7 @@ export function createAvailableSessionFilesManifest(sessionId: string) {
         .filter(Boolean)
         .join(" | ")
     ),
-    "Before analyzing one of these files in run_code, call upload_file with its file_id to get a valid sandbox path.",
+    "Before analyzing one of these files in run_code, call upload_file with its file_id to get a valid AstraFlow Sandbox path.",
   ].join("\n")
 }
 
@@ -312,7 +316,8 @@ export async function uploadSessionFileToSandbox({
     throw new Error("Session file not found or file name is ambiguous.")
   }
 
-  const previousSandboxId = getStudioSessionSandbox(sessionId)?.sandboxId ?? null
+  const previousSandboxId =
+    getStudioSessionSandbox(sessionId)?.sandboxId ?? null
   const sandbox = await getOrCreateSessionSandbox({ sessionId, apiKey })
   const force = previousSandboxId !== sandbox.sandboxId
   const uploaded = await uploadFileToSandbox({

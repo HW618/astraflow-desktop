@@ -73,6 +73,19 @@ export type StudioMessage = {
   createdAt: string
 }
 
+export type StudioChatRunStatus =
+  "queued" | "running" | "complete" | "error" | "cancelled"
+
+export type StudioChatRunSnapshot = {
+  runId: string
+  sessionId: string
+  assistantMessageId: string
+  status: StudioChatRunStatus
+  error: string | null
+  startedAt: string
+  updatedAt: string
+}
+
 export type StudioOAuthStatus = {
   configured: boolean
   email: string | null
@@ -129,10 +142,7 @@ export type StudioImageAdapter =
   | "async-task"
 
 export type StudioImageDisabledReason =
-  | "missing-openapi"
-  | "alias-unverified"
-  | "follow-up-only"
-  | "edit-only"
+  "missing-openapi" | "alias-unverified" | "follow-up-only" | "edit-only"
 
 export type StudioImageFieldKind =
   | "prompt"
@@ -205,11 +215,7 @@ export type StudioImageModelOption = {
 }
 
 export type StudioImageStatus =
-  | "queued"
-  | "running"
-  | "complete"
-  | "partial"
-  | "error"
+  "queued" | "running" | "complete" | "partial" | "error"
 
 export type StudioImageOutput = {
   id: string

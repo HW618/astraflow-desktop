@@ -44,9 +44,15 @@ type OAuthFlowRecord = {
   redirectUri: string
   port: number
   message: string | null
-  server: Server
+  server: Server | null
   timeout: ReturnType<typeof setTimeout> | null
   cleanupTimer: ReturnType<typeof setTimeout> | null
+}
+
+type OAuthCallbackResult = {
+  status: number
+  title: string
+  description: string
 }
 
 declare global {
@@ -63,17 +69,8 @@ function getOAuthFlows() {
   return globalThis.astraflowOAuthFlows
 }
 
-function sendHtml(
-  res: ServerResponse,
-  status: number,
-  title: string,
-  description: string
-) {
-  res.writeHead(status, {
-    "Content-Type": "text/html; charset=utf-8",
-    "Cache-Control": "no-store",
-  })
-  res.end(`<!doctype html>
+function renderHtml(title: string, description: string) {
+  return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -114,7 +111,20 @@ function sendHtml(
       <p>${description}</p>
     </main>
   </body>
-</html>`)
+</html>`
+}
+
+function sendHtml(
+  res: ServerResponse,
+  status: number,
+  title: string,
+  description: string
+) {
+  res.writeHead(status, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "no-store",
+  })
+  res.end(renderHtml(title, description))
 }
 
 function generateOAuthState() {
@@ -252,7 +262,7 @@ function applyOAuthTokenResponse(
   return getStudioOAuthTokens()
 }
 
-function closeFlow(flow: OAuthFlowRecord) {
+function finishFlow(flow: OAuthFlowRecord) {
   if (flow.timeout) {
     clearTimeout(flow.timeout)
     flow.timeout = null
@@ -262,7 +272,11 @@ function closeFlow(flow: OAuthFlowRecord) {
     clearTimeout(flow.cleanupTimer)
   }
 
-  flow.server.close()
+  if (flow.server) {
+    flow.server.close()
+    flow.server = null
+  }
+
   flow.cleanupTimer = setTimeout(() => {
     getOAuthFlows().delete(flow.state)
   }, FLOW_RETENTION_MS)
@@ -285,10 +299,104 @@ export function getUCloudOAuthFlowSnapshot(state: string) {
   return flow ? getFlowSnapshot(flow) : null
 }
 
-export async function startUCloudOAuthFlow() {
-  const state = generateOAuthState()
-  let flow: OAuthFlowRecord | null = null
+function getCompletedCallbackResult(
+  flow: OAuthFlowRecord
+): OAuthCallbackResult {
+  const isComplete = flow.status === "complete"
 
+  return {
+    status: isComplete ? 200 : 400,
+    title: isComplete ? "Login successful" : "Authorization failed",
+    description:
+      flow.message ??
+      (isComplete
+        ? "UCloud login succeeded. You can close this tab now."
+        : "UCloud authorization failed. Start the login flow again."),
+  }
+}
+
+async function completeFlowFromCallback(
+  flow: OAuthFlowRecord,
+  requestUrl: URL
+): Promise<OAuthCallbackResult> {
+  if (flow.status !== "pending") {
+    return getCompletedCallbackResult(flow)
+  }
+
+  const callbackState = requestUrl.searchParams.get("state")?.trim() ?? ""
+  const callbackError = requestUrl.searchParams.get("error")?.trim() ?? ""
+  const callbackDescription =
+    requestUrl.searchParams.get("error_description")?.trim() ?? ""
+  const code = requestUrl.searchParams.get("code")?.trim() ?? ""
+
+  if (callbackError) {
+    flow.status = "error"
+    flow.message = normalizeOAuthError(callbackError, callbackDescription)
+    finishFlow(flow)
+    return {
+      status: 400,
+      title: "Authorization failed",
+      description: flow.message,
+    }
+  }
+
+  if (!callbackState || callbackState !== flow.state) {
+    return {
+      status: 400,
+      title: "State mismatch",
+      description:
+        "This callback does not match the active AstraFlow authorization request.",
+    }
+  }
+
+  if (!code) {
+    return {
+      status: 400,
+      title: "Missing code",
+      description:
+        "UCloud did not return an authorization code. Start the login flow again.",
+    }
+  }
+
+  try {
+    const payload = await exchangeOAuthCode(code, flow.redirectUri)
+    const savedTokens = applyOAuthTokenResponse(getStudioOAuthTokens(), payload)
+
+    flow.status = "complete"
+    flow.message = savedTokens?.email
+      ? `Connected as ${savedTokens.email}. You can close this tab now.`
+      : "UCloud login succeeded. You can close this tab now."
+    finishFlow(flow)
+
+    return { status: 200, title: "Login successful", description: flow.message }
+  } catch (error) {
+    flow.status = "error"
+    flow.message =
+      error instanceof Error ? error.message : "UCloud login failed."
+    finishFlow(flow)
+
+    return { status: 500, title: "Login failed", description: flow.message }
+  }
+}
+
+function registerOAuthFlow(flow: OAuthFlowRecord) {
+  flow.timeout = setTimeout(() => {
+    if (flow.status !== "pending") {
+      return
+    }
+
+    flow.status = "error"
+    flow.message = "Authorization timed out. Start the UCloud login flow again."
+    finishFlow(flow)
+  }, OAUTH_TIMEOUT_MS)
+
+  getOAuthFlows().set(flow.state, flow)
+
+  return getFlowSnapshot(flow)
+}
+
+async function startLoopbackOAuthFlow(state: string) {
+  let flow: OAuthFlowRecord | null = null
   const server = createServer(async (req, res) => {
     if (!flow) {
       sendHtml(
@@ -315,61 +423,9 @@ export async function startUCloudOAuthFlow() {
       return
     }
 
-    const callbackState = requestUrl.searchParams.get("state")?.trim() ?? ""
-    const callbackError = requestUrl.searchParams.get("error")?.trim() ?? ""
-    const callbackDescription =
-      requestUrl.searchParams.get("error_description")?.trim() ?? ""
-    const code = requestUrl.searchParams.get("code")?.trim() ?? ""
+    const result = await completeFlowFromCallback(flow, requestUrl)
 
-    if (callbackError) {
-      flow.status = "error"
-      flow.message = normalizeOAuthError(callbackError, callbackDescription)
-      closeFlow(flow)
-      sendHtml(res, 400, "Authorization failed", flow.message)
-      return
-    }
-
-    if (!callbackState || callbackState !== flow.state) {
-      sendHtml(
-        res,
-        400,
-        "State mismatch",
-        "This callback does not match the active AstraFlow authorization request."
-      )
-      return
-    }
-
-    if (!code) {
-      sendHtml(
-        res,
-        400,
-        "Missing code",
-        "UCloud did not return an authorization code. Start the login flow again."
-      )
-      return
-    }
-
-    try {
-      const payload = await exchangeOAuthCode(code, flow.redirectUri)
-      const savedTokens = applyOAuthTokenResponse(
-        getStudioOAuthTokens(),
-        payload
-      )
-
-      flow.status = "complete"
-      flow.message = savedTokens?.email
-        ? `Connected as ${savedTokens.email}. You can close this tab now.`
-        : "UCloud login succeeded. You can close this tab now."
-      closeFlow(flow)
-
-      sendHtml(res, 200, "Login successful", flow.message)
-    } catch (error) {
-      flow.status = "error"
-      flow.message =
-        error instanceof Error ? error.message : "UCloud login failed."
-      closeFlow(flow)
-      sendHtml(res, 500, "Login failed", flow.message)
-    }
+    sendHtml(res, result.status, result.title, result.description)
   })
 
   await new Promise<void>((resolve, reject) => {
@@ -402,19 +458,50 @@ export async function startUCloudOAuthFlow() {
     cleanupTimer: null,
   }
 
-  flow.timeout = setTimeout(() => {
-    if (!flow || flow.status !== "pending") {
-      return
-    }
+  return registerOAuthFlow(flow)
+}
 
-    flow.status = "error"
-    flow.message = "Authorization timed out. Start the UCloud login flow again."
-    closeFlow(flow)
-  }, OAUTH_TIMEOUT_MS)
+export async function startUCloudOAuthFlow() {
+  return startLoopbackOAuthFlow(generateOAuthState())
+}
 
-  getOAuthFlows().set(state, flow)
+export async function completeUCloudOAuthFlowFromCallbackUrl(
+  callbackUrl: string
+) {
+  let requestUrl: URL
 
-  return getFlowSnapshot(flow)
+  try {
+    requestUrl = new URL(callbackUrl.trim())
+  } catch {
+    throw new Error("Paste the full browser callback URL.")
+  }
+
+  if (
+    requestUrl.origin === UCLOUD_OAUTH_BASE_URL &&
+    requestUrl.pathname === UCLOUD_OAUTH_AUTHORIZE_PATH
+  ) {
+    throw new Error(
+      "Paste the URL after UCloud redirects back to localhost, not the oauth2.ucloud.cn authorize URL."
+    )
+  }
+
+  const callbackState = requestUrl.searchParams.get("state")?.trim() ?? ""
+  const flow = callbackState ? getOAuthFlows().get(callbackState) : null
+
+  if (!flow) {
+    throw new Error(
+      "This authorization request is no longer active. Start the UCloud login flow again."
+    )
+  }
+
+  const result = await completeFlowFromCallback(flow, requestUrl)
+
+  return {
+    flow: getFlowSnapshot(flow),
+    message: result.description,
+    ok: result.status < 400,
+    status: result.status,
+  }
 }
 
 export async function ensureValidStudioOAuthTokens() {

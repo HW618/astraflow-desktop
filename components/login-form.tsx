@@ -11,6 +11,7 @@ import {
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
 import { Separator } from "@/components/ui/separator"
 import { navigateOAuthPopup, openOAuthPopupShell } from "@/lib/oauth-popup"
 
@@ -47,6 +48,20 @@ type OAuthStartResponse =
   | {
       ok: true
       data: OAuthFlowSnapshot
+    }
+  | {
+      ok: false
+      message?: string
+    }
+
+type OAuthCompleteResponse =
+  | {
+      ok: true
+      data: {
+        auth: OAuthStatus
+        flow: OAuthFlowSnapshot
+        message: string
+      }
     }
   | {
       ok: false
@@ -123,6 +138,23 @@ async function startOAuthFlow() {
   return payload.data
 }
 
+async function completeOAuthFlow(callbackUrl: string) {
+  const response = await fetch("/api/studio/oauth/complete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ callbackUrl }),
+  })
+  const payload = (await response.json()) as OAuthCompleteResponse
+
+  if (!response.ok || !payload.ok) {
+    throw new Error(
+      (!payload.ok && payload.message) || "Failed to complete UCloud login."
+    )
+  }
+
+  return payload.data
+}
+
 async function fetchModelverseApiKeys() {
   const response = await fetch("/api/studio/modelverse-api-keys")
   const payload = (await response.json()) as ModelverseApiKeysResponse
@@ -169,6 +201,8 @@ function LoginForm() {
   >("idle")
   const [message, setMessage] = React.useState("")
   const [error, setError] = React.useState("")
+  const [callbackUrl, setCallbackUrl] = React.useState("")
+  const [callbackSubmitting, setCallbackSubmitting] = React.useState(false)
 
   const finalizeLogin = React.useCallback(async () => {
     if (finalizeStartedRef.current) {
@@ -262,6 +296,7 @@ function LoginForm() {
     try {
       setPhase("starting")
       setError("")
+      setCallbackUrl("")
       setMessage("Opening the UCloud authorization page...")
 
       const popup = openOAuthPopupShell()
@@ -282,8 +317,39 @@ function LoginForm() {
     }
   }
 
-  const isBusy = phase !== "idle"
+  async function handleCompleteFromCallback() {
+    try {
+      setCallbackSubmitting(true)
+      setError("")
+      setMessage("Completing UCloud login...")
+
+      const next = await completeOAuthFlow(callbackUrl)
+
+      setAuth(next.auth)
+      setFlow(next.flow)
+      setCallbackUrl("")
+      setMessage(next.message)
+
+      await finalizeLogin()
+    } catch (nextError) {
+      setPhase("waiting")
+      setError(
+        nextError instanceof Error
+          ? nextError.message
+          : "Failed to complete UCloud login."
+      )
+    } finally {
+      setCallbackSubmitting(false)
+    }
+  }
+
+  const isBusy =
+    phase === "starting" ||
+    phase === "syncing" ||
+    phase === "done" ||
+    callbackSubmitting
   const expiryText = formatExpiry(auth.expiresAt)
+  const canPasteCallback = flow?.status === "pending"
 
   return (
     <div className="flex flex-col gap-6">
@@ -316,7 +382,11 @@ function LoginForm() {
             ) : (
               <RiArrowRightLine data-icon="inline-start" />
             )}
-            <span>Continue with UCloud</span>
+            <span>
+              {phase === "waiting"
+                ? "Restart UCloud login"
+                : "Continue with UCloud"}
+            </span>
           </Button>
 
           <Separator />
@@ -326,18 +396,52 @@ function LoginForm() {
               <p className="text-foreground">Signed in as {auth.email}</p>
             ) : null}
             {expiryText ? <p>Session expires {expiryText}</p> : null}
-            {flow ? <p>Loopback callback: {flow.redirectUri}</p> : null}
+            {flow ? <p>OAuth callback: {flow.redirectUri}</p> : null}
             {message ? <p>{message}</p> : null}
             {error ? <p className="text-destructive">{error}</p> : null}
           </div>
 
           {flow?.authorizationUrl && phase === "waiting" ? (
-            <Button variant="outline" className="w-full rounded-2xl" asChild>
-              <a href={flow.authorizationUrl} target="_blank" rel="noreferrer">
-                <RiExternalLinkLine data-icon="inline-start" />
-                <span>Open UCloud login again</span>
-              </a>
-            </Button>
+            <div className="flex flex-col gap-3">
+              <Button variant="outline" className="w-full rounded-2xl" asChild>
+                <a
+                  href={flow.authorizationUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <RiExternalLinkLine data-icon="inline-start" />
+                  <span>Open UCloud login again</span>
+                </a>
+              </Button>
+
+              {canPasteCallback ? (
+                <div className="flex flex-col gap-2">
+                  <Input
+                    value={callbackUrl}
+                    onChange={(event) => setCallbackUrl(event.target.value)}
+                    placeholder="Paste the localhost callback URL"
+                    disabled={callbackSubmitting}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full rounded-2xl"
+                    onClick={handleCompleteFromCallback}
+                    disabled={callbackSubmitting || !callbackUrl.trim()}
+                  >
+                    {callbackSubmitting ? (
+                      <RiLoader4Line
+                        data-icon="inline-start"
+                        className="animate-spin"
+                      />
+                    ) : (
+                      <RiArrowRightLine data-icon="inline-start" />
+                    )}
+                    <span>Complete with callback URL</span>
+                  </Button>
+                </div>
+              ) : null}
+            </div>
           ) : null}
         </CardContent>
       </Card>

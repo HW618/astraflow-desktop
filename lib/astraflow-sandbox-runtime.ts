@@ -7,15 +7,30 @@ import {
   type SandboxOpts,
 } from "@e2b/code-interpreter"
 
-export const E2B_CODE_INTERPRETER_TEMPLATE = "code-interpreter-v1"
-export const E2B_DEFAULT_DOMAIN = "cn-wlcb.sandbox.ucloudai.com"
-export const E2B_REQUEST_TIMEOUT_MS = 30_000
-export const E2B_DEFAULT_RUN_TIMEOUT_SECONDS = 60
-export const E2B_DEFAULT_AUTO_PAUSE_TIMEOUT_SECONDS = 300
-const E2B_MAX_OUTPUT_CHARS = 18_000
-const E2B_MAX_SECTION_CHARS = 8_000
+export const ASTRAFLOW_SANDBOX_TEMPLATE = "code-interpreter-v1"
+export const ASTRAFLOW_SANDBOX_DEFAULT_DOMAIN = "cn-wlcb.sandbox.ucloudai.com"
+export const ASTRAFLOW_SANDBOX_REQUEST_TIMEOUT_MS = 30_000
+export const ASTRAFLOW_SANDBOX_DEFAULT_RUN_TIMEOUT_SECONDS = 60
+export const ASTRAFLOW_SANDBOX_DEFAULT_AUTO_PAUSE_TIMEOUT_SECONDS = 300
+const ASTRAFLOW_SANDBOX_MAX_OUTPUT_CHARS = 18_000
+const ASTRAFLOW_SANDBOX_MAX_SECTION_CHARS = 8_000
 
-export const E2B_CODE_INTERPRETER_LANGUAGES = [
+export const ASTRAFLOW_SANDBOX_ENV = {
+  domain: "ASTRAFLOW_SANDBOX_DOMAIN",
+  apiUrl: "ASTRAFLOW_SANDBOX_API_URL",
+  sandboxUrl: "ASTRAFLOW_SANDBOX_URL",
+  sessionAutoPauseTimeoutSeconds:
+    "ASTRAFLOW_SANDBOX_SESSION_AUTO_PAUSE_TIMEOUT_SECONDS",
+} as const
+
+const LEGACY_SANDBOX_ENV: Record<keyof typeof ASTRAFLOW_SANDBOX_ENV, string> = {
+  domain: "E2B_DOMAIN",
+  apiUrl: "E2B_API_URL",
+  sandboxUrl: "E2B_SANDBOX_URL",
+  sessionAutoPauseTimeoutSeconds: "E2B_SESSION_AUTO_PAUSE_TIMEOUT_SECONDS",
+}
+
+export const ASTRAFLOW_SANDBOX_CODE_LANGUAGES = [
   "python",
   "javascript",
   "typescript",
@@ -24,20 +39,20 @@ export const E2B_CODE_INTERPRETER_LANGUAGES = [
   "java",
 ] as const
 
-export type E2BCodeInterpreterLanguage =
-  (typeof E2B_CODE_INTERPRETER_LANGUAGES)[number]
+export type AstraFlowSandboxCodeLanguage =
+  (typeof ASTRAFLOW_SANDBOX_CODE_LANGUAGES)[number]
 
-export type RunE2BCodeInput = {
+export type RunAstraFlowSandboxCodeInput = {
   apiKey: string
   code: string
-  language: E2BCodeInterpreterLanguage
+  language: AstraFlowSandboxCodeLanguage
   autoPause: boolean
   sandboxId?: string
   timeoutSeconds?: number
   autoPauseTimeoutSeconds?: number
 }
 
-export type RunE2BCommandInput = {
+export type RunAstraFlowSandboxCommandInput = {
   sandbox: Sandbox
   command: string
   cwd?: string
@@ -47,7 +62,7 @@ export type RunE2BCommandInput = {
   cleanupLine: string
 }
 
-export type E2BConnectionOptions = Pick<
+export type AstraFlowSandboxConnectionOptions = Pick<
   SandboxOpts,
   | "apiKey"
   | "validateApiKey"
@@ -76,15 +91,30 @@ function normalizeUrl(value: string | undefined) {
   return trimmed || undefined
 }
 
-export function getE2BConnectionOptions(apiKey: string): E2BConnectionOptions {
-  const options: E2BConnectionOptions = {
+export function readAstraFlowSandboxEnv(
+  name: keyof typeof ASTRAFLOW_SANDBOX_ENV
+) {
+  const value =
+    process.env[ASTRAFLOW_SANDBOX_ENV[name]] ??
+    process.env[LEGACY_SANDBOX_ENV[name]]
+  const trimmed = value?.trim()
+
+  return trimmed || undefined
+}
+
+export function getAstraFlowSandboxConnectionOptions(
+  apiKey: string
+): AstraFlowSandboxConnectionOptions {
+  const options: AstraFlowSandboxConnectionOptions = {
     apiKey,
     validateApiKey: false,
-    requestTimeoutMs: E2B_REQUEST_TIMEOUT_MS,
+    requestTimeoutMs: ASTRAFLOW_SANDBOX_REQUEST_TIMEOUT_MS,
   }
-  const domain = normalizeDomain(process.env.E2B_DOMAIN ?? E2B_DEFAULT_DOMAIN)
-  const apiUrl = normalizeUrl(process.env.E2B_API_URL)
-  const sandboxUrl = normalizeUrl(process.env.E2B_SANDBOX_URL)
+  const domain = normalizeDomain(
+    readAstraFlowSandboxEnv("domain") ?? ASTRAFLOW_SANDBOX_DEFAULT_DOMAIN
+  )
+  const apiUrl = normalizeUrl(readAstraFlowSandboxEnv("apiUrl"))
+  const sandboxUrl = normalizeUrl(readAstraFlowSandboxEnv("sandboxUrl"))
 
   if (domain) {
     options.domain = domain
@@ -114,7 +144,7 @@ function clampSeconds(
   return Math.min(Math.max(Math.trunc(value), min), max)
 }
 
-export function clampE2BSeconds(
+export function clampAstraFlowSandboxSeconds(
   value: number | undefined,
   fallback: number,
   min: number,
@@ -123,7 +153,10 @@ export function clampE2BSeconds(
   return clampSeconds(value, fallback, min, max)
 }
 
-function truncateText(text: string, maxChars = E2B_MAX_SECTION_CHARS) {
+function truncateText(
+  text: string,
+  maxChars = ASTRAFLOW_SANDBOX_MAX_SECTION_CHARS
+) {
   if (text.length <= maxChars) {
     return text
   }
@@ -176,14 +209,14 @@ function formatExecution({
   cleanupLine,
 }: {
   execution: Execution
-  language: E2BCodeInterpreterLanguage
+  language: AstraFlowSandboxCodeLanguage
   sandboxId: string
   lifecycleLine: string
   cleanupLine: string
 }) {
   const sections = [
-    "Code interpreter execution complete.",
-    `Template: ${E2B_CODE_INTERPRETER_TEMPLATE}`,
+    "AstraFlow Sandbox code execution complete.",
+    `Runtime template: ${ASTRAFLOW_SANDBOX_TEMPLATE}`,
     `Sandbox ID: ${sandboxId}`,
     `Language: ${language}`,
     lifecycleLine,
@@ -218,7 +251,7 @@ function formatExecution({
     )
   }
 
-  return truncateText(sections.join("\n\n"), E2B_MAX_OUTPUT_CHARS)
+  return truncateText(sections.join("\n\n"), ASTRAFLOW_SANDBOX_MAX_OUTPUT_CHARS)
 }
 
 function normalizeCommandResult(error: unknown): CommandResult | null {
@@ -250,8 +283,8 @@ function formatCommandExecution({
   cleanupLine: string
 }) {
   const sections = [
-    "Shell command execution complete.",
-    `Template: ${E2B_CODE_INTERPRETER_TEMPLATE}`,
+    "AstraFlow Sandbox shell command complete.",
+    `Runtime template: ${ASTRAFLOW_SANDBOX_TEMPLATE}`,
     `Sandbox ID: ${sandboxId}`,
     `Command: ${command}`,
     cwd ? `Working directory: ${cwd}` : "Working directory: sandbox default",
@@ -274,10 +307,10 @@ function formatCommandExecution({
     sections.push(`ERROR:\n${truncateText(result.error)}`)
   }
 
-  return truncateText(sections.join("\n\n"), E2B_MAX_OUTPUT_CHARS)
+  return truncateText(sections.join("\n\n"), ASTRAFLOW_SANDBOX_MAX_OUTPUT_CHARS)
 }
 
-export async function runE2BCode({
+export async function runAstraFlowSandboxCode({
   apiKey,
   code,
   language,
@@ -285,23 +318,23 @@ export async function runE2BCode({
   sandboxId,
   timeoutSeconds,
   autoPauseTimeoutSeconds,
-}: RunE2BCodeInput) {
+}: RunAstraFlowSandboxCodeInput) {
   const runTimeoutSeconds = clampSeconds(
     timeoutSeconds,
-    E2B_DEFAULT_RUN_TIMEOUT_SECONDS,
+    ASTRAFLOW_SANDBOX_DEFAULT_RUN_TIMEOUT_SECONDS,
     1,
     300
   )
   const autoPauseSeconds = clampSeconds(
     autoPauseTimeoutSeconds,
-    E2B_DEFAULT_AUTO_PAUSE_TIMEOUT_SECONDS,
+    ASTRAFLOW_SANDBOX_DEFAULT_AUTO_PAUSE_TIMEOUT_SECONDS,
     60,
     3_600
   )
   const runTimeoutMs = runTimeoutSeconds * 1000
   const autoPauseTimeoutMs = autoPauseSeconds * 1000
   const oneShotTimeoutMs = Math.max(runTimeoutMs + 30_000, 60_000)
-  const connectionOptions = getE2BConnectionOptions(apiKey)
+  const connectionOptions = getAstraFlowSandboxConnectionOptions(apiKey)
   let sandbox: Sandbox | null = null
   let killed = false
 
@@ -311,7 +344,7 @@ export async function runE2BCode({
           ...connectionOptions,
           timeoutMs: autoPause ? autoPauseTimeoutMs : oneShotTimeoutMs,
         })
-      : await Sandbox.create(E2B_CODE_INTERPRETER_TEMPLATE, {
+      : await Sandbox.create(ASTRAFLOW_SANDBOX_TEMPLATE, {
           ...connectionOptions,
           timeoutMs: autoPause ? autoPauseTimeoutMs : oneShotTimeoutMs,
           lifecycle: autoPause
@@ -328,48 +361,49 @@ export async function runE2BCode({
 
     if (autoPause && sandboxId) {
       await sandbox.setTimeout(autoPauseTimeoutMs, {
-        requestTimeoutMs: E2B_REQUEST_TIMEOUT_MS,
+        requestTimeoutMs: ASTRAFLOW_SANDBOX_REQUEST_TIMEOUT_MS,
       })
     }
 
     const execution = await sandbox.runCode(code, {
       language: language as RunCodeLanguage,
       timeoutMs: runTimeoutMs,
-      requestTimeoutMs: Math.max(runTimeoutMs + 10_000, E2B_REQUEST_TIMEOUT_MS),
+      requestTimeoutMs: Math.max(
+        runTimeoutMs + 10_000,
+        ASTRAFLOW_SANDBOX_REQUEST_TIMEOUT_MS
+      ),
     })
 
     let cleanupLine = autoPause
-      ? `Lifecycle: auto-pause enabled; sandbox will pause after ${autoPauseSeconds}s of timeout and can auto-resume on traffic with memory and filesystem preserved.`
+      ? `Lifecycle: auto-pause enabled; AstraFlow Sandbox will pause after ${autoPauseSeconds}s of timeout and can auto-resume on traffic with memory and filesystem preserved.`
       : "Lifecycle: one-shot execution."
 
     if (!autoPause) {
       killed = await sandbox.kill({
-        requestTimeoutMs: E2B_REQUEST_TIMEOUT_MS,
+        requestTimeoutMs: ASTRAFLOW_SANDBOX_REQUEST_TIMEOUT_MS,
       })
       cleanupLine = killed
-        ? "Cleanup: sandbox killed after code execution."
-        : "Cleanup: sandbox was already stopped or could not be found."
+        ? "Cleanup: AstraFlow Sandbox killed after code execution."
+        : "Cleanup: AstraFlow Sandbox was already stopped or could not be found."
     }
 
     return formatExecution({
       execution,
       language,
       sandboxId: sandbox.sandboxId,
-      lifecycleLine: autoPause
-        ? "Auto pause: true"
-        : "Auto pause: false",
+      lifecycleLine: autoPause ? "Auto pause: true" : "Auto pause: false",
       cleanupLine,
     })
   } finally {
     if (sandbox && !autoPause && !killed) {
-      await sandbox.kill({ requestTimeoutMs: E2B_REQUEST_TIMEOUT_MS }).catch(
-        () => undefined
-      )
+      await sandbox
+        .kill({ requestTimeoutMs: ASTRAFLOW_SANDBOX_REQUEST_TIMEOUT_MS })
+        .catch(() => undefined)
     }
   }
 }
 
-export async function runCodeInE2BSandbox({
+export async function runCodeInAstraFlowSandbox({
   sandbox,
   code,
   language,
@@ -379,14 +413,14 @@ export async function runCodeInE2BSandbox({
 }: {
   sandbox: Sandbox
   code: string
-  language: E2BCodeInterpreterLanguage
+  language: AstraFlowSandboxCodeLanguage
   timeoutSeconds?: number
   lifecycleLine: string
   cleanupLine: string
 }) {
   const runTimeoutSeconds = clampSeconds(
     timeoutSeconds,
-    E2B_DEFAULT_RUN_TIMEOUT_SECONDS,
+    ASTRAFLOW_SANDBOX_DEFAULT_RUN_TIMEOUT_SECONDS,
     1,
     300
   )
@@ -394,7 +428,10 @@ export async function runCodeInE2BSandbox({
   const execution = await sandbox.runCode(code, {
     language: language as RunCodeLanguage,
     timeoutMs: runTimeoutMs,
-    requestTimeoutMs: Math.max(runTimeoutMs + 10_000, E2B_REQUEST_TIMEOUT_MS),
+    requestTimeoutMs: Math.max(
+      runTimeoutMs + 10_000,
+      ASTRAFLOW_SANDBOX_REQUEST_TIMEOUT_MS
+    ),
   })
 
   return formatExecution({
@@ -406,7 +443,7 @@ export async function runCodeInE2BSandbox({
   })
 }
 
-export async function runCommandInE2BSandbox({
+export async function runCommandInAstraFlowSandbox({
   sandbox,
   command,
   cwd,
@@ -414,10 +451,10 @@ export async function runCommandInE2BSandbox({
   timeoutSeconds,
   lifecycleLine,
   cleanupLine,
-}: RunE2BCommandInput) {
+}: RunAstraFlowSandboxCommandInput) {
   const runTimeoutSeconds = clampSeconds(
     timeoutSeconds,
-    E2B_DEFAULT_RUN_TIMEOUT_SECONDS,
+    ASTRAFLOW_SANDBOX_DEFAULT_RUN_TIMEOUT_SECONDS,
     1,
     300
   )
@@ -429,7 +466,10 @@ export async function runCommandInE2BSandbox({
       cwd,
       envs: env,
       timeoutMs: runTimeoutMs,
-      requestTimeoutMs: Math.max(runTimeoutMs + 10_000, E2B_REQUEST_TIMEOUT_MS),
+      requestTimeoutMs: Math.max(
+        runTimeoutMs + 10_000,
+        ASTRAFLOW_SANDBOX_REQUEST_TIMEOUT_MS
+      ),
     })
   } catch (error) {
     const commandResult = normalizeCommandResult(error)

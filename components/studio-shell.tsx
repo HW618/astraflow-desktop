@@ -148,6 +148,11 @@ type StudioModeDefinition = {
   icon: RemixiconComponentType
 }
 
+type StudioShellProps = {
+  initialMode?: StudioMode
+  initialSessionId?: string
+}
+
 function isOAuthStartFailure(
   payload: OAuthStartResponse
 ): payload is Extract<OAuthStartResponse, { ok: false }> {
@@ -166,8 +171,7 @@ const STUDIO_SESSION_STORAGE_KEY = "astraflow:studio-session"
 
 function isStudioMode(value: unknown): value is StudioMode {
   return (
-    typeof value === "string" &&
-    studioModes.some((mode) => mode.id === value)
+    typeof value === "string" && studioModes.some((mode) => mode.id === value)
   )
 }
 
@@ -194,6 +198,14 @@ function readRequestedStudioMode(): StudioMode | null {
   const mode = new URLSearchParams(window.location.search).get("mode")
 
   return isStudioMode(mode) ? mode : null
+}
+
+function getStudioPath(mode: StudioMode, sessionId: string) {
+  if (sessionId) {
+    return `/studio/${mode}/${encodeURIComponent(sessionId)}`
+  }
+
+  return mode === "chat" ? "/studio" : `/studio?mode=${mode}`
 }
 
 async function fetchStudioSessions() {
@@ -336,22 +348,30 @@ function formatExpiry(expiresAt: number | null) {
   }).format(expiresAt)
 }
 
-function StudioShell() {
+function StudioShell({
+  initialMode = "chat",
+  initialSessionId = "",
+}: StudioShellProps = {}) {
   const { t } = useI18n()
-  const [selectedMode, setSelectedMode] = React.useState<StudioMode>("chat")
+  const [selectedMode, setSelectedMode] =
+    React.useState<StudioMode>(initialMode)
   const modeHydratedRef = React.useRef(false)
   const sessionHydratedRef = React.useRef(false)
   const requestedModeRef = React.useRef<StudioMode | null>(null)
-  const [selectedSessionId, setSelectedSessionId] = React.useState("")
+  const requestedSessionIdRef = React.useRef(initialSessionId)
+  const [selectedSessionId, setSelectedSessionId] =
+    React.useState(initialSessionId)
   const [sessions, setSessions] = React.useState<StudioSession[]>([])
   const [loadFailed, setLoadFailed] = React.useState(false)
   const [menuSessionId, setMenuSessionId] = React.useState<string | null>(null)
-  const [renameTarget, setRenameTarget] =
-    React.useState<StudioSession | null>(null)
+  const [renameTarget, setRenameTarget] = React.useState<StudioSession | null>(
+    null
+  )
   const [renameValue, setRenameValue] = React.useState("")
   const [renameSaving, setRenameSaving] = React.useState(false)
-  const [deleteTarget, setDeleteTarget] =
-    React.useState<StudioSession | null>(null)
+  const [deleteTarget, setDeleteTarget] = React.useState<StudioSession | null>(
+    null
+  )
   const [deleteSaving, setDeleteSaving] = React.useState(false)
   const [oauthStatus, setOauthStatus] = React.useState<StudioOAuthStatus>({
     configured: false,
@@ -484,20 +504,26 @@ function StudioShell() {
     queueMicrotask(() => {
       void reloadSessions()
       void reloadOAuthStatus()
-      const requestedMode = readRequestedStudioMode()
+      const requestedMode = initialSessionId
+        ? initialMode
+        : readRequestedStudioMode()
       const storedMode = requestedMode ?? readStoredStudioMode()
 
       requestedModeRef.current = requestedMode
+      requestedSessionIdRef.current = initialSessionId
       setSelectedMode(storedMode)
 
-      if (requestedMode) {
+      if (initialSessionId) {
+        setSelectedSessionId(initialSessionId)
+        sessionHydratedRef.current = true
+      } else if (requestedMode) {
         setSelectedSessionId("")
         sessionHydratedRef.current = true
       }
 
       modeHydratedRef.current = true
     })
-  }, [reloadOAuthStatus, reloadSessions])
+  }, [initialMode, initialSessionId, reloadOAuthStatus, reloadSessions])
 
   React.useEffect(() => {
     if (typeof window === "undefined") return
@@ -526,6 +552,18 @@ function StudioShell() {
       setSelectedMode(stored.mode)
     })
   }, [sessions])
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") return
+    if (!modeHydratedRef.current || !sessionHydratedRef.current) return
+
+    const nextPath = getStudioPath(activeMode, selectedSessionId)
+    const currentPath = `${window.location.pathname}${window.location.search}`
+
+    if (currentPath !== nextPath) {
+      window.history.replaceState(null, "", nextPath)
+    }
+  }, [activeMode, selectedMode, selectedSessionId])
 
   React.useEffect(() => {
     if (typeof window === "undefined") return
@@ -795,7 +833,7 @@ function StudioShell() {
                             type="button"
                             aria-label={t.studioSessionActions}
                             className={cn(
-                              "absolute top-1/2 right-1 flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-sidebar-foreground/70 opacity-0 transition hover:bg-sidebar-foreground/10 hover:text-sidebar-foreground focus-visible:opacity-100 group-hover/session:opacity-100 [&_svg]:size-4",
+                              "absolute top-1/2 right-1 flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-sidebar-foreground/70 opacity-0 transition group-hover/session:opacity-100 hover:bg-sidebar-foreground/10 hover:text-sidebar-foreground focus-visible:opacity-100 [&_svg]:size-4",
                               menuSessionId === session.id && "opacity-100"
                             )}
                             onClick={(event) => event.stopPropagation()}

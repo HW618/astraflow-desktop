@@ -2,18 +2,16 @@ import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { dirname, join, normalize } from "node:path"
 import { randomUUID } from "node:crypto"
 
-const DEFAULT_STORAGE_ROOT = ".data/studio-files"
+const DEFAULT_STORAGE_ROOT_DIRECTORY = ".data"
+const DEFAULT_STORAGE_ROOT_NAME = "studio-files"
 
 export type ParsedDataUrl = {
   mimeType: string
   buffer: Buffer
 }
 
-function getStorageRoot() {
-  return (
-    process.env.ASTRAFLOW_STUDIO_FILES_PATH?.trim() ??
-    join(process.cwd(), DEFAULT_STORAGE_ROOT)
-  )
+function getConfiguredStorageRoot() {
+  return process.env.ASTRAFLOW_STUDIO_FILES_PATH?.trim() || null
 }
 
 export function safeFileName(name: string) {
@@ -34,7 +32,18 @@ function resolveStoragePath(storagePath: string) {
     throw new Error("Invalid storage path.")
   }
 
-  return join(getStorageRoot(), normalized)
+  const configuredStorageRoot = getConfiguredStorageRoot()
+
+  if (configuredStorageRoot) {
+    return join(/* turbopackIgnore: true */ configuredStorageRoot, normalized)
+  }
+
+  return join(
+    process.cwd(),
+    DEFAULT_STORAGE_ROOT_DIRECTORY,
+    DEFAULT_STORAGE_ROOT_NAME,
+    normalized
+  )
 }
 
 export function parseDataUrl(dataUrl: string): ParsedDataUrl {
@@ -96,16 +105,22 @@ export function createGeneratedStoragePath({
 
 export function writeStudioFile(storagePath: string, buffer: Buffer) {
   const absolutePath = resolveStoragePath(storagePath)
-  mkdirSync(dirname(absolutePath), { recursive: true })
-  writeFileSync(absolutePath, buffer)
+  const directory = dirname(absolutePath)
+
+  mkdirSync(/* turbopackIgnore: true */ directory, { recursive: true })
+  writeFileSync(/* turbopackIgnore: true */ absolutePath, buffer)
 }
 
 export function readStudioFile(storagePath: string) {
-  return readFileSync(resolveStoragePath(storagePath))
+  const absolutePath = resolveStoragePath(storagePath)
+
+  return readFileSync(/* turbopackIgnore: true */ absolutePath)
 }
 
 export function statStudioFile(storagePath: string) {
-  return statSync(resolveStoragePath(storagePath))
+  const absolutePath = resolveStoragePath(storagePath)
+
+  return statSync(/* turbopackIgnore: true */ absolutePath)
 }
 
 export function storagePathToDownloadName(storagePath: string) {

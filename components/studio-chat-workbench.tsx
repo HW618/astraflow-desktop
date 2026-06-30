@@ -85,6 +85,7 @@ import type {
   StudioMessageActivity,
   StudioMessage,
   StudioMessagePart,
+  StudioChatRunSnapshot,
   StudioSession,
 } from "@/lib/studio-types"
 import { cn, createClientId } from "@/lib/utils"
@@ -135,80 +136,11 @@ type ApiResponse<T> =
       error: unknown
     }
 
-type ChatPhase = "idle" | "thinking" | "streaming"
-
-type ActiveChatRun = {
-  phase: Exclude<ChatPhase, "idle">
-  content: string
-  activities: StudioMessageActivity[]
-  parts: StudioMessagePart[]
-  reasoningContent: string
-  reasoningDurationMs: number | null
-}
-
-type ChatStreamEvent =
-  | {
-      type: "content" | "reasoning"
-      delta: string
-    }
-  | {
-      type: "tool_call"
-      toolCallId: string
-      toolName: string
-      input: string
-    }
-  | {
-      type: "tool_result"
-      toolCallId: string
-      toolName: string
-      status: "complete" | "error"
-      output?: string
-      error?: string
-    }
-
-type ChatStreamSnapshot = {
-  content: string
-  activities: StudioMessageActivity[]
-  parts: StudioMessagePart[]
-  reasoningContent: string
-  reasoningDurationMs: number | null
-}
-
 const CHAT_MODEL_STORAGE_KEY = "astraflow:chat-model"
 const CHAT_REASONING_EFFORT_STORAGE_KEY = "astraflow:chat-reasoning-effort"
 
 const chatModelListeners = new Set<() => void>()
 const chatReasoningEffortListeners = new Set<() => void>()
-
-function shouldDebugStudioChatClient() {
-  if (typeof window === "undefined") {
-    return false
-  }
-
-  return window.localStorage.getItem("astraflow:debug-chat") === "1"
-}
-
-function getActivityDebugSnapshot(activities: StudioMessageActivity[]) {
-  return activities.map((activity) => ({
-    id: activity.id,
-    toolName: activity.toolName,
-    status: activity.status,
-    inputLength: activity.input.length,
-    outputLength: activity.output.length,
-    hasError: Boolean(activity.error),
-  }))
-}
-
-function debugStudioChatClient(
-  label: string,
-  payload: Record<string, unknown>
-) {
-  if (!shouldDebugStudioChatClient()) {
-    return
-  }
-
-  console.info(`[studio-chat:client-tool] ${label}`, payload)
-}
 
 function getStoredChatModel(): SupportedChatModel {
   if (typeof window === "undefined") {
@@ -259,9 +191,7 @@ function getStoredChatReasoningEffort(
     return getDefaultChatReasoningEffort(model)
   }
 
-  const stored = window.localStorage.getItem(
-    CHAT_REASONING_EFFORT_STORAGE_KEY
-  )
+  const stored = window.localStorage.getItem(CHAT_REASONING_EFFORT_STORAGE_KEY)
 
   if (
     stored &&
@@ -294,9 +224,7 @@ function getStoredChatReasoningEffort(
 }
 
 function getStoredChatReasoningEffortMap() {
-  const stored = window.localStorage.getItem(
-    CHAT_REASONING_EFFORT_STORAGE_KEY
-  )
+  const stored = window.localStorage.getItem(CHAT_REASONING_EFFORT_STORAGE_KEY)
 
   if (!stored || isChatReasoningEffort(stored)) {
     return {}
@@ -396,21 +324,19 @@ async function listMessages(sessionId: string) {
   return readJson<StudioMessage[]>(response)
 }
 
-async function createMessage(
-  input: {
-    sessionId: string
-    role: StudioMessage["role"]
-    content: string
-    attachments?: StudioAttachment[]
-    activities?: StudioMessageActivity[]
-    parts?: StudioMessagePart[]
-    reasoningContent?: string
-    reasoningDurationMs?: number | null
-    model?: string | null
-    versionGroupId?: string | null
-    replacesMessageId?: string | null
-  }
-) {
+async function createMessage(input: {
+  sessionId: string
+  role: StudioMessage["role"]
+  content: string
+  attachments?: StudioAttachment[]
+  activities?: StudioMessageActivity[]
+  parts?: StudioMessagePart[]
+  reasoningContent?: string
+  reasoningDurationMs?: number | null
+  model?: string | null
+  versionGroupId?: string | null
+  replacesMessageId?: string | null
+}) {
   const response = await fetch(
     `/api/studio/sessions/${input.sessionId}/messages`,
     {
@@ -453,23 +379,17 @@ async function generateSessionTitle(sessionId: string, prompt: string) {
   })
 }
 
-async function streamAssistantResponse({
+async function startAssistantRunRequest({
   sessionId,
   model,
   reasoningEffort,
   retryMessageId,
-  signal,
-  onFirstChunk,
-  onChunk,
 }: {
   sessionId: string
   model: SupportedChatModel
   reasoningEffort: ChatReasoningEffort
   retryMessageId?: string
-  signal: AbortSignal
-  onFirstChunk?: () => void
-  onChunk: (snapshot: ChatStreamSnapshot) => void
-}): Promise<ChatStreamSnapshot> {
+}) {
   const response = await fetch("/api/studio/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -479,385 +399,20 @@ async function streamAssistantResponse({
       reasoningEffort,
       retryMessageId,
     }),
-    signal,
   })
 
-  if (!response.ok) {
-    let message = "Request failed"
-
-    try {
-      const payload = (await response.json()) as {
-        error?: string
-        message?: string
-      }
-      message = payload.error || payload.message || message
-    } catch {
-      // Ignore JSON parsing failures and fall back to the generic message.
-    }
-
-    throw new Error(message)
-  }
-
-  if (!response.body) {
-    throw new Error("Response body is missing.")
-  }
-
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let content = ""
-  let activities: StudioMessageActivity[] = []
-  let parts: StudioMessagePart[] = []
-  let reasoningContent = ""
-  let reasoningDurationMs: number | null = null
-  let buffer = ""
-  let receivedFirstChunk = false
-  let clientToolEventSeq = 0
-  let activeReasoningPartId: string | null = null
-  let activeReasoningStartedAt: number | null = null
-  let totalReasoningDurationMs = 0
-
-  function markReasoningDone() {
-    if (!activeReasoningPartId || activeReasoningStartedAt === null) {
-      return
-    }
-
-    const durationMs = Math.max(
-      1000,
-      Math.round(performance.now() - activeReasoningStartedAt)
-    )
-    totalReasoningDurationMs += durationMs
-    reasoningDurationMs = totalReasoningDurationMs
-    parts = parts.map((part) =>
-      part.type === "reasoning" && part.id === activeReasoningPartId
-        ? { ...part, durationMs }
-        : part
-    )
-    activeReasoningPartId = null
-    activeReasoningStartedAt = null
-  }
-
-  function appendReasoningPart(delta: string) {
-    if (!delta) {
-      return
-    }
-
-    reasoningContent += delta
-    const lastPart = parts.at(-1)
-
-    if (lastPart?.type === "reasoning" && lastPart.durationMs === null) {
-      if (!activeReasoningPartId) {
-        activeReasoningPartId = lastPart.id
-      }
-
-      if (activeReasoningStartedAt === null) {
-        activeReasoningStartedAt = performance.now()
-      }
-
-      parts = [
-        ...parts.slice(0, -1),
-        {
-          ...lastPart,
-          content: lastPart.content + delta,
-        },
-      ]
-      return
-    }
-
-    const partId = createClientId()
-    activeReasoningPartId = partId
-    activeReasoningStartedAt = performance.now()
-    parts = [
-      ...parts,
-      {
-        id: partId,
-        type: "reasoning",
-        content: delta,
-        durationMs: null,
-      },
-    ]
-  }
-
-  function appendTextPart(delta: string) {
-    if (!delta) {
-      return
-    }
-
-    const lastPart = parts.at(-1)
-
-    if (lastPart?.type === "text") {
-      parts = [
-        ...parts.slice(0, -1),
-        {
-          ...lastPart,
-          content: lastPart.content + delta,
-        },
-      ]
-      return
-    }
-
-    parts = [
-      ...parts,
-      {
-        id: createClientId(),
-        type: "text",
-        content: delta,
-      },
-    ]
-  }
-
-  function upsertToolPart(activity: StudioMessageActivity) {
-    const existingIndex = parts.findIndex(
-      (part) => part.type === "tool" && part.activity.id === activity.id
-    )
-
-    if (existingIndex < 0) {
-      parts = [
-        ...parts,
-        {
-          id: activity.id,
-          type: "tool",
-          activity,
-        },
-      ]
-      return
-    }
-
-    parts = parts.map((part, index) =>
-      index === existingIndex && part.type === "tool"
-        ? { ...part, activity }
-        : part
-    )
-  }
-
-  function handleEvent(event: ChatStreamEvent) {
-    if (!receivedFirstChunk) {
-      receivedFirstChunk = true
-      onFirstChunk?.()
-    }
-
-    if (event.type === "reasoning") {
-      appendReasoningPart(event.delta)
-    } else if (event.type === "content") {
-      markReasoningDone()
-      content += event.delta
-      appendTextPart(event.delta)
-    } else if (event.type === "tool_call") {
-      markReasoningDone()
-      const existingById = activities.find(
-        (activity) => activity.id === event.toolCallId
-      )
-      const latestSameTool = activities.findLast(
-        (activity) => activity.toolName === event.toolName
-      )
-
-      debugStudioChatClient("tool_call_received", {
-        seq: ++clientToolEventSeq,
-        toolCallId: event.toolCallId,
-        toolName: event.toolName,
-        inputLength: event.input.length,
-        existingById: existingById
-          ? {
-              status: existingById.status,
-              outputLength: existingById.output.length,
-            }
-          : null,
-        latestSameTool: latestSameTool
-          ? {
-              id: latestSameTool.id,
-              status: latestSameTool.status,
-              outputLength: latestSameTool.output.length,
-            }
-          : null,
-        before: getActivityDebugSnapshot(activities),
-      })
-
-      const activity: StudioMessageActivity = existingById
-        ? {
-            ...existingById,
-            input: existingById.input || event.input,
-          }
-        : {
-            id: event.toolCallId,
-            toolName: event.toolName,
-            status: "running",
-            input: event.input,
-            output: "",
-            error: null,
-          }
-
-      activities = existingById
-        ? activities.map((candidate) =>
-            candidate.id === event.toolCallId ? activity : candidate
-          )
-        : [
-            ...activities.filter(
-              (candidate) => candidate.id !== event.toolCallId
-            ),
-            activity,
-          ]
-      upsertToolPart(activity)
-      debugStudioChatClient("tool_call_applied", {
-        seq: clientToolEventSeq,
-        toolCallId: event.toolCallId,
-        toolName: event.toolName,
-        after: getActivityDebugSnapshot(activities),
-      })
-    } else if (event.type === "tool_result") {
-      markReasoningDone()
-      let activityIndex = activities.findIndex(
-        (activity) => activity.id === event.toolCallId
-      )
-      let matchStrategy = activityIndex >= 0 ? "id" : "none"
-
-      if (activityIndex < 0) {
-        for (let index = activities.length - 1; index >= 0; index--) {
-          const activity = activities[index]
-
-          if (
-            activity.toolName === event.toolName &&
-            activity.status === "running"
-          ) {
-            activityIndex = index
-            matchStrategy = "latest-running-same-tool"
-            break
-          }
-        }
-      }
-
-      debugStudioChatClient("tool_result_received", {
-        seq: ++clientToolEventSeq,
-        toolCallId: event.toolCallId,
-        toolName: event.toolName,
-        status: event.status,
-        outputLength: event.output?.length ?? 0,
-        errorLength: event.error?.length ?? 0,
-        matchStrategy,
-        matchedIndex: activityIndex,
-        before: getActivityDebugSnapshot(activities),
-      })
-
-      const nextActivity: StudioMessageActivity =
-        activityIndex >= 0
-          ? {
-              ...activities[activityIndex],
-              status: event.status,
-              output: event.output ?? "",
-              error: event.error ?? null,
-            }
-          : {
-              id: event.toolCallId,
-              toolName: event.toolName,
-              status: event.status,
-              input: "",
-              output: event.output ?? "",
-              error: event.error ?? null,
-            }
-
-      activities =
-        activityIndex >= 0
-          ? activities.map((activity, index) =>
-              index === activityIndex ? nextActivity : activity
-            )
-          : [...activities, nextActivity]
-
-      upsertToolPart(nextActivity)
-      debugStudioChatClient("tool_result_applied", {
-        seq: clientToolEventSeq,
-        toolCallId: event.toolCallId,
-        toolName: event.toolName,
-        matchStrategy,
-        activityId: nextActivity.id,
-        after: getActivityDebugSnapshot(activities),
-      })
-    }
-
-    onChunk({ content, activities, parts, reasoningContent, reasoningDurationMs })
-  }
-
-  function parseLine(line: string) {
-    if (!line.trim()) {
-      return
-    }
-
-    const event = JSON.parse(line) as Partial<ChatStreamEvent>
-
-    if (
-      (event.type === "content" || event.type === "reasoning") &&
-      typeof event.delta === "string"
-    ) {
-      handleEvent({
-        type: event.type,
-        delta: event.delta,
-      })
-      return
-    }
-
-    if (
-      event.type === "tool_call" &&
-      typeof event.toolCallId === "string" &&
-      typeof event.toolName === "string" &&
-      typeof event.input === "string"
-    ) {
-      handleEvent({
-        type: "tool_call",
-        toolCallId: event.toolCallId,
-        toolName: event.toolName,
-        input: event.input,
-      })
-      return
-    }
-
-    if (
-      event.type === "tool_result" &&
-      typeof event.toolCallId === "string" &&
-      typeof event.toolName === "string" &&
-      (event.status === "complete" || event.status === "error")
-    ) {
-      handleEvent({
-        type: "tool_result",
-        toolCallId: event.toolCallId,
-        toolName: event.toolName,
-        status: event.status,
-        output: typeof event.output === "string" ? event.output : undefined,
-        error: typeof event.error === "string" ? event.error : undefined,
-      })
-    }
-  }
-
-  while (true) {
-    const { value, done } = await reader.read()
-
-    if (done) {
-      break
-    }
-
-    const chunk = decoder.decode(value, { stream: true })
-
-    if (!chunk) {
-      continue
-    }
-
-    buffer += chunk
-
-    const lines = buffer.split("\n")
-    buffer = lines.pop() ?? ""
-
-    for (const line of lines) {
-      parseLine(line)
-    }
-  }
-
-  buffer += decoder.decode()
-
-  if (buffer) {
-    parseLine(buffer)
-  }
-
-  markReasoningDone()
-
-  return { content, activities, parts, reasoningContent, reasoningDurationMs }
+  return readJson<StudioChatRunSnapshot>(response)
 }
 
+async function stopAssistantRunRequest(sessionId: string) {
+  const response = await fetch("/api/studio/chat", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sessionId }),
+  })
+
+  return readJson<StudioChatRunSnapshot | null>(response)
+}
 function StudioChatWorkbench({
   sessionId,
   onSessionChange,
@@ -872,20 +427,22 @@ function StudioChatWorkbench({
   const [pendingAttachments, setPendingAttachments] = React.useState<
     PendingAttachment[]
   >([])
-  const [activeRuns, setActiveRuns] = React.useState<
-    Record<string, ActiveChatRun>
-  >({})
+  const [startingSessionIds, setStartingSessionIds] = React.useState<
+    Set<string>
+  >(() => new Set())
   const [loadFailed, setLoadFailed] = React.useState(false)
   const [chatErrors, setChatErrors] = React.useState<Record<string, boolean>>(
     {}
   )
-  const abortControllersRef = React.useRef(new Map<string, AbortController>())
   const sessionIdRef = React.useRef(sessionId)
 
-  const activeRun = sessionId ? activeRuns[sessionId] : undefined
-  const isBusy = Boolean(activeRun)
   const visibleMessages = sessionId ? messages : []
-  const hasMessages = visibleMessages.length > 0 || isBusy
+  const isStarting = sessionId ? startingSessionIds.has(sessionId) : false
+  const hasStreamingMessage = visibleMessages.some(
+    (message) => message.role === "assistant" && message.status === "streaming"
+  )
+  const isBusy = isStarting || hasStreamingMessage
+  const hasMessages = visibleMessages.length > 0 || isStarting
   const canSubmit =
     (input.trim().length > 0 || pendingAttachments.length > 0) && !isBusy
   const error =
@@ -936,11 +493,24 @@ function StudioChatWorkbench({
     sessionIdRef.current = sessionId
   }, [sessionId])
 
+  const reloadMessages = React.useCallback(async (activeSessionId: string) => {
+    const nextMessages = activeSessionId
+      ? await listMessages(activeSessionId)
+      : []
+
+    if (sessionIdRef.current === activeSessionId) {
+      setMessages(nextMessages)
+      setLoadFailed(false)
+    }
+
+    return nextMessages
+  }, [])
+
   React.useEffect(() => {
     let cancelled = false
 
     Promise.resolve()
-      .then(() => (sessionId ? listMessages(sessionId) : []))
+      .then(() => (sessionId ? reloadMessages(sessionId) : []))
       .then((nextMessages) => {
         if (!cancelled) {
           setMessages(nextMessages)
@@ -956,16 +526,52 @@ function StudioChatWorkbench({
     return () => {
       cancelled = true
     }
-  }, [sessionId])
+  }, [reloadMessages, sessionId])
 
   React.useEffect(() => {
-    const abortControllers = abortControllersRef.current
+    if (!sessionId || (!hasStreamingMessage && !isStarting)) {
+      return
+    }
+
+    let cancelled = false
+    const poll = () => {
+      void reloadMessages(sessionId)
+        .then((nextMessages) => {
+          if (cancelled) {
+            return
+          }
+
+          const stillStreaming = nextMessages.some(
+            (message) =>
+              message.role === "assistant" && message.status === "streaming"
+          )
+
+          if (!stillStreaming) {
+            onSessionsChange()
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setLoadFailed(true)
+          }
+        })
+    }
+
+    const timer = window.setInterval(poll, 1000)
+
+    poll()
 
     return () => {
-      abortControllers.forEach((controller) => controller.abort())
-      abortControllers.clear()
+      cancelled = true
+      window.clearInterval(timer)
     }
-  }, [])
+  }, [
+    hasStreamingMessage,
+    isStarting,
+    onSessionsChange,
+    reloadMessages,
+    sessionId,
+  ])
 
   const startAssistantRun = React.useCallback(
     (
@@ -974,83 +580,13 @@ function StudioChatWorkbench({
       reasoningEffort: ChatReasoningEffort,
       options: {
         retryMessageId?: string
-        versionGroupId?: string | null
-        replacesMessageId?: string | null
       } = {}
     ) => {
-      const abortController = new AbortController()
-      const initialSnapshot: ChatStreamSnapshot = {
-        content: "",
-        activities: [],
-        parts: [],
-        reasoningContent: "",
-        reasoningDurationMs: null,
-      }
-      let latestSnapshot = initialSnapshot
-
-      const hasPersistableSnapshot = (snapshot: ChatStreamSnapshot) =>
-        snapshot.content.trim().length > 0 ||
-        snapshot.reasoningContent.trim().length > 0 ||
-        snapshot.activities.some((activity) => activity.status !== "running")
-
-      const finalizeStoppedSnapshot = (
-        snapshot: ChatStreamSnapshot
-      ): ChatStreamSnapshot => {
-        const completedActivities = snapshot.activities.filter(
-          (activity) => activity.status !== "running"
-        )
-        const completedActivityIds = new Set(
-          completedActivities.map((activity) => activity.id)
-        )
-
-        return {
-          ...snapshot,
-          activities: completedActivities,
-          parts: snapshot.parts.filter((part) => {
-            if (part.type === "text" || part.type === "reasoning") {
-              return true
-            }
-
-            return completedActivityIds.has(part.activity.id)
-          }),
-        }
-      }
-
-      const saveAssistantSnapshot = async (snapshot: ChatStreamSnapshot) => {
-        if (!hasPersistableSnapshot(snapshot)) {
-          return null
-        }
-
-        const savedMessage = await createMessage({
-          sessionId: activeSessionId,
-          role: "assistant",
-          content: snapshot.content,
-          model,
-          activities: snapshot.activities,
-          parts: snapshot.parts,
-          reasoningContent: snapshot.reasoningContent,
-          reasoningDurationMs: snapshot.reasoningDurationMs,
-          versionGroupId: options.versionGroupId,
-          replacesMessageId: options.replacesMessageId,
-        })
-
-        if (sessionIdRef.current === activeSessionId) {
-          setMessages((current) =>
-            options.replacesMessageId
-              ? current.map((message) =>
-                  message.id === options.replacesMessageId
-                    ? savedMessage
-                    : message
-                )
-              : [...current, savedMessage]
-          )
-        }
-
-        onSessionsChange()
-        return savedMessage
-      }
-
-      abortControllersRef.current.set(activeSessionId, abortController)
+      setStartingSessionIds((current) => {
+        const next = new Set(current)
+        next.add(activeSessionId)
+        return next
+      })
       setChatErrors((current) => {
         if (!current[activeSessionId]) return current
 
@@ -1058,117 +594,50 @@ function StudioChatWorkbench({
         delete next[activeSessionId]
         return next
       })
-      setActiveRuns((current) => ({
-        ...current,
-        [activeSessionId]: {
-          phase: "thinking",
-          content: "",
-          activities: [],
-          parts: [],
-          reasoningContent: "",
-          reasoningDurationMs: null,
-        },
-      }))
-
-      void streamAssistantResponse({
+      void startAssistantRunRequest({
         sessionId: activeSessionId,
         model,
         reasoningEffort,
         retryMessageId: options.retryMessageId,
-        signal: abortController.signal,
-        onFirstChunk() {
-          setActiveRuns((current) => {
-            const run = current[activeSessionId]
-            if (!run) return current
-
-            return {
-              ...current,
-              [activeSessionId]: { ...run, phase: "streaming" },
-            }
-          })
-        },
-        onChunk(snapshot) {
-          latestSnapshot = snapshot
-          setActiveRuns((current) => {
-            const run = current[activeSessionId]
-            if (!run) return current
-
-            return {
-              ...current,
-              [activeSessionId]: {
-                phase: "streaming",
-                content: snapshot.content,
-                activities: snapshot.activities,
-                parts: snapshot.parts,
-                reasoningContent: snapshot.reasoningContent,
-                reasoningDurationMs: snapshot.reasoningDurationMs,
-              },
-            }
-          })
-        },
       })
-        .then(async (assistantMessage) => {
-          abortControllersRef.current.delete(activeSessionId)
-
-          await saveAssistantSnapshot(assistantMessage)
-
-          setActiveRuns((current) => {
-            const next = { ...current }
-            delete next[activeSessionId]
-            return next
-          })
+        .then(async () => {
+          await reloadMessages(activeSessionId)
+          onSessionsChange()
         })
-        .catch(async (nextError) => {
-          abortControllersRef.current.delete(activeSessionId)
-
-          if (
-            nextError instanceof DOMException &&
-            nextError.name === "AbortError"
-          ) {
-            try {
-              await saveAssistantSnapshot(
-                finalizeStoppedSnapshot(latestSnapshot)
-              )
-            } catch {
-              setChatErrors((current) => ({
-                ...current,
-                [activeSessionId]: true,
-              }))
-            }
-
-            setActiveRuns((current) => {
-              const next = { ...current }
-              delete next[activeSessionId]
-              return next
-            })
-            return
-          }
-
-          try {
-            await saveAssistantSnapshot(finalizeStoppedSnapshot(latestSnapshot))
-          } catch {
-            // Keep surfacing the run failure below; partial persistence is best-effort.
-          }
-
-          setActiveRuns((current) => {
-            const next = { ...current }
-            delete next[activeSessionId]
-            return next
-          })
-
+        .catch(() => {
           setChatErrors((current) => ({
             ...current,
             [activeSessionId]: true,
           }))
         })
+        .finally(() => {
+          setStartingSessionIds((current) => {
+            const next = new Set(current)
+            next.delete(activeSessionId)
+            return next
+          })
+        })
     },
-    [onSessionsChange]
+    [onSessionsChange, reloadMessages]
   )
 
-  const stopAssistantRun = React.useCallback((activeSessionId: string) => {
-    const controller = abortControllersRef.current.get(activeSessionId)
-    controller?.abort()
-  }, [])
+  const stopAssistantRun = React.useCallback(
+    (activeSessionId: string) => {
+      void stopAssistantRunRequest(activeSessionId)
+        .then(async () => {
+          await reloadMessages(activeSessionId)
+          onSessionsChange()
+        })
+        .finally(() => {
+          setStartingSessionIds((current) => {
+            const next = new Set(current)
+            next.delete(activeSessionId)
+            return next
+          })
+        })
+    },
+    [onSessionsChange, reloadMessages]
+  )
 
   const appendMessageIfActive = React.useCallback(
     (activeSessionId: string, message: StudioMessage) => {
@@ -1186,16 +655,9 @@ function StudioChatWorkbench({
         return
       }
 
-      startAssistantRun(
-        sessionId,
-        selectedModel,
-        selectedReasoningEffort,
-        {
-          retryMessageId: message.id,
-          versionGroupId: message.versionGroupId ?? message.id,
-          replacesMessageId: message.id,
-        }
-      )
+      startAssistantRun(sessionId, selectedModel, selectedReasoningEffort, {
+        retryMessageId: message.id,
+      })
     },
     [
       isBusy,
@@ -1257,11 +719,7 @@ function StudioChatWorkbench({
           })
       }
 
-      startAssistantRun(
-        activeSessionId,
-        selectedModel,
-        selectedReasoningEffort
-      )
+      startAssistantRun(activeSessionId, selectedModel, selectedReasoningEffort)
     } catch {
       if (sessionId) {
         setChatErrors((current) => ({ ...current, [sessionId]: true }))
@@ -1291,25 +749,10 @@ function StudioChatWorkbench({
                 />
               ))}
 
-              {activeRun?.phase === "thinking" ? (
+              {isStarting && !hasStreamingMessage ? (
                 <div className="flex w-full justify-start">
-                  <Shimmer className="text-sm">
-                    {t.studioThinking}
-                  </Shimmer>
+                  <Shimmer className="text-sm">{t.studioThinking}</Shimmer>
                 </div>
-              ) : null}
-
-              {activeRun?.phase === "streaming" &&
-              (activeRun.content ||
-                activeRun.reasoningContent ||
-                activeRun.parts.length > 0) ? (
-                <StreamingAssistantMessage
-                  content={activeRun.content}
-                  activities={activeRun.activities}
-                  parts={activeRun.parts}
-                  reasoningContent={activeRun.reasoningContent}
-                  reasoningDurationMs={activeRun.reasoningDurationMs}
-                />
               ) : null}
 
               {error ? (
@@ -1694,12 +1137,7 @@ function ChatMessageBubble({
     )
   }
 
-  return (
-    <AssistantMessage
-      message={message}
-      onRetry={onRetry}
-    />
-  )
+  return <AssistantMessage message={message} onRetry={onRetry} />
 }
 
 const markdownClassName =
@@ -1713,8 +1151,7 @@ const assistantTraceContainerClassName = "not-prose my-0 text-muted-foreground"
 const assistantTraceTriggerClassName =
   "min-h-7 max-w-full text-sm leading-6 [&>div]:min-w-0 [&>div]:gap-2 [&>div>span:last-child]:min-w-0"
 
-const assistantTraceLabelClassName =
-  "block max-w-full truncate leading-6"
+const assistantTraceLabelClassName = "block max-w-full truncate leading-6"
 
 const streamingPulseDotClassName =
   "[&>*:last-child]:after:ml-1.5 [&>*:last-child]:after:inline-block [&>*:last-child]:after:size-2.5 [&>*:last-child]:after:translate-y-[1px] [&>*:last-child]:after:rounded-full [&>*:last-child]:after:bg-foreground [&>*:last-child]:after:align-middle [&>*:last-child]:after:content-[''] [&>*:last-child]:after:animate-[studio-pulse-dot_1.1s_ease-in-out_infinite]"
@@ -1764,56 +1201,16 @@ function AssistantReasoning({
           "[&>span]:min-w-0 [&>span]:truncate"
         )}
       >
-        {isStreaming ? (
-          <Shimmer as="span">{t.studioThinking}</Shimmer>
-        ) : (
-          label
-        )}
+        {isStreaming ? <Shimmer as="span">{t.studioThinking}</Shimmer> : label}
       </ReasoningTrigger>
       <ReasoningContent
         markdown
-        className="ml-1.75 border-l border-l-border/70 pl-6 pb-1"
+        className="ml-1.75 border-l border-l-border/70 pb-1 pl-6"
         contentClassName={reasoningMarkdownClassName}
       >
         {content}
       </ReasoningContent>
     </Reasoning>
-  )
-}
-
-function StreamingAssistantMessage({
-  content,
-  activities,
-  parts,
-  reasoningContent,
-  reasoningDurationMs,
-}: {
-  content: string
-  activities: StudioMessageActivity[]
-  parts: StudioMessagePart[]
-  reasoningContent: string
-  reasoningDurationMs: number | null
-}) {
-  const showTopLevelReasoning = !hasRenderableReasoningParts(parts)
-
-  return (
-    <Message className="justify-start">
-      <div className="flex w-full flex-col gap-2">
-        {showTopLevelReasoning ? (
-          <AssistantReasoning
-            content={reasoningContent}
-            durationMs={reasoningDurationMs}
-            isStreaming={reasoningDurationMs === null}
-          />
-        ) : null}
-        <AssistantContentParts
-          content={content}
-          activities={activities}
-          parts={parts}
-          streaming
-        />
-      </div>
-    </Message>
   )
 }
 
@@ -1993,10 +1390,23 @@ function getFileToolTarget(input: string) {
 
   const path = typeof parsed.path === "string" ? parsed.path.trim() : ""
   const name = typeof parsed.name === "string" ? parsed.name.trim() : ""
-  const fileId =
-    typeof parsed.file_id === "string" ? parsed.file_id.trim() : ""
+  const fileId = typeof parsed.file_id === "string" ? parsed.file_id.trim() : ""
 
   return path || name || fileId || ""
+}
+
+function getSandboxHostToolPort(input: string) {
+  const parsed = parseToolInputObject(input)
+
+  if (!parsed) {
+    return input.trim()
+  }
+
+  const port = parsed.port
+
+  return typeof port === "number" || typeof port === "string"
+    ? String(port).trim()
+    : ""
 }
 
 function getFileToolOutputTarget(output: string) {
@@ -2048,6 +1458,14 @@ function getActivityLabel(
       running: activity.status === "running",
       t,
     })
+  }
+
+  if (activity.toolName === "sandbox_get_host") {
+    const port = getSandboxHostToolPort(activity.input)
+
+    return activity.status === "running"
+      ? t.studioToolResolvingHost(port)
+      : t.studioToolResolvedHost(port)
   }
 
   if (
@@ -2145,7 +1563,8 @@ function RunCommandActivity({ activity }: { activity: StudioMessageActivity }) {
     activity.status === "error"
       ? activity.error || t.studioToolError
       : activity.output.trim()
-  const defaultOpen = activity.status === "running" || activity.status === "error"
+  const defaultOpen =
+    activity.status === "running" || activity.status === "error"
 
   return (
     <ChainOfThought className={assistantTraceContainerClassName}>
@@ -2189,7 +1608,7 @@ function RunCommandActivity({ activity }: { activity: StudioMessageActivity }) {
 
           {activity.status === "running" ? null : (
             <div className="space-y-2 border-l pl-3">
-              <div className="text-xs font-semibold uppercase text-muted-foreground">
+              <div className="text-xs font-semibold text-muted-foreground uppercase">
                 {t.output}
               </div>
               {output ? (
@@ -2225,7 +1644,8 @@ function RunCodeActivity({ activity }: { activity: StudioMessageActivity }) {
       : payload.autoPause
         ? t.studioToolAutoPause
         : t.studioToolKillAfterRun
-  const defaultOpen = activity.status === "running" || activity.status === "error"
+  const defaultOpen =
+    activity.status === "running" || activity.status === "error"
 
   return (
     <ChainOfThought className={assistantTraceContainerClassName}>
@@ -2270,7 +1690,7 @@ function RunCodeActivity({ activity }: { activity: StudioMessageActivity }) {
 
           {activity.status === "running" ? null : (
             <div className="space-y-2 border-l pl-3">
-              <div className="text-xs font-semibold uppercase text-muted-foreground">
+              <div className="text-xs font-semibold text-muted-foreground uppercase">
                 {t.output}
               </div>
               {output ? (
@@ -2304,6 +1724,10 @@ function AssistantActivity({ activity }: { activity: StudioMessageActivity }) {
     return <RunCommandActivity activity={activity} />
   }
 
+  if (activity.toolName === "sandbox_get_host") {
+    return <FileToolActivity activity={activity} />
+  }
+
   if (
     activity.toolName === "upload_file" ||
     activity.toolName === "list_files" ||
@@ -2314,10 +1738,7 @@ function AssistantActivity({ activity }: { activity: StudioMessageActivity }) {
     return <FileToolActivity activity={activity} />
   }
 
-  if (
-    activity.toolName !== "web_search" &&
-    activity.toolName !== "web_fetch"
-  ) {
+  if (activity.toolName !== "web_search" && activity.toolName !== "web_fetch") {
     return null
   }
 
@@ -2550,6 +1971,12 @@ function AssistantMessage({
   const copyableContent = message.content || message.reasoningContent
   const modelLabel = getStoredChatModelLabel(message.model)
   const showTopLevelReasoning = !hasRenderableReasoningParts(message.parts)
+  const isStreaming = message.status === "streaming"
+  const hasStreamingContent =
+    message.content.trim().length > 0 ||
+    message.reasoningContent.trim().length > 0 ||
+    message.activities.length > 0 ||
+    message.parts.length > 0
 
   function handleCopy() {
     void navigator.clipboard.writeText(copyableContent)
@@ -2564,94 +1991,102 @@ function AssistantMessage({
           <AssistantReasoning
             content={message.reasoningContent}
             durationMs={message.reasoningDurationMs}
+            isStreaming={isStreaming && message.reasoningDurationMs === null}
           />
         ) : null}
-        <AssistantContentParts
-          content={message.content}
-          activities={message.activities}
-          parts={message.parts}
-        />
-        <MessageActions className="gap-1.5">
-          {message.versionCount > 1 ? (
-            <MessageAction tooltip={t.studioViewVersions}>
+        {isStreaming && !hasStreamingContent ? (
+          <Shimmer className="text-sm">{t.studioThinking}</Shimmer>
+        ) : (
+          <AssistantContentParts
+            content={message.content}
+            activities={message.activities}
+            parts={message.parts}
+            streaming={isStreaming}
+          />
+        )}
+        {!isStreaming ? (
+          <MessageActions className="gap-1.5">
+            {message.versionCount > 1 ? (
+              <MessageAction tooltip={t.studioViewVersions}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 gap-1 rounded-xl px-2"
+                  onClick={() => setVersionsOpen(true)}
+                >
+                  <span className="text-sm font-medium">
+                    {message.versionCount}
+                  </span>
+                  <RiRefreshLine className="size-4" aria-hidden />
+                </Button>
+              </MessageAction>
+            ) : null}
+
+            <MessageAction
+              tooltip={
+                <span className="flex flex-col items-center gap-0.5">
+                  <span>{t.studioRetry}</span>
+                  {modelLabel ? (
+                    <span className="text-[11px] text-background/70">
+                      {t.studioUsedModel(modelLabel)}
+                    </span>
+                  ) : null}
+                </span>
+              }
+            >
               <Button
                 variant="ghost"
-                size="sm"
-                className="h-8 gap-1 rounded-xl px-2"
-                onClick={() => setVersionsOpen(true)}
+                size="icon-sm"
+                className="rounded-full"
+                onClick={() => onRetry(message)}
               >
-                <span className="text-sm font-medium">
-                  {message.versionCount}
-                </span>
-                <RiRefreshLine className="size-4" aria-hidden />
+                <RiRefreshLine aria-hidden />
               </Button>
             </MessageAction>
-          ) : null}
 
-          <MessageAction
-            tooltip={
-              <span className="flex flex-col items-center gap-0.5">
-                <span>{t.studioRetry}</span>
-                {modelLabel ? (
-                  <span className="text-[11px] text-background/70">
-                    {t.studioUsedModel(modelLabel)}
-                  </span>
-                ) : null}
-              </span>
-            }
-          >
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="rounded-full"
-              onClick={() => onRetry(message)}
-            >
-              <RiRefreshLine aria-hidden />
-            </Button>
-          </MessageAction>
+            <MessageAction tooltip={copied ? t.copied : t.studioCopy}>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="rounded-full"
+                onClick={handleCopy}
+              >
+                <RiFileCopyLine
+                  className={cn(copied && "text-emerald-500")}
+                  aria-hidden
+                />
+              </Button>
+            </MessageAction>
 
-          <MessageAction tooltip={copied ? t.copied : t.studioCopy}>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="rounded-full"
-              onClick={handleCopy}
-            >
-              <RiFileCopyLine
-                className={cn(copied && "text-emerald-500")}
-                aria-hidden
-              />
-            </Button>
-          </MessageAction>
+            <MessageAction tooltip="Helpful">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className={cn(
+                  "rounded-full",
+                  liked === true && "bg-emerald-50 text-emerald-600"
+                )}
+                onClick={() => setLiked(true)}
+              >
+                <RiThumbUpLine aria-hidden />
+              </Button>
+            </MessageAction>
 
-          <MessageAction tooltip="Helpful">
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className={cn(
-                "rounded-full",
-                liked === true && "bg-emerald-50 text-emerald-600"
-              )}
-              onClick={() => setLiked(true)}
-            >
-              <RiThumbUpLine aria-hidden />
-            </Button>
-          </MessageAction>
-
-          <MessageAction tooltip="Not helpful">
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className={cn(
-                "rounded-full",
-                liked === false && "bg-red-50 text-red-600"
-              )}
-              onClick={() => setLiked(false)}
-            >
-              <RiThumbDownLine aria-hidden />
-            </Button>
-          </MessageAction>
-        </MessageActions>
+            <MessageAction tooltip="Not helpful">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className={cn(
+                  "rounded-full",
+                  liked === false && "bg-red-50 text-red-600"
+                )}
+                onClick={() => setLiked(false)}
+              >
+                <RiThumbDownLine aria-hidden />
+              </Button>
+            </MessageAction>
+          </MessageActions>
+        ) : null}
         <MessageVersionsDialog
           message={message}
           open={versionsOpen}

@@ -108,6 +108,17 @@ type CreateMessageInput = {
   attachments?: StudioAttachment[]
 }
 
+type UpdateMessageSnapshotInput = {
+  messageId: string
+  sessionId?: string
+  content?: string
+  activities?: StudioMessageActivity[]
+  parts?: StudioMessagePart[]
+  reasoningContent?: string
+  reasoningDurationMs?: number | null
+  status?: StudioMessageStatus
+}
+
 type UpsertSessionSandboxInput = {
   sessionId: string
   sandboxId: string
@@ -372,7 +383,9 @@ function migrateSchema(database: Database.Database) {
   }
 
   if (!columns.some((column) => column.name === "reasoning_duration_ms")) {
-    database.exec(`ALTER TABLE studio_messages ADD COLUMN reasoning_duration_ms INTEGER`)
+    database.exec(
+      `ALTER TABLE studio_messages ADD COLUMN reasoning_duration_ms INTEGER`
+    )
   }
 
   if (!columns.some((column) => column.name === "model")) {
@@ -380,7 +393,9 @@ function migrateSchema(database: Database.Database) {
   }
 
   if (!columns.some((column) => column.name === "version_group_id")) {
-    database.exec(`ALTER TABLE studio_messages ADD COLUMN version_group_id TEXT`)
+    database.exec(
+      `ALTER TABLE studio_messages ADD COLUMN version_group_id TEXT`
+    )
   }
 
   if (!columns.some((column) => column.name === "version_index")) {
@@ -513,7 +528,9 @@ function parseActivities(raw: string | null): StudioMessageActivity[] {
   }
 }
 
-function isStudioMessageActivity(value: unknown): value is StudioMessageActivity {
+function isStudioMessageActivity(
+  value: unknown
+): value is StudioMessageActivity {
   return (
     typeof value === "object" &&
     value !== null &&
@@ -804,6 +821,45 @@ export function listStudioMessageVersions(
   return rows.map(mapMessage)
 }
 
+export function getStudioMessage(messageId: string) {
+  const row = getDb()
+    .prepare(
+      `
+        SELECT
+          message.id,
+          message.session_id,
+          message.role,
+          message.content,
+          message.model,
+          message.version_group_id,
+          message.version_index,
+          CASE
+            WHEN message.version_group_id IS NULL THEN 1
+            ELSE (
+              SELECT COUNT(*)
+              FROM studio_messages AS version
+              WHERE version.session_id = message.session_id
+                AND version.role = 'assistant'
+                AND version.version_group_id = message.version_group_id
+            )
+          END AS version_count,
+          message.active_version,
+          message.activities,
+          message.parts,
+          message.reasoning_content,
+          message.reasoning_duration_ms,
+          message.status,
+          message.attachments,
+          message.created_at
+        FROM studio_messages AS message
+        WHERE message.id = ?
+      `
+    )
+    .get(messageId) as DbMessageRow | undefined
+
+  return row ? mapMessage(row) : null
+}
+
 export function createStudioMessage({
   id,
   sessionId,
@@ -840,8 +896,7 @@ export function createStudioMessage({
               `
             )
             .get(replacesMessageId, sessionId) as
-            | { id: string; version_group_id: string | null }
-            | undefined)
+            { id: string; version_group_id: string | null } | undefined)
         : undefined
 
       resolvedVersionGroupId =
@@ -885,8 +940,7 @@ export function createStudioMessage({
           `
         )
         .get(sessionId, resolvedVersionGroupId) as
-        | { version_index: number | null }
-        | undefined
+        { version_index: number | null } | undefined
 
       versionIndex =
         typeof latestVersion?.version_index === "number"
@@ -967,9 +1021,7 @@ export function createStudioMessage({
         reasoningContent: message.reasoningContent,
         reasoningDurationMs: message.reasoningDurationMs,
         status: message.status,
-        attachments: attachments.length
-          ? JSON.stringify(attachments)
-          : null,
+        attachments: attachments.length ? JSON.stringify(attachments) : null,
         createdAt: message.createdAt,
       })
 
@@ -987,6 +1039,74 @@ export function createStudioMessage({
   })
 
   return createMessageTransaction()
+}
+
+export function updateStudioMessageSnapshot({
+  messageId,
+  sessionId,
+  content,
+  activities,
+  parts,
+  reasoningContent,
+  reasoningDurationMs,
+  status,
+}: UpdateMessageSnapshotInput) {
+  const database = getDb()
+  const current = getStudioMessage(messageId)
+
+  if (!current || (sessionId && current.sessionId !== sessionId)) {
+    return null
+  }
+
+  const nextContent = content ?? current.content
+  const nextActivities = activities ?? current.activities
+  const nextParts = parts ?? current.parts
+  const nextReasoningContent = reasoningContent ?? current.reasoningContent
+  const nextReasoningDurationMs =
+    reasoningDurationMs === undefined
+      ? current.reasoningDurationMs
+      : reasoningDurationMs
+  const nextStatus = status ?? current.status
+  const updatedAt = nowIso()
+
+  const updateTransaction = database.transaction(() => {
+    database
+      .prepare(
+        `
+          UPDATE studio_messages
+          SET content = ?,
+              activities = ?,
+              parts = ?,
+              reasoning_content = ?,
+              reasoning_duration_ms = ?,
+              status = ?
+          WHERE id = ?
+        `
+      )
+      .run(
+        nextContent,
+        nextActivities.length ? JSON.stringify(nextActivities) : null,
+        nextParts.length ? JSON.stringify(nextParts) : null,
+        nextReasoningContent,
+        nextReasoningDurationMs,
+        nextStatus,
+        messageId
+      )
+
+    database
+      .prepare(
+        `
+          UPDATE studio_sessions
+          SET updated_at = ?
+          WHERE id = ?
+        `
+      )
+      .run(updatedAt, current.sessionId)
+  })
+
+  updateTransaction()
+
+  return getStudioMessage(messageId)
 }
 
 export function updateStudioMessageAttachments(
@@ -1212,8 +1332,8 @@ export function listStudioSavedGenericFiles(): StudioGenericLibraryFile[] {
     messageId: row.message_id,
     name: row.original_name,
     prompt: row.original_name,
-    modelName: "Code Interpreter",
-    manufacturer: "E2B",
+    modelName: "AstraFlow Sandbox",
+    manufacturer: "AstraFlow",
     mimeType: row.mime_type,
     size: row.size,
     sandboxPath: row.sandbox_path,
@@ -1573,7 +1693,9 @@ export function updateStudioImageGeneration(
     .run(
       input.status,
       input.errorMessage ?? null,
-      input.rawResponse === undefined ? null : JSON.stringify(input.rawResponse),
+      input.rawResponse === undefined
+        ? null
+        : JSON.stringify(input.rawResponse),
       completedAt,
       generationId
     )

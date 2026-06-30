@@ -82,6 +82,12 @@ const en = {
     input ? `Running command ${input}` : "Running command",
   studioToolRanCommand: (input: string) =>
     input ? `Ran command ${input}` : "Ran command",
+  studioToolResolvingHost: (input: string) =>
+    input
+      ? `Resolving sandbox host for port ${input}`
+      : "Resolving sandbox host",
+  studioToolResolvedHost: (input: string) =>
+    input ? `Resolved sandbox host for port ${input}` : "Resolved sandbox host",
   studioToolUploadingFile: (input: string) =>
     input ? `Uploading file ${input}` : "Uploading file",
   studioToolUploadedFile: (input: string) =>
@@ -109,7 +115,7 @@ const en = {
   studioApiSettings: "API Settings",
   studioApiSettingsTitle: "UCloud OAuth",
   studioApiSettingsDescription:
-    "Sign in with your UCloud account to authorize Studio locally. ",
+    "Sign in with your UCloud account to authorize Studio.",
   studioApiKeyLabel: "API Key",
   studioApiKeyPlaceholder: "Paste your API key",
   studioApiKeyGetLink: "Get API Key",
@@ -123,9 +129,9 @@ const en = {
   studioOAuthConnecting: "Opening browser...",
   studioOAuthWaiting: "Waiting for browser authorization...",
   studioOAuthOpenBrowser: "Open browser again",
-  studioOAuthSuccess: "UCloud is connected locally.",
+  studioOAuthSuccess: "UCloud is connected.",
   studioOAuthFailed: "UCloud authorization failed.",
-  studioOAuthLocalCallback: "Loopback callback",
+  studioOAuthLocalCallback: "OAuth callback",
   studioOAuthSignedInAs: "Signed in as",
   studioModelverseApiKeyLabel: "Modelverse API key",
   studioModelverseApiKeyPlaceholder: "Select a Modelverse API key",
@@ -307,6 +313,10 @@ const zh: Dictionary = {
     input ? `正在执行命令 ${input}` : "正在执行命令",
   studioToolRanCommand: (input: string) =>
     input ? `已执行命令 ${input}` : "已执行命令",
+  studioToolResolvingHost: (input: string) =>
+    input ? `正在解析沙箱端口 ${input}` : "正在解析沙箱地址",
+  studioToolResolvedHost: (input: string) =>
+    input ? `已解析沙箱端口 ${input}` : "已解析沙箱地址",
   studioToolUploadingFile: (input: string) =>
     input ? `正在上传文件 ${input}` : "正在上传文件",
   studioToolUploadedFile: (input: string) =>
@@ -333,7 +343,7 @@ const zh: Dictionary = {
   studioToolError: "工具调用失败",
   studioApiSettings: "API 设置",
   studioApiSettingsTitle: "UCloud OAuth 登录",
-  studioApiSettingsDescription: "使用 UCloud 账号登录来授权本地操作台。",
+  studioApiSettingsDescription: "使用 UCloud 账号登录来授权操作台。",
   studioApiKeyLabel: "API Key",
   studioApiKeyPlaceholder: "粘贴你的 API Key",
   studioApiKeyGetLink: "获取 API Key",
@@ -347,9 +357,9 @@ const zh: Dictionary = {
   studioOAuthConnecting: "正在打开浏览器...",
   studioOAuthWaiting: "等待浏览器完成授权...",
   studioOAuthOpenBrowser: "重新打开浏览器",
-  studioOAuthSuccess: "UCloud 已连接到本地。",
+  studioOAuthSuccess: "UCloud 已连接。",
   studioOAuthFailed: "UCloud 授权失败。",
-  studioOAuthLocalCallback: "本地回调",
+  studioOAuthLocalCallback: "OAuth 回调",
   studioOAuthSignedInAs: "当前账号",
   studioModelverseApiKeyLabel: "Modelverse API Key",
   studioModelverseApiKeyPlaceholder: "选择一个 Modelverse API Key",
