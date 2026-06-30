@@ -279,3 +279,18 @@ export function getVideoModelEndpoint(entry: StudioVideoOpenapiModelEntry) {
 export function getVideoTaskStatusEndpoint(entry: StudioVideoOpenapiModelEntry) {
   return `${MODELVERSE_BASE_URL}${entry.statusPath}`
 }
+
+export function getVideoOpenapiEntry(
+  file: string | null | undefined,
+  operationId: string | null | undefined
+) {
+  if (!file || !operationId) {
+    return null
+  }
+
+  return (
+    VIDEO_OPENAPI_MODELS.find(
+      (entry) => entry.file === file && entry.operationId === operationId
+    ) ?? null
+  )
+}

@@ -225,7 +225,7 @@ function LoginForm() {
       await saveModelverseApiKey(preferredKeyId, apiKeys.projectId)
 
       setPhase("done")
-      setMessage("Login complete. Redirecting to Explore...")
+      setMessage("Login complete. Redirecting to Models...")
       router.replace("/explore")
     } catch (nextError) {
       finalizeStartedRef.current = false

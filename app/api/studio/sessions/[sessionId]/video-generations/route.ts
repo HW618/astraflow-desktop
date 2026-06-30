@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server"
+import { after, NextResponse } from "next/server"
 import { z } from "zod"
 
 import { getAppAuthState } from "@/lib/app-auth"
@@ -13,16 +13,18 @@ import {
 } from "@/lib/studio-video-db"
 import { downloadVideoAsDataUrl } from "@/lib/studio-video-storage"
 import type {
+  StudioVideoGeneration,
   StudioVideoModelOpenapi,
-  StudioVideoOutput,
   StudioVideoParameterField,
 } from "@/lib/studio-video-types"
 import {
+  getVideoOpenapiEntry,
   getVideoModelEndpoint,
   getVideoTaskStatusEndpoint,
 } from "@/lib/video-openapi"
 
 export const runtime = "nodejs"
+export const maxDuration = 3600
 
 type RouteContext = {
   params: Promise<{ sessionId: string }>
@@ -38,8 +40,10 @@ type NormalizedOutput = {
   metadata?: unknown
 }
 
-const ASYNC_TASK_MAX_POLLS = 180
-const ASYNC_TASK_POLL_INTERVAL_MS = 2_000
+const ASYNC_TASK_MAX_POLLS = 720
+const ASYNC_TASK_POLL_INTERVAL_MS = 5_000
+const TRANSIENT_PROVIDER_STATUSES = new Set([408, 429, 500, 502, 503, 504])
+const activeVideoGenerationTasks = new Set<string>()
 
 const paramsSchema = z.record(z.string(), z.unknown())
 const mediaAttachmentSchema = z.object({
@@ -78,6 +82,7 @@ const submitSchema = z.object({
 
 type SubmitInput = z.infer<typeof submitSchema>
 type SubmitAttachment = z.infer<typeof mediaAttachmentSchema>
+type ProviderResponse = { ok: boolean; status: number; body: unknown }
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -455,6 +460,10 @@ function isTaskFailure(status: string | null) {
   )
 }
 
+function isTransientProviderStatus(status: number) {
+  return TRANSIENT_PROVIDER_STATUSES.has(status)
+}
+
 async function callProvider({
   url,
   payload,
@@ -634,17 +643,37 @@ async function pollAsyncTask({
 }) {
   const url = new URL(statusUrl)
   url.searchParams.set("task_id", taskId)
+  let lastTransientError: ProviderResponse | null = null
 
   for (let attempt = 0; attempt < ASYNC_TASK_MAX_POLLS; attempt += 1) {
     if (attempt > 0) {
       await sleep(ASYNC_TASK_POLL_INTERVAL_MS)
     }
 
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-      },
-    })
+    let response: Response
+
+    try {
+      response = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+      })
+    } catch (error) {
+      lastTransientError = {
+        ok: false,
+        status: 0,
+        body: {
+          error: {
+            message:
+              error instanceof Error
+                ? error.message
+                : "Task status request failed.",
+          },
+        },
+      }
+      continue
+    }
+
     const text = await response.text()
     let parsed: unknown = null
 
@@ -655,9 +684,19 @@ async function pollAsyncTask({
     }
 
     if (!response.ok) {
+      if (isTransientProviderStatus(response.status)) {
+        lastTransientError = {
+          ok: false,
+          status: response.status,
+          body: parsed,
+        }
+        continue
+      }
+
       return { ok: false, status: response.status, body: parsed }
     }
 
+    lastTransientError = null
     const taskStatus = getAsyncTaskStatus(parsed)
 
     if (isTaskSuccess(taskStatus)) {
@@ -674,8 +713,9 @@ async function pollAsyncTask({
     status: 504,
     body: {
       error: {
-        message: "Async video task timed out.",
+        message: "Async video task polling window expired.",
       },
+      lastTransientError,
     },
   }
 }
@@ -710,17 +750,37 @@ async function pollOpenAiVideoTask({
   apiKey: string
 }) {
   const url = statusUrl.replace("{task_id}", encodeURIComponent(taskId))
+  let lastTransientError: ProviderResponse | null = null
 
   for (let attempt = 0; attempt < ASYNC_TASK_MAX_POLLS; attempt += 1) {
     if (attempt > 0) {
       await sleep(ASYNC_TASK_POLL_INTERVAL_MS)
     }
 
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-      },
-    })
+    let response: Response
+
+    try {
+      response = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+      })
+    } catch (error) {
+      lastTransientError = {
+        ok: false,
+        status: 0,
+        body: {
+          error: {
+            message:
+              error instanceof Error
+                ? error.message
+                : "Video status request failed.",
+          },
+        },
+      }
+      continue
+    }
+
     const text = await response.text()
     let parsed: unknown = null
 
@@ -731,9 +791,19 @@ async function pollOpenAiVideoTask({
     }
 
     if (!response.ok) {
+      if (isTransientProviderStatus(response.status)) {
+        lastTransientError = {
+          ok: false,
+          status: response.status,
+          body: parsed,
+        }
+        continue
+      }
+
       return { ok: false, status: response.status, body: parsed }
     }
 
+    lastTransientError = null
     const taskStatus = getOpenAiVideoTaskStatus(parsed)
 
     if (isTaskSuccess(taskStatus)) {
@@ -750,8 +820,9 @@ async function pollOpenAiVideoTask({
     status: 504,
     body: {
       error: {
-        message: "OpenAI video task timed out.",
+        message: "OpenAI video task polling window expired.",
       },
+      lastTransientError,
     },
   }
 }
@@ -896,96 +967,32 @@ async function prepareAutoSavedOutput(
   }
 }
 
-export async function GET(_request: Request, context: RouteContext) {
-  const { sessionId } = await context.params
-  const session = getStudioSession(sessionId)
-
-  if (!session) {
-    return NextResponse.json(
-      { ok: false, error: "Session not found" },
-      { status: 404 }
-    )
-  }
-
-  return NextResponse.json({
-    ok: true,
-    data: listStudioVideoGenerations(sessionId),
-  })
-}
-
-export async function POST(request: Request, context: RouteContext) {
-  const auth = await getAppAuthState()
-
-  if (!auth.authenticated) {
-    return NextResponse.json(
-      { ok: false, error: "Login is required." },
-      { status: 401 }
-    )
-  }
-
-  const { sessionId } = await context.params
-  const session = getStudioSession(sessionId)
-
-  if (!session) {
-    return NextResponse.json(
-      { ok: false, error: "Session not found" },
-      { status: 404 }
-    )
-  }
-
-  if (session.mode !== "video") {
-    return NextResponse.json(
-      { ok: false, error: "Session is not a video session." },
-      { status: 400 }
-    )
-  }
-
-  const parsed = submitSchema.safeParse(await request.json())
-
-  if (!parsed.success) {
-    return NextResponse.json(
-      { ok: false, error: parsed.error.flatten() },
-      { status: 400 }
-    )
-  }
-
-  const apiKey = getStoredModelverseApiKey()
-
-  if (!apiKey) {
-    return NextResponse.json(
-      { ok: false, error: "Modelverse API key is not configured locally." },
-      { status: 400 }
-    )
-  }
-
-  const generation = createStudioVideoGeneration({
-    sessionId,
-    modelSquareId: parsed.data.modelId,
-    modelName: parsed.data.modelName,
-    openapiFile: parsed.data.openapi.file,
-    operationId: parsed.data.openapi.operationId,
-    prompt: parsed.data.prompt,
-    params: parsed.data.params,
-    status: "running",
-  })
-
-  const endpointUrl = getVideoModelEndpoint(parsed.data.openapi)
-  const statusUrl = getVideoTaskStatusEndpoint(parsed.data.openapi)
+async function completeStudioVideoGeneration({
+  generation,
+  input,
+  apiKey,
+}: {
+  generation: StudioVideoGeneration
+  input: SubmitInput
+  apiKey: string
+}) {
+  const endpointUrl = getVideoModelEndpoint(input.openapi)
+  const statusUrl = getVideoTaskStatusEndpoint(input.openapi)
   let providerTaskId: string | null = null
   let providerRequestId: string | null = null
 
   try {
-    let providerResponse: { ok: boolean; status: number; body: unknown }
+    let providerResponse: ProviderResponse
     let outputs: NormalizedOutput[] = []
 
-    if (parsed.data.openapi.adapter === "openai-video") {
+    if (input.openapi.adapter === "openai-video") {
       const formData = buildOpenAiVideoFormData({
-        openapi: parsed.data.openapi,
-        fields: parsed.data.fields,
-        prompt: parsed.data.prompt,
-        params: parsed.data.params,
-        media: parsed.data.media,
-        attachments: parsed.data.attachments,
+        openapi: input.openapi,
+        fields: input.fields,
+        prompt: input.prompt,
+        params: input.params,
+        media: input.media,
+        attachments: input.attachments,
       })
 
       providerResponse = await callProviderFormData({
@@ -1047,12 +1054,12 @@ export async function POST(request: Request, context: RouteContext) {
       }
     } else {
       const payload = buildVideoPayload({
-        openapi: parsed.data.openapi,
-        fields: parsed.data.fields,
-        prompt: parsed.data.prompt,
-        params: parsed.data.params,
-        media: parsed.data.media,
-        attachments: parsed.data.attachments,
+        openapi: input.openapi,
+        fields: input.fields,
+        prompt: input.prompt,
+        params: input.params,
+        media: input.media,
+        attachments: input.attachments,
       })
 
       providerResponse = await callProvider({
@@ -1121,21 +1128,7 @@ export async function POST(request: Request, context: RouteContext) {
         providerTaskId,
         providerRequestId,
       })
-
-      return NextResponse.json(
-        {
-          ok: false,
-          error: String(message),
-          data: {
-            ...generation,
-            status: "error",
-            errorMessage: message,
-            providerTaskId,
-            providerRequestId,
-          },
-        },
-        { status: 502 }
-      )
+      return
     }
 
     if (outputs.length === 0) {
@@ -1146,34 +1139,26 @@ export async function POST(request: Request, context: RouteContext) {
         providerTaskId,
         providerRequestId,
       })
-
-      return NextResponse.json(
-        { ok: false, error: "No video returned by the provider." },
-        { status: 502 }
-      )
+      return
     }
-
-    const stored: StudioVideoOutput[] = []
 
     const autoSavedOutputs = await Promise.all(
       outputs.map((output) => prepareAutoSavedOutput(output))
     )
 
     autoSavedOutputs.forEach((output, index) => {
-      stored.push(
-        createStudioVideoOutput({
-          generationId: generation.id,
-          index,
-          url: output.url ?? null,
-          dataUrl: output.dataUrl ?? null,
-          mimeType: output.mimeType ?? null,
-          width: output.width ?? null,
-          height: output.height ?? null,
-          durationSeconds: output.durationSeconds ?? null,
-          metadata: output.metadata,
-          autoSave: true,
-        })
-      )
+      createStudioVideoOutput({
+        generationId: generation.id,
+        index,
+        url: output.url ?? null,
+        dataUrl: output.dataUrl ?? null,
+        mimeType: output.mimeType ?? null,
+        width: output.width ?? null,
+        height: output.height ?? null,
+        durationSeconds: output.durationSeconds ?? null,
+        metadata: output.metadata,
+        autoSave: true,
+      })
     })
 
     updateStudioVideoGeneration(generation.id, {
@@ -1182,21 +1167,6 @@ export async function POST(request: Request, context: RouteContext) {
       providerTaskId,
       providerRequestId,
     })
-
-    return NextResponse.json(
-      {
-        ok: true,
-        data: {
-          ...generation,
-          status: "complete",
-          providerTaskId,
-          providerRequestId,
-          outputs: stored,
-          completedAt: new Date().toISOString(),
-        },
-      },
-      { status: 201 }
-    )
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Video generation failed."
@@ -1204,13 +1174,294 @@ export async function POST(request: Request, context: RouteContext) {
     updateStudioVideoGeneration(generation.id, {
       status: "error",
       errorMessage: message,
-      providerTaskId: null,
-      providerRequestId: null,
+      providerTaskId,
+      providerRequestId,
+    })
+  }
+}
+
+async function resumeStudioVideoGeneration({
+  generation,
+  apiKey,
+}: {
+  generation: StudioVideoGeneration
+  apiKey: string
+}) {
+  const entry = getVideoOpenapiEntry(generation.openapiFile, generation.operationId)
+  const taskId = generation.providerTaskId
+
+  if (!entry || !taskId) {
+    return
+  }
+
+  const statusUrl = getVideoTaskStatusEndpoint(entry)
+  let providerRequestId = generation.providerRequestId
+
+  try {
+    let providerResponse: ProviderResponse
+    let outputs: NormalizedOutput[] = []
+
+    if (entry.adapter === "openai-video") {
+      const statusResponse = await pollOpenAiVideoTask({
+        statusUrl,
+        taskId,
+        apiKey,
+      })
+
+      providerRequestId =
+        getProviderRequestId(statusResponse.body) ?? providerRequestId
+      providerResponse = {
+        ok: statusResponse.ok,
+        status: statusResponse.status,
+        body: {
+          task_id: taskId,
+          request_id: providerRequestId,
+          status: statusResponse.body,
+          resumed: true,
+        },
+      }
+
+      if (statusResponse.ok) {
+        outputs = [
+          await downloadOpenAiVideoContent({
+            statusUrl,
+            taskId,
+            apiKey,
+          }),
+        ]
+      }
+    } else {
+      const statusResponse = await pollAsyncTask({
+        statusUrl,
+        taskId,
+        apiKey,
+      })
+
+      providerRequestId =
+        getProviderRequestId(statusResponse.body) ?? providerRequestId
+      providerResponse = {
+        ok: statusResponse.ok,
+        status: statusResponse.status,
+        body: {
+          task_id: taskId,
+          request_id: providerRequestId,
+          status: statusResponse.body,
+          resumed: true,
+        },
+      }
+
+      if (providerResponse.ok) {
+        outputs = extractVideoOutputs(providerResponse.body)
+      }
+    }
+
+    if (!providerResponse.ok) {
+      const message = getProviderErrorMessage(
+        providerResponse.body,
+        `Provider returned ${providerResponse.status}`
+      )
+
+      updateStudioVideoGeneration(generation.id, {
+        status: "error",
+        errorMessage: String(message),
+        rawResponse: providerResponse.body,
+        providerTaskId: taskId,
+        providerRequestId,
+      })
+      return
+    }
+
+    if (outputs.length === 0) {
+      updateStudioVideoGeneration(generation.id, {
+        status: "error",
+        errorMessage: "No video returned by the provider.",
+        rawResponse: providerResponse.body,
+        providerTaskId: taskId,
+        providerRequestId,
+      })
+      return
+    }
+
+    const autoSavedOutputs = await Promise.all(
+      outputs.map((output) => prepareAutoSavedOutput(output))
+    )
+
+    autoSavedOutputs.forEach((output, index) => {
+      createStudioVideoOutput({
+        generationId: generation.id,
+        index,
+        url: output.url ?? null,
+        dataUrl: output.dataUrl ?? null,
+        mimeType: output.mimeType ?? null,
+        width: output.width ?? null,
+        height: output.height ?? null,
+        durationSeconds: output.durationSeconds ?? null,
+        metadata: output.metadata,
+        autoSave: true,
+      })
     })
 
+    updateStudioVideoGeneration(generation.id, {
+      status: "complete",
+      rawResponse: providerResponse.body,
+      providerTaskId: taskId,
+      providerRequestId,
+    })
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Video generation failed."
+
+    updateStudioVideoGeneration(generation.id, {
+      status: "error",
+      errorMessage: message,
+      providerTaskId: taskId,
+      providerRequestId,
+    })
+  }
+}
+
+function scheduleVideoGenerationTask(
+  generationId: string,
+  work: () => Promise<void>
+) {
+  if (activeVideoGenerationTasks.has(generationId)) {
+    return
+  }
+
+  activeVideoGenerationTasks.add(generationId)
+  after(async () => {
+    try {
+      await work()
+    } finally {
+      activeVideoGenerationTasks.delete(generationId)
+    }
+  })
+}
+
+function shouldResumeVideoGeneration(generation: StudioVideoGeneration) {
+  if (!generation.providerTaskId || generation.status === "error") {
+    return false
+  }
+
+  return (
+    generation.status === "queued" ||
+    generation.status === "running" ||
+    generation.outputs.length === 0
+  )
+}
+
+function getVideoOutputContentUrl(outputId: string) {
+  return `/api/studio/video-outputs/${encodeURIComponent(outputId)}/content`
+}
+
+function toLightVideoGeneration(
+  generation: StudioVideoGeneration
+): StudioVideoGeneration {
+  return {
+    ...generation,
+    outputs: generation.outputs.map((output) => ({
+      ...output,
+      src: getVideoOutputContentUrl(output.id),
+      dataUrl: null,
+    })),
+  }
+}
+
+export async function GET(_request: Request, context: RouteContext) {
+  const { sessionId } = await context.params
+  const session = getStudioSession(sessionId)
+
+  if (!session) {
     return NextResponse.json(
-      { ok: false, error: message },
-      { status: 500 }
+      { ok: false, error: "Session not found" },
+      { status: 404 }
     )
   }
+
+  const generations = listStudioVideoGenerations(sessionId)
+  const apiKey = getStoredModelverseApiKey()
+
+  if (apiKey) {
+    for (const generation of generations) {
+      if (!shouldResumeVideoGeneration(generation)) {
+        continue
+      }
+
+      scheduleVideoGenerationTask(generation.id, () =>
+        resumeStudioVideoGeneration({ generation, apiKey })
+      )
+    }
+  }
+
+  return NextResponse.json({
+    ok: true,
+    data: generations.map(toLightVideoGeneration),
+  })
+}
+
+export async function POST(request: Request, context: RouteContext) {
+  const auth = await getAppAuthState()
+
+  if (!auth.authenticated) {
+    return NextResponse.json(
+      { ok: false, error: "Login is required." },
+      { status: 401 }
+    )
+  }
+
+  const { sessionId } = await context.params
+  const session = getStudioSession(sessionId)
+
+  if (!session) {
+    return NextResponse.json(
+      { ok: false, error: "Session not found" },
+      { status: 404 }
+    )
+  }
+
+  if (session.mode !== "video") {
+    return NextResponse.json(
+      { ok: false, error: "Session is not a video session." },
+      { status: 400 }
+    )
+  }
+
+  const parsed = submitSchema.safeParse(await request.json())
+
+  if (!parsed.success) {
+    return NextResponse.json(
+      { ok: false, error: parsed.error.flatten() },
+      { status: 400 }
+    )
+  }
+
+  const apiKey = getStoredModelverseApiKey()
+
+  if (!apiKey) {
+    return NextResponse.json(
+      { ok: false, error: "Modelverse API key is not configured locally." },
+      { status: 400 }
+    )
+  }
+
+  const generation = createStudioVideoGeneration({
+    sessionId,
+    modelSquareId: parsed.data.modelId,
+    modelName: parsed.data.modelName,
+    openapiFile: parsed.data.openapi.file,
+    operationId: parsed.data.openapi.operationId,
+    prompt: parsed.data.prompt,
+    params: parsed.data.params,
+    status: "running",
+  })
+
+  scheduleVideoGenerationTask(generation.id, () =>
+    completeStudioVideoGeneration({
+      generation,
+      input: parsed.data,
+      apiKey,
+    })
+  )
+
+  return NextResponse.json({ ok: true, data: generation }, { status: 202 })
 }

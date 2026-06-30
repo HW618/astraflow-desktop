@@ -18,6 +18,7 @@ import {
   updateStudioImageGeneration,
 } from "@/lib/studio-db"
 import type {
+  StudioImageGeneration,
   StudioImageOutput,
   StudioImageParameterField,
 } from "@/lib/studio-types"
@@ -695,6 +696,23 @@ function getOpenapiOperation(
   )
 }
 
+function getImageOutputContentUrl(outputId: string) {
+  return `/api/studio/image-outputs/${encodeURIComponent(outputId)}/content`
+}
+
+function toLightImageGeneration(
+  generation: StudioImageGeneration
+): StudioImageGeneration {
+  return {
+    ...generation,
+    outputs: generation.outputs.map((output) => ({
+      ...output,
+      src: getImageOutputContentUrl(output.id),
+      dataUrl: null,
+    })),
+  }
+}
+
 export async function GET(_request: Request, context: RouteContext) {
   const { sessionId } = await context.params
   const session = getStudioSession(sessionId)
@@ -708,7 +726,7 @@ export async function GET(_request: Request, context: RouteContext) {
 
   return NextResponse.json({
     ok: true,
-    data: listStudioImageGenerations(sessionId),
+    data: listStudioImageGenerations(sessionId).map(toLightImageGeneration),
   })
 }
 

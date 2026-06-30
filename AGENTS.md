@@ -1,4 +1,5 @@
 <!-- BEGIN:nextjs-agent-rules -->
+
 # This is NOT the Next.js you know
 
 This version has breaking changes — APIs, conventions, and file structure may all differ from your trainingdata. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
@@ -10,7 +11,16 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - Prioritize user experience, responsive ergonomics, and clear workflow surfaces.
 - Monorepo layout: `apps/web` is the Next.js app, `packages/ui` owns shared shadcn/ui components.
 - Use `bunx --bun shadcn@latest add <component> -c apps/web` for shadcn components in this monorepo.
-- Keep the first navigation items as `Explore` and `AI Generator` unless the product direction changes.
+- Keep the first navigation items as `Models` and `SKILLS` unless the product direction changes. The legacy `/explore` route is the Models page.
+
+## UCloud OpenAPI Calls
+
+- In app route handlers, call UCloud OpenAPI the same way as `app/api/model-square/route.ts`: use `getUCloudCredentials()` for the local UCloud OAuth Bearer token, then call `callUCloudAction()`.
+- Do not introduce `UCLOUD_PUBLIC_KEY` / `UCLOUD_PRIVATE_KEY`, AccessKey, or a separate signature credential path for product APIs unless explicitly requested. This desktop app is OAuth-first.
+- For project-scoped UCloud actions, resolve and pass `ProjectId` using `resolveModelverseProjectId()` with `getStudioModelverseApiKey()?.projectId || credentials.projectId` as the preferred project, matching the Explore/Models API behavior.
+- Skill marketplace actions (`DescribeSkillMarket`, `DescribeSkillDetail`) are routed through SkillLab. Always include `Backend: "SkillLab"` in the `callUCloudAction()` params, in addition to the resolved `ProjectId`.
+- `DescribeSkillMarket` only accepts `OrderBy: "popular"` or `OrderBy: "recent"`. Do not send response field names such as `Downloads`, `UpStreamUpdatedAt`, or `Name`.
+- Treat UCloud `RetCode: 299` as an IAM/project-context issue first. Check whether `ProjectId` is missing or the OAuth account lacks that Action permission before changing authentication mode.
 
 ## Local Workflow
 

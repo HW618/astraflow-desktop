@@ -5,6 +5,7 @@ import {
   RiAddLine,
   RiCloseLine,
   RiDownloadLine,
+  RiErrorWarningLine,
   RiLoader4Line,
   RiQuestionLine,
 } from "@remixicon/react"
@@ -83,6 +84,8 @@ function getVideoCopy(locale: string) {
       generatingHint: "完成后会自动保存到文件库",
       complete: "已完成",
       failed: "失败",
+      errorTitle: "视频生成失败",
+      errorFallback: "Provider 没有返回错误详情。",
     }
   }
 
@@ -111,6 +114,8 @@ function getVideoCopy(locale: string) {
     generatingHint: "It will be saved to Files when ready",
     complete: "Complete",
     failed: "Failed",
+    errorTitle: "Video generation failed",
+    errorFallback: "The provider did not return error details.",
   }
 }
 
@@ -277,8 +282,18 @@ function isVideoGenerationPending(generation: StudioVideoGeneration) {
   return (
     generation.id.startsWith("pending-") ||
     generation.status === "queued" ||
-    generation.status === "running"
+    generation.status === "running" ||
+    (generation.status !== "error" && generation.outputs.length === 0)
   )
+}
+
+function getVideoOutputContentUrl(outputId: string, download = false) {
+  const suffix = download ? "?download=1" : ""
+  return `/api/studio/video-outputs/${encodeURIComponent(outputId)}/content${suffix}`
+}
+
+function getVideoOutputSrc(output: StudioVideoOutput) {
+  return output.dataUrl ?? getVideoOutputContentUrl(output.id)
 }
 
 function StudioVideoWorkbench({
@@ -412,7 +427,7 @@ function StudioVideoWorkbench({
 
     const interval = window.setInterval(() => {
       void reloadGenerations(sessionId, { clearOnError: false })
-    }, 2_500)
+    }, 5_000)
 
     return () => window.clearInterval(interval)
   }, [generations, sessionId, reloadGenerations])
@@ -590,7 +605,7 @@ function StudioVideoWorkbench({
   }
 
   function downloadOutput(output: StudioVideoOutput) {
-    const href = output.dataUrl ?? output.url
+    const href = output.dataUrl ?? getVideoOutputContentUrl(output.id, true)
     if (!href) return
     const anchor = document.createElement("a")
     anchor.href = href
@@ -1065,17 +1080,30 @@ type CanvasTile =
       key: string
       generation: StudioVideoGeneration
     }
+  | {
+      kind: "error"
+      key: string
+      generation: StudioVideoGeneration
+    }
 
 function buildCanvasTiles(generations: StudioVideoGeneration[]): CanvasTile[] {
   const tiles: CanvasTile[] = []
 
   for (const generation of generations) {
-    if (generation.outputs.length === 0 && generation.status === "running") {
-      tiles.push({
-        kind: "pending",
-        key: `pending-${generation.id}`,
-        generation,
-      })
+    if (generation.outputs.length === 0) {
+      if (generation.status === "queued" || generation.status === "running") {
+        tiles.push({
+          kind: "pending",
+          key: `pending-${generation.id}`,
+          generation,
+        })
+      } else if (generation.status === "error") {
+        tiles.push({
+          kind: "error",
+          key: `error-${generation.id}`,
+          generation,
+        })
+      }
       continue
     }
 
@@ -1144,6 +1172,12 @@ function OutputCanvas({
               onSelect={() => onSelectGeneration(tile.generation)}
               onDownload={() => onDownloadOutput(tile.output)}
             />
+          ) : tile.kind === "error" ? (
+            <CanvasErrorTile
+              key={tile.key}
+              generation={tile.generation}
+              onSelect={() => onSelectGeneration(tile.generation)}
+            />
           ) : (
             <CanvasPendingTile
               key={tile.key}
@@ -1171,20 +1205,37 @@ function CanvasOutputTile({
 }: CanvasOutputTileProps) {
   const { locale } = useI18n()
   const copy = getVideoCopy(locale)
-  const src = output.src
+  const src = getVideoOutputSrc(output)
+  const [loadedSrc, setLoadedSrc] = React.useState<string | null>(null)
+  const loaded = loadedSrc === src
 
   return (
     <div className="group relative flex min-h-0 flex-col overflow-hidden rounded-2xl border bg-muted shadow-sm">
       <div
         onDoubleClick={onSelect}
-        className="aspect-video min-h-64 overflow-hidden bg-black"
+        className="relative aspect-video min-h-64 overflow-hidden bg-black"
       >
+        {!loaded ? (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-muted">
+            <div className="flex flex-col items-center gap-2 text-center text-muted-foreground">
+              <div className="size-10 animate-pulse rounded-full border bg-background" />
+              <p className="max-w-48 truncate font-mono text-[10px]">
+                {output.id}
+              </p>
+            </div>
+          </div>
+        ) : null}
         {src ? (
           <VideoPlayer
             src={src}
             aria-label={generation.prompt}
             autoHide={false}
-            className="size-full rounded-none"
+            className={cn(
+              "size-full rounded-none transition-opacity",
+              loaded ? "opacity-100" : "opacity-0"
+            )}
+            onLoadedData={() => setLoadedSrc(src)}
+            onLoadedMetadata={() => setLoadedSrc(src)}
             playsInline
             preload="metadata"
             size="full"
@@ -1254,6 +1305,55 @@ function CanvasPendingTile({
         </div>
       </div>
       <div className="absolute top-0 left-0 right-0 flex items-start justify-between gap-2 bg-gradient-to-b from-black/30 to-transparent p-2 text-xs">
+        <div className="flex min-w-0 flex-col">
+          <p className="truncate font-medium text-foreground">
+            {generation.prompt}
+          </p>
+          <p className="truncate text-[10px] text-muted-foreground">
+            {generation.modelName}
+          </p>
+        </div>
+        <StatusBadge generation={generation} />
+      </div>
+    </div>
+  )
+}
+
+function CanvasErrorTile({
+  generation,
+  onSelect,
+}: {
+  generation: StudioVideoGeneration
+  onSelect: () => void
+}) {
+  const { locale } = useI18n()
+  const copy = getVideoCopy(locale)
+  const message = generation.errorMessage?.trim() || copy.errorFallback
+
+  return (
+    <div
+      onDoubleClick={onSelect}
+      className="relative flex aspect-video min-h-64 flex-col overflow-hidden rounded-2xl border border-destructive/30 bg-destructive/5 text-foreground shadow-sm"
+    >
+      <div className="relative z-10 flex flex-1 items-center justify-center p-6">
+        <div className="flex max-w-xl flex-col items-center gap-4 text-center">
+          <div className="flex size-16 items-center justify-center rounded-full border border-destructive/30 bg-background text-destructive shadow-sm">
+            <RiErrorWarningLine className="size-9" aria-hidden />
+          </div>
+          <div className="flex min-w-0 flex-col items-center gap-2">
+            <p className="text-sm font-medium text-destructive">
+              {copy.errorTitle}
+            </p>
+            <p className="line-clamp-2 max-w-full text-xs text-muted-foreground">
+              {generation.prompt}
+            </p>
+            <p className="max-h-28 max-w-full overflow-y-auto break-words rounded-xl border border-destructive/20 bg-background/80 px-3 py-2 text-xs leading-relaxed text-destructive">
+              {message}
+            </p>
+          </div>
+        </div>
+      </div>
+      <div className="absolute top-0 left-0 right-0 flex items-start justify-between gap-2 bg-gradient-to-b from-background/90 to-transparent p-2 text-xs">
         <div className="flex min-w-0 flex-col">
           <p className="truncate font-medium text-foreground">
             {generation.prompt}

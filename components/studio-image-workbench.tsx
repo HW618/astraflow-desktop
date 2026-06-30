@@ -218,6 +218,15 @@ function getStoredModelId(supported: StudioImageModelOption[]) {
   return getPreferredStudioModelId("image", supported)
 }
 
+function getImageOutputContentUrl(outputId: string, download = false) {
+  const suffix = download ? "?download=1" : ""
+  return `/api/studio/image-outputs/${encodeURIComponent(outputId)}/content${suffix}`
+}
+
+function getImageOutputSrc(output: StudioImageOutput) {
+  return output.dataUrl ?? getImageOutputContentUrl(output.id)
+}
+
 function StudioImageWorkbench({
   sessionId,
   onSessionChange,
@@ -599,7 +608,7 @@ function StudioImageWorkbench({
   }
 
   function downloadOutput(output: StudioImageOutput) {
-    const href = output.dataUrl ?? output.url
+    const href = output.dataUrl ?? getImageOutputContentUrl(output.id, true)
     if (!href) return
     const anchor = document.createElement("a")
     anchor.href = href
@@ -1232,21 +1241,38 @@ function CanvasOutputTile({
   onDownload,
 }: CanvasOutputTileProps) {
   const { t } = useI18n()
-  const src = output.src
+  const src = getImageOutputSrc(output)
+  const [loadedSrc, setLoadedSrc] = React.useState<string | null>(null)
+  const loaded = loadedSrc === src
 
   return (
     <div className="group relative flex min-h-0 flex-col overflow-hidden rounded-2xl border bg-muted">
       <button
         type="button"
         onClick={onSelect}
-        className="flex min-h-0 flex-1 items-center justify-center overflow-hidden focus-visible:ring-2 focus-visible:ring-ring"
+        className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden focus-visible:ring-2 focus-visible:ring-ring"
       >
+        {!loaded ? (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-muted">
+            <div className="flex flex-col items-center gap-2 text-center text-muted-foreground">
+              <div className="size-10 animate-pulse rounded-full border bg-background" />
+              <p className="max-w-48 truncate font-mono text-[10px]">
+                {output.id}
+              </p>
+            </div>
+          </div>
+        ) : null}
         {src ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={src}
             alt={generation.prompt}
-            className="size-full object-cover"
+            className={cn(
+              "size-full object-cover transition-opacity",
+              loaded ? "opacity-100" : "opacity-0"
+            )}
+            loading="lazy"
+            onLoad={() => setLoadedSrc(src)}
           />
         ) : null}
       </button>

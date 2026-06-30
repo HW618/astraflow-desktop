@@ -11,12 +11,36 @@ export const localeLabels: Record<Locale, string> = {
 
 const en = {
   // Navigation
-  explore: "Explore",
+  explore: "Models",
+  skills: "SKILLS",
   studio: "Studio",
   files: "Files",
   logout: "Logout",
   toggleTheme: "Toggle theme",
   toggleLanguage: "Switch language",
+  previous: "Previous",
+  next: "Next",
+  // Skills
+  skillSearch: "Search skills",
+  skillCategory: "Category",
+  skillAllCategories: "All categories",
+  skillSort: "Sort skills",
+  skillSortDownloads: "Most downloaded",
+  skillSortUpdated: "Recently updated",
+  skillSortName: "Name",
+  skillLatest: "Latest",
+  skillNoDescription: "No skill description is available.",
+  skillNoReadme: "No SKILL.md content is available.",
+  skillDownloads: (value: string) => `${value} downloads`,
+  skillFiles: (value: number) => `${value} files`,
+  skillView: "View",
+  skillUpstream: "Upstream",
+  skillDownload: "Download",
+  skillsSummary: (start: number, end: number, total: number) =>
+    total > 0 ? `${start}-${end} of ${total}` : "0 skills",
+  skillsPage: (page: number, totalPages: number) =>
+    `Page ${page} of ${totalPages}`,
+  noSkillsFound: "No skills match the current search or filter.",
   // Studio
   studioTitle: "Studio",
   studioModes: "Modes",
@@ -244,12 +268,36 @@ export type Dictionary = {
 
 const zh: Dictionary = {
   // Navigation
-  explore: "探索",
+  explore: "模型",
+  skills: "SKILLS",
   studio: "操作台",
   files: "文件库",
   logout: "登出",
   toggleTheme: "切换主题",
   toggleLanguage: "切换语言",
+  previous: "上一页",
+  next: "下一页",
+  // Skills
+  skillSearch: "搜索技能",
+  skillCategory: "分类",
+  skillAllCategories: "全部分类",
+  skillSort: "技能排序",
+  skillSortDownloads: "下载最多",
+  skillSortUpdated: "最近更新",
+  skillSortName: "名称",
+  skillLatest: "最新",
+  skillNoDescription: "暂无技能描述。",
+  skillNoReadme: "暂无 SKILL.md 内容。",
+  skillDownloads: (value: string) => `${value} 次下载`,
+  skillFiles: (value: number) => `${value} 个文件`,
+  skillView: "查看",
+  skillUpstream: "上游",
+  skillDownload: "下载",
+  skillsSummary: (start: number, end: number, total: number) =>
+    total > 0 ? `${start}-${end} / ${total}` : "0 个技能",
+  skillsPage: (page: number, totalPages: number) =>
+    `第 ${page} 页 / 共 ${totalPages} 页`,
+  noSkillsFound: "没有匹配当前搜索或筛选条件的技能。",
   // Studio
   studioTitle: "操作台",
   studioModes: "模式",

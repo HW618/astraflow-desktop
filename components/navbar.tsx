@@ -31,6 +31,9 @@ function Navbar() {
             <Link href="/explore">{t.explore}</Link>
           </Button>
           <Button variant="ghost" size="sm" asChild>
+            <Link href="/skills">{t.skills}</Link>
+          </Button>
+          <Button variant="ghost" size="sm" asChild>
             <Link href="/studio">{t.studio}</Link>
           </Button>
           <Button variant="ghost" size="sm" asChild>
