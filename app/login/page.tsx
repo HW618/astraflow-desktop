@@ -1,9 +1,12 @@
 import { redirect } from "next/navigation"
+import { connection } from "next/server"
 
 import { LoginForm } from "@/components/login-form"
 import { getAppAuthState } from "@/lib/app-auth"
 
 export default async function LoginPage() {
+  await connection()
+
   const auth = await getAppAuthState()
 
   if (auth.authenticated) {

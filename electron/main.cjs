@@ -134,10 +134,13 @@ function waitForServer(url, child) {
 
 async function startNextServer() {
   const appRoot = getAppRoot()
+  const standaloneServer = join(appRoot, "server.js")
   const nextBin = join(appRoot, "node_modules", "next", "dist", "bin", "next")
 
-  if (!existsSync(nextBin)) {
-    throw new Error(`Next.js runtime was not packaged at ${nextBin}.`)
+  if (!existsSync(standaloneServer) && !existsSync(nextBin)) {
+    throw new Error(
+      `Next.js runtime was not packaged. Missing ${standaloneServer} and ${nextBin}.`
+    )
   }
 
   const port = await getFreePort()
@@ -165,7 +168,9 @@ async function startNextServer() {
 
   const child = spawn(
     process.execPath,
-    [nextBin, "start", "--hostname", LOOPBACK_HOST, "--port", String(port)],
+    existsSync(standaloneServer)
+      ? [standaloneServer]
+      : [nextBin, "start", "--hostname", LOOPBACK_HOST, "--port", String(port)],
     {
       cwd: appRoot,
       env,

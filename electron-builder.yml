@@ -3,20 +3,23 @@ productName: AstraFlow
 copyright: Copyright © 2026 UCloud
 
 directories:
+  app: dist/electron-app
   output: dist/electron
   buildResources: public/icon
 
+compression: normal
+electronLanguages:
+  - en-US
+  - zh-CN
 asar: false
 npmRebuild: true
-buildDependenciesFromSource: true
+buildDependenciesFromSource: false
+afterPack: scripts/copy-electron-node-modules.cjs
 
 files:
-  - electron/**/*
-  - .next/**/*
-  - public/**/*
-  - next.config.ts
-  - package.json
+  - "**/*"
   - "!**/.next/cache/**"
+  - "!**/*.map"
   - "!**/*.tsbuildinfo"
 
 extraMetadata:
@@ -63,6 +66,8 @@ linux:
   icon: public/icon/icon.svg
   category: Utility
   executableName: astraflow
+  maintainer: UCloud <support@ucloud.cn>
+  syncDesktopName: true
   target:
     - target: AppImage
       arch:

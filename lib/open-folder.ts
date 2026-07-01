@@ -16,7 +16,7 @@ export function openFolder(path: string) {
   const { command, args } = getOpenFolderCommand(path)
 
   return new Promise<void>((resolve, reject) => {
-    const child = spawn(command, args, {
+    const child = spawn(/* turbopackIgnore: true */ command, args, {
       detached: true,
       stdio: "ignore",
     })

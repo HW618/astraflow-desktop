@@ -54,7 +54,7 @@ jobs:
             builder_args: --win nsis zip --x64
             artifact_name: astraflow-windows-x64
           - name: Linux x64
-            os: ubuntu-22.04
+            os: ubuntu-24.04
             builder_args: --linux AppImage deb tar.gz --x64
             artifact_name: astraflow-linux-x64
 
@@ -73,6 +73,7 @@ jobs:
             build-essential \
             libarchive-tools \
             libasound2 \
+            libcrypt1 \
             libgbm1 \
             libgtk-3-0 \
             libnss3 \
@@ -87,7 +88,7 @@ jobs:
         run: bun run electron:build
 
       - name: Package Electron app
-        run: bunx electron-builder ${{ matrix.builder_args }} --publish never
+        run: node scripts/run-electron-builder.mjs ${{ matrix.builder_args }} --publish never
 
       - name: Smoke test packaged app
         if: runner.os != 'Linux'

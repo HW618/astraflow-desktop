@@ -35,6 +35,7 @@ function getAllowedDevOrigins() {
 
 const nextConfig: NextConfig = {
   allowedDevOrigins: getAllowedDevOrigins(),
+  output: process.env.ASTRAFLOW_ELECTRON === "1" ? "standalone" : undefined,
   serverExternalPackages: ["better-sqlite3"],
   images: {
     unoptimized: process.env.ASTRAFLOW_ELECTRON === "1",
