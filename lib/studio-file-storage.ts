@@ -1,5 +1,12 @@
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
-import { dirname, join, normalize } from "node:path"
+import {
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs"
+import { dirname, extname, join, normalize } from "node:path"
 import { randomUUID } from "node:crypto"
 
 const DEFAULT_STORAGE_ROOT_DIRECTORY = ".data"
@@ -25,7 +32,7 @@ export function safeFileName(name: string) {
   return cleaned || "file"
 }
 
-function resolveStoragePath(storagePath: string) {
+export function resolveStudioStoragePath(storagePath: string) {
   const normalized = normalize(storagePath).replace(/^(\.\.(\/|\\|$))+/, "")
 
   if (!normalized || normalized.startsWith("/") || normalized.includes("..")) {
@@ -44,6 +51,28 @@ function resolveStoragePath(storagePath: string) {
     DEFAULT_STORAGE_ROOT_NAME,
     normalized
   )
+}
+
+function extensionFromMimeType(mimeType: string | null | undefined) {
+  const extension = mimeType?.split("/")[1]?.split("+")[0]?.trim()
+
+  if (!extension) {
+    return "bin"
+  }
+
+  if (extension === "jpeg") {
+    return "jpg"
+  }
+
+  if (extension === "mpeg") {
+    return "mp3"
+  }
+
+  if (extension === "quicktime") {
+    return "mov"
+  }
+
+  return extension.replace(/[^\w.-]+/g, "-") || "bin"
 }
 
 export function parseDataUrl(dataUrl: string): ParsedDataUrl {
@@ -103,24 +132,59 @@ export function createGeneratedStoragePath({
   )
 }
 
+export function createMediaStoragePath({
+  kind,
+  generationId,
+  outputId,
+  mimeType,
+}: {
+  kind: "image" | "audio" | "video"
+  generationId: string
+  outputId: string
+  mimeType?: string | null
+}) {
+  const extension = extensionFromMimeType(mimeType)
+  const safeOutputId = safeFileName(outputId)
+  const currentExtension = extname(safeOutputId)
+  const fileName = currentExtension
+    ? safeOutputId
+    : `${safeOutputId}.${extension}`
+
+  return join("media", kind, safeFileName(generationId), fileName)
+}
+
 export function writeStudioFile(storagePath: string, buffer: Buffer) {
-  const absolutePath = resolveStoragePath(storagePath)
+  const absolutePath = resolveStudioStoragePath(storagePath)
   const directory = dirname(absolutePath)
+  const tempPath = join(directory, `.tmp-${randomUUID()}`)
 
   mkdirSync(/* turbopackIgnore: true */ directory, { recursive: true })
-  writeFileSync(/* turbopackIgnore: true */ absolutePath, buffer)
+
+  try {
+    writeFileSync(/* turbopackIgnore: true */ tempPath, buffer)
+    renameSync(/* turbopackIgnore: true */ tempPath, absolutePath)
+  } catch (error) {
+    rmSync(/* turbopackIgnore: true */ tempPath, { force: true })
+    throw error
+  }
 }
 
 export function readStudioFile(storagePath: string) {
-  const absolutePath = resolveStoragePath(storagePath)
+  const absolutePath = resolveStudioStoragePath(storagePath)
 
   return readFileSync(/* turbopackIgnore: true */ absolutePath)
 }
 
 export function statStudioFile(storagePath: string) {
-  const absolutePath = resolveStoragePath(storagePath)
+  const absolutePath = resolveStudioStoragePath(storagePath)
 
   return statSync(/* turbopackIgnore: true */ absolutePath)
+}
+
+export function removeStudioFile(storagePath: string) {
+  const absolutePath = resolveStudioStoragePath(storagePath)
+
+  rmSync(/* turbopackIgnore: true */ absolutePath, { force: true })
 }
 
 export function storagePathToDownloadName(storagePath: string) {

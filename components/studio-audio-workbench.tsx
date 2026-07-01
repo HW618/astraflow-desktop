@@ -240,6 +240,12 @@ async function saveAudioOutput(outputId: string) {
   return readJson<StudioAudioOutput>(response)
 }
 
+function getAudioOutputContentUrl(outputId: string, download = false) {
+  const suffix = download ? "?download=1" : ""
+
+  return `/api/studio/audio-outputs/${encodeURIComponent(outputId)}/content${suffix}`
+}
+
 function readFileAsDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader()
@@ -398,14 +404,17 @@ function StudioAudioWorkbench({
     saveSelectedStudioModel("audio", selectedModelId)
   }, [selectedModelId])
 
-  const reloadGenerations = React.useCallback(async (activeSessionId: string) => {
-    try {
-      const next = await fetchAudioGenerations(activeSessionId)
-      setGenerations(next)
-    } catch {
-      setGenerations([])
-    }
-  }, [])
+  const reloadGenerations = React.useCallback(
+    async (activeSessionId: string) => {
+      try {
+        const next = await fetchAudioGenerations(activeSessionId)
+        setGenerations(next)
+      } catch {
+        setGenerations([])
+      }
+    },
+    []
+  )
 
   React.useEffect(() => {
     if (!sessionId) {
@@ -584,7 +593,8 @@ function StudioAudioWorkbench({
   }
 
   function downloadOutput(output: StudioAudioOutput) {
-    const href = output.dataUrl ?? output.url
+    const href =
+      output.dataUrl ?? output.url ?? getAudioOutputContentUrl(output.id, true)
     if (!href) return
     const anchor = document.createElement("a")
     anchor.href = href
@@ -613,9 +623,7 @@ function StudioAudioWorkbench({
             <SelectTrigger className="w-full rounded-2xl">
               <SelectValue
                 placeholder={
-                  modelsLoading
-                    ? copy.modelsLoading
-                    : copy.modelPlaceholder
+                  modelsLoading ? copy.modelsLoading : copy.modelPlaceholder
                 }
               />
             </SelectTrigger>
@@ -782,7 +790,7 @@ function ParameterLabel({ field, label, className }: ParameterLabelProps) {
           <PopoverTrigger asChild>
             <button
               type="button"
-              className="inline-flex size-4 shrink-0 items-center justify-center rounded-full border border-border text-muted-foreground outline-none transition hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/30 [&_svg]:size-3"
+              className="inline-flex size-4 shrink-0 items-center justify-center rounded-full border border-border text-muted-foreground transition outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/30 [&_svg]:size-3"
               aria-label={`${label ?? field.label} description`}
             >
               <RiQuestionLine aria-hidden />
@@ -796,7 +804,7 @@ function ParameterLabel({ field, label, className }: ParameterLabelProps) {
             <p className="font-medium text-foreground">
               {label ?? field.label}
             </p>
-            <p className="whitespace-pre-wrap break-words text-muted-foreground">
+            <p className="break-words whitespace-pre-wrap text-muted-foreground">
               {description}
             </p>
           </PopoverContent>
@@ -904,7 +912,8 @@ function ParameterControl({
   }
 
   if (field.kind === "number") {
-    const numeric = typeof value === "number" ? value : value === "" ? "" : value
+    const numeric =
+      typeof value === "number" ? value : value === "" ? "" : value
     return (
       <div className="flex flex-col gap-1.5">
         <ParameterLabel field={field} />
@@ -912,7 +921,9 @@ function ParameterControl({
           type="number"
           value={numeric as number | string}
           onChange={(event) =>
-            onChange(event.target.value === "" ? "" : Number(event.target.value))
+            onChange(
+              event.target.value === "" ? "" : Number(event.target.value)
+            )
           }
           className="h-9 rounded-2xl"
           disabled={disabled}
@@ -1145,7 +1156,8 @@ function GenerationCard({
 }
 
 function AudioOutputPlayer({ output }: { output: StudioAudioOutput }) {
-  const src = output.dataUrl ?? output.url ?? output.src
+  const src =
+    output.dataUrl ?? output.url ?? getAudioOutputContentUrl(output.id)
 
   return (
     <AudioPlayer className="w-full rounded-lg border bg-background px-2 py-2">

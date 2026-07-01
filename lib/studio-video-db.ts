@@ -35,6 +35,7 @@ type DbVideoOutputRow = {
   output_index: number
   url: string | null
   data_url: string | null
+  storage_path: string | null
   mime_type: string | null
   width: number | null
   height: number | null
@@ -58,6 +59,7 @@ type DbSavedVideoOutputRow = {
   width: number | null
   height: number | null
   duration_seconds: number | null
+  storage_path: string | null
   saved_at: string
   created_at: string
 }
@@ -77,10 +79,12 @@ type CreateVideoGenerationInput = {
 }
 
 type CreateVideoOutputInput = {
+  id?: string
   generationId: string
   index: number
   url?: string | null
   dataUrl?: string | null
+  storagePath?: string | null
   mimeType?: string | null
   width?: number | null
   height?: number | null
@@ -125,6 +129,8 @@ function getVideoDb() {
   mkdirSync(dirname(dbPath), { recursive: true })
   videoDb = new Database(dbPath)
   videoDb.pragma("journal_mode = WAL")
+  videoDb.pragma("synchronous = NORMAL")
+  videoDb.pragma("busy_timeout = 5000")
   videoDb.pragma("foreign_keys = ON")
   initializeVideoSchema(videoDb)
 
@@ -159,6 +165,7 @@ function initializeVideoSchema(database: Database.Database) {
       output_index INTEGER NOT NULL,
       url TEXT,
       data_url TEXT,
+      storage_path TEXT,
       mime_type TEXT,
       width INTEGER,
       height INTEGER,
@@ -174,9 +181,13 @@ function initializeVideoSchema(database: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS studio_video_outputs_generation_idx
       ON studio_video_outputs(generation_id, output_index ASC);
+
+    CREATE INDEX IF NOT EXISTS studio_video_outputs_saved_idx
+      ON studio_video_outputs(saved_at DESC, created_at DESC);
   `)
 
   ensureVideoGenerationTaskColumns(database)
+  ensureVideoOutputStorageColumns(database)
 }
 
 function ensureVideoGenerationTaskColumns(database: Database.Database) {
@@ -203,6 +214,27 @@ function ensureVideoGenerationTaskColumns(database: Database.Database) {
   }
 }
 
+function ensureVideoOutputStorageColumns(database: Database.Database) {
+  const columns = new Set(
+    (
+      database
+        .prepare("PRAGMA table_info(studio_video_outputs)")
+        .all() as Array<{ name: string }>
+    ).map((column) => column.name)
+  )
+
+  if (!columns.has("storage_path")) {
+    database.exec(
+      `ALTER TABLE studio_video_outputs ADD COLUMN storage_path TEXT`
+    )
+  }
+
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS studio_video_outputs_saved_idx
+      ON studio_video_outputs(saved_at DESC, created_at DESC);
+  `)
+}
+
 function parseJsonRecord(raw: string): Record<string, unknown> {
   try {
     const parsed = JSON.parse(raw) as unknown
@@ -227,6 +259,7 @@ function mapVideoOutput(row: DbVideoOutputRow): StudioVideoOutput {
     src,
     url: row.url,
     dataUrl: row.data_url,
+    storagePath: row.storage_path,
     mimeType: row.mime_type,
     width: row.width,
     height: row.height,
@@ -283,8 +316,9 @@ export function listStudioVideoGenerations(sessionId: string) {
   const outputRows = database
     .prepare(
       `
-        SELECT id, generation_id, output_index, url, data_url, mime_type,
-               width, height, duration_seconds, metadata, saved_at, created_at
+        SELECT id, generation_id, output_index, url, NULL AS data_url,
+               storage_path, mime_type, width, height, duration_seconds,
+               metadata, saved_at, created_at
         FROM studio_video_outputs
         WHERE generation_id IN (${rows.map(() => "?").join(",")})
         ORDER BY generation_id, output_index ASC
@@ -400,7 +434,9 @@ export function updateStudioVideoGeneration(
     .run(
       input.status,
       input.errorMessage ?? null,
-      input.rawResponse === undefined ? null : JSON.stringify(input.rawResponse),
+      input.rawResponse === undefined
+        ? null
+        : JSON.stringify(input.rawResponse),
       input.providerTaskId ?? null,
       input.providerRequestId ?? null,
       completedAt,
@@ -435,7 +471,7 @@ export function recordStudioVideoGenerationTask(
 export function createStudioVideoOutput(
   input: CreateVideoOutputInput
 ): StudioVideoOutput {
-  const id = randomUUID()
+  const id = input.id ?? randomUUID()
   const createdAt = nowIso()
   const savedAt = input.autoSave ? createdAt : null
 
@@ -443,11 +479,13 @@ export function createStudioVideoOutput(
     .prepare(
       `
         INSERT INTO studio_video_outputs
-          (id, generation_id, output_index, url, data_url, mime_type,
-           width, height, duration_seconds, metadata, saved_at, created_at)
+          (id, generation_id, output_index, url, data_url, storage_path,
+           mime_type, width, height, duration_seconds, metadata, saved_at,
+           created_at)
         VALUES
-          (@id, @generationId, @index, @url, @dataUrl, @mimeType,
-           @width, @height, @durationSeconds, @metadata, @savedAt, @createdAt)
+          (@id, @generationId, @index, @url, @dataUrl, @storagePath,
+           @mimeType, @width, @height, @durationSeconds, @metadata, @savedAt,
+           @createdAt)
       `
     )
     .run({
@@ -456,6 +494,7 @@ export function createStudioVideoOutput(
       index: input.index,
       url: input.url ?? null,
       dataUrl: input.dataUrl ?? null,
+      storagePath: input.storagePath ?? null,
       mimeType: input.mimeType ?? null,
       width: input.width ?? null,
       height: input.height ?? null,
@@ -473,6 +512,7 @@ export function createStudioVideoOutput(
     src: input.dataUrl ?? input.url ?? "",
     url: input.url ?? null,
     dataUrl: input.dataUrl ?? null,
+    storagePath: input.storagePath ?? null,
     mimeType: input.mimeType ?? null,
     width: input.width ?? null,
     height: input.height ?? null,
@@ -486,8 +526,9 @@ export function getStudioVideoOutput(outputId: string) {
   const row = getVideoDb()
     .prepare(
       `
-        SELECT id, generation_id, output_index, url, data_url, mime_type,
-               width, height, duration_seconds, metadata, saved_at, created_at
+        SELECT id, generation_id, output_index, url, data_url, storage_path,
+               mime_type, width, height, duration_seconds, metadata, saved_at,
+               created_at
         FROM studio_video_outputs
         WHERE id = ?
       `
@@ -506,7 +547,7 @@ export function listStudioSavedVideoOutputs(): StudioSavedVideoOutput[] {
                generations.manufacturer, generations.provider_task_id,
                generations.provider_request_id, outputs.mime_type,
                outputs.width, outputs.height, outputs.duration_seconds,
-               outputs.saved_at, outputs.created_at
+               outputs.storage_path, outputs.saved_at, outputs.created_at
         FROM studio_video_outputs AS outputs
         INNER JOIN studio_video_generations AS generations
           ON generations.id = outputs.generation_id
@@ -530,14 +571,15 @@ export function listStudioSavedVideoOutputs(): StudioSavedVideoOutput[] {
     width: row.width,
     height: row.height,
     durationSeconds: row.duration_seconds,
+    storagePath: row.storage_path,
     savedAt: row.saved_at,
     createdAt: row.created_at,
   }))
 }
 
-export function saveStudioVideoOutputData(
+export function saveStudioVideoOutputStorage(
   outputId: string,
-  dataUrl: string,
+  storagePath: string,
   mimeType?: string | null
 ) {
   const savedAt = nowIso()
@@ -546,13 +588,14 @@ export function saveStudioVideoOutputData(
     .prepare(
       `
         UPDATE studio_video_outputs
-        SET data_url = ?,
+        SET storage_path = ?,
+            data_url = NULL,
             mime_type = COALESCE(?, mime_type),
             saved_at = ?
         WHERE id = ?
       `
     )
-    .run(dataUrl, mimeType ?? null, savedAt, outputId)
+    .run(storagePath, mimeType ?? null, savedAt, outputId)
 
   return getStudioVideoOutput(outputId)
 }

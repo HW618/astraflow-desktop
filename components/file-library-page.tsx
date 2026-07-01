@@ -5,6 +5,7 @@ import Link from "next/link"
 import {
   RiDownloadLine,
   RiFileTextLine,
+  RiFolderLine,
   RiMicLine,
   RiSearchLine,
   RiSparkling2Line,
@@ -215,6 +216,7 @@ function LibraryFileCard({
   locale: string
 }) {
   const { t } = useI18n()
+  const [isOpeningFolder, setIsOpeningFolder] = React.useState(false)
   const dimensions = formatDimensions(file)
   const duration = formatDuration(file)
   const details = [formatMimeType(file), dimensions, duration].filter(
@@ -232,6 +234,31 @@ function LibraryFileCard({
         : file.kind === "image"
           ? t.fileLibraryImage
           : t.fileLibraryFile
+  const canOpenFolder = Boolean(file.canOpenFolder)
+
+  async function handleOpenFolder() {
+    if (!canOpenFolder || isOpeningFolder) {
+      return
+    }
+
+    setIsOpeningFolder(true)
+
+    try {
+      const response = await fetch("/api/studio/files/open-folder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: file.kind, id: file.id }),
+      })
+
+      if (!response.ok) {
+        throw new Error(t.fileLibraryOpenFolderFailed)
+      }
+    } catch {
+      window.alert(t.fileLibraryOpenFolderFailed)
+    } finally {
+      setIsOpeningFolder(false)
+    }
+  }
 
   return (
     <article className="group flex min-w-0 shrink-0 flex-col overflow-hidden rounded-lg border bg-card">
@@ -247,10 +274,24 @@ function LibraryFileCard({
         </div>
         <div
           className={cn(
-            "absolute top-2 right-2 flex opacity-0 transition-opacity",
-            "group-hover:opacity-100 group-focus-within:opacity-100"
+            "absolute top-2 right-2 flex gap-1 opacity-0 transition-opacity",
+            "group-focus-within:opacity-100 group-hover:opacity-100"
           )}
         >
+          {canOpenFolder ? (
+            <Button
+              type="button"
+              size="icon"
+              variant="secondary"
+              onClick={handleOpenFolder}
+              disabled={isOpeningFolder}
+              title={t.fileLibraryOpenFolder}
+              aria-label={t.fileLibraryOpenFolder}
+              className="size-8 rounded-full bg-background/90 text-foreground shadow-sm hover:bg-background"
+            >
+              <RiFolderLine aria-hidden />
+            </Button>
+          ) : null}
           <Button
             asChild
             size="sm"
@@ -332,7 +373,7 @@ function LibraryMediaPreview({ file }: { file: StudioLibraryFile }) {
           <div className="flex size-14 items-center justify-center rounded-full bg-background text-muted-foreground shadow-sm">
             <RiFileTextLine className="size-6" aria-hidden />
           </div>
-          <span className="line-clamp-3 max-w-full break-words text-xs text-muted-foreground">
+          <span className="line-clamp-3 max-w-full text-xs break-words text-muted-foreground">
             {file.name}
           </span>
         </div>
@@ -346,9 +387,9 @@ function LibraryMediaPreview({ file }: { file: StudioLibraryFile }) {
         <div className="flex size-12 items-center justify-center rounded-full bg-background text-muted-foreground shadow-sm">
           <RiMicLine className="size-5" aria-hidden />
         </div>
-        <AudioPlayer className="w-full min-w-0 max-w-full rounded-lg border bg-background px-2 py-2">
+        <AudioPlayer className="w-full max-w-full min-w-0 rounded-lg border bg-background px-2 py-2">
           <AudioPlayerElement src={file.src} preload="metadata" />
-          <AudioPlayerControlBar className="w-full min-w-0 max-w-full [&>[data-slot=button-group]]:w-full [&>[data-slot=button-group]]:min-w-0">
+          <AudioPlayerControlBar className="w-full max-w-full min-w-0 [&>[data-slot=button-group]]:w-full [&>[data-slot=button-group]]:min-w-0">
             <AudioPlayerPlayButton />
             <AudioPlayerTimeDisplay className="hidden sm:flex" />
             <AudioPlayerTimeRange className="min-w-0 flex-1 basis-0" />

@@ -38,7 +38,8 @@ const en = {
   mcpAddManual: "Add MCP",
   mcpEdit: "Edit",
   mcpManualTitle: "Add MCP server",
-  mcpManualDescription: "Add a remote MCP endpoint or a confirmed local stdio command.",
+  mcpManualDescription:
+    "Add a remote MCP endpoint or a confirmed local stdio command.",
   mcpEditTitle: "Edit MCP server",
   mcpEditDescription:
     "Update the endpoint, command, headers, environment, or display metadata. Existing secret values are kept when left blank.",
@@ -353,6 +354,8 @@ const en = {
   fileLibraryNoMatches: "No files match the current search.",
   fileLibraryCreate: "AI Generator",
   fileLibraryDownload: "Download",
+  fileLibraryOpenFolder: "Open folder",
+  fileLibraryOpenFolderFailed: "Failed to open folder.",
   // Model square
   modelTypes: "Output type",
   allTypes: "All",
@@ -734,6 +737,8 @@ const zh: Dictionary = {
   fileLibraryNoMatches: "没有匹配当前搜索的文件。",
   fileLibraryCreate: "AI 生成器",
   fileLibraryDownload: "下载",
+  fileLibraryOpenFolder: "打开文件夹",
+  fileLibraryOpenFolderFailed: "打开文件夹失败。",
   // Model square
   modelTypes: "输出类型",
   allTypes: "全部",

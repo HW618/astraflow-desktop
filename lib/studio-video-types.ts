@@ -6,8 +6,7 @@ import type {
 export type StudioVideoAdapter = "async-task" | "openai-video"
 
 export type StudioVideoDisabledReason =
-  | "missing-openapi"
-  | "unsupported-endpoint"
+  "missing-openapi" | "unsupported-endpoint"
 
 export type StudioVideoParameterField = StudioImageParameterField & {
   payloadPath: string[]
@@ -56,11 +55,7 @@ export type StudioVideoModelOption = {
 }
 
 export type StudioVideoStatus =
-  | "queued"
-  | "running"
-  | "complete"
-  | "partial"
-  | "error"
+  "queued" | "running" | "complete" | "partial" | "error"
 
 export type StudioVideoOutput = {
   id: string
@@ -69,6 +64,7 @@ export type StudioVideoOutput = {
   src: string
   url: string | null
   dataUrl: string | null
+  storagePath: string | null
   mimeType: string | null
   width: number | null
   height: number | null
@@ -110,6 +106,7 @@ export type StudioSavedVideoOutput = {
   width: number | null
   height: number | null
   durationSeconds: number | null
+  storagePath: string | null
   savedAt: string
   createdAt: string
 }
@@ -118,6 +115,7 @@ export type StudioVideoLibraryFile = StudioSavedVideoOutput & {
   kind: "video"
   src: string
   downloadUrl: string
+  canOpenFolder: boolean
 }
 
 export type StudioVideoFieldOption = StudioImageFieldOption

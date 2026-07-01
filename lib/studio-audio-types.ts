@@ -5,14 +5,10 @@ import type {
 } from "@/lib/studio-types"
 
 export type StudioAudioAdapter =
-  | "audio-json"
-  | "audio-binary"
-  | "audio-multipart"
-  | "async-task"
+  "audio-json" | "audio-binary" | "audio-multipart" | "async-task"
 
 export type StudioAudioDisabledReason =
-  | "missing-openapi"
-  | "unsupported-endpoint"
+  "missing-openapi" | "unsupported-endpoint"
 
 export type StudioAudioFieldKind = StudioImageFieldKind | "audio"
 
@@ -68,11 +64,7 @@ export type StudioAudioModelOption = {
 }
 
 export type StudioAudioStatus =
-  | "queued"
-  | "running"
-  | "complete"
-  | "partial"
-  | "error"
+  "queued" | "running" | "complete" | "partial" | "error"
 
 export type StudioAudioOutput = {
   id: string
@@ -81,6 +73,7 @@ export type StudioAudioOutput = {
   src: string
   url: string | null
   dataUrl: string | null
+  storagePath: string | null
   mimeType: string | null
   durationSeconds: number | null
   savedAt: string | null
@@ -114,6 +107,7 @@ export type StudioSavedAudioOutput = {
   manufacturer: string | null
   mimeType: string | null
   durationSeconds: number | null
+  storagePath: string | null
   savedAt: string
   createdAt: string
 }
@@ -122,6 +116,7 @@ export type StudioAudioLibraryFile = StudioSavedAudioOutput & {
   kind: "audio"
   src: string
   downloadUrl: string
+  canOpenFolder: boolean
 }
 
 export type StudioAudioFieldOption = StudioImageFieldOption

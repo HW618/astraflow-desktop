@@ -309,6 +309,7 @@ type DbImageOutputRow = {
   output_index: number
   url: string | null
   data_url: string | null
+  storage_path: string | null
   mime_type: string | null
   width: number | null
   height: number | null
@@ -328,6 +329,7 @@ type DbSavedImageOutputRow = {
   mime_type: string | null
   width: number | null
   height: number | null
+  storage_path: string | null
   saved_at: string
   created_at: string
 }
@@ -345,10 +347,12 @@ type CreateImageGenerationInput = {
 }
 
 type CreateImageOutputInput = {
+  id?: string
   generationId: string
   index: number
   url?: string | null
   dataUrl?: string | null
+  storagePath?: string | null
   mimeType?: string | null
   width?: number | null
   height?: number | null
@@ -385,6 +389,8 @@ function getDb() {
   mkdirSync(dirname(dbPath), { recursive: true })
   db = new Database(dbPath)
   db.pragma("journal_mode = WAL")
+  db.pragma("synchronous = NORMAL")
+  db.pragma("busy_timeout = 5000")
   db.pragma("foreign_keys = ON")
   initializeSchema(db)
   migrateSchema(db)
@@ -577,6 +583,7 @@ function initializeSchema(database: Database.Database) {
       output_index INTEGER NOT NULL,
       url TEXT,
       data_url TEXT,
+      storage_path TEXT,
       mime_type TEXT,
       width INTEGER,
       height INTEGER,
@@ -591,6 +598,9 @@ function initializeSchema(database: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS studio_image_outputs_generation_idx
       ON studio_image_outputs(generation_id, output_index ASC);
+
+    CREATE INDEX IF NOT EXISTS studio_image_outputs_saved_idx
+      ON studio_image_outputs(saved_at DESC, created_at DESC);
   `)
 }
 
@@ -644,6 +654,21 @@ function migrateSchema(database: Database.Database) {
   if (!columns.some((column) => column.name === "parts")) {
     database.exec(`ALTER TABLE studio_messages ADD COLUMN parts TEXT`)
   }
+
+  const imageOutputColumns = database
+    .prepare(`PRAGMA table_info(studio_image_outputs)`)
+    .all() as Array<{ name: string }>
+
+  if (!imageOutputColumns.some((column) => column.name === "storage_path")) {
+    database.exec(
+      `ALTER TABLE studio_image_outputs ADD COLUMN storage_path TEXT`
+    )
+  }
+
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS studio_image_outputs_saved_idx
+      ON studio_image_outputs(saved_at DESC, created_at DESC);
+  `)
 }
 
 function nowIso() {
@@ -728,7 +753,11 @@ function mapSessionFile(row: DbSessionFileRow): StudioSessionFile {
   }
 }
 
-function parseSkillMeta(raw: string, fallbackSlug: string, fallbackVersion: string) {
+function parseSkillMeta(
+  raw: string,
+  fallbackSlug: string,
+  fallbackVersion: string
+) {
   try {
     const parsed = JSON.parse(raw) as SkillMeta
 
@@ -802,10 +831,7 @@ function mapInstalledMcpServer(
   } as McpTransportConfig)
   const normalizedConfig = normalizeMcpTransportConfig(parsedConfig)
   const config = includeSecrets
-    ? applyMcpConfigSecrets(
-        normalizedConfig,
-        readMcpServerSecretMap(row.id)
-      )
+    ? applyMcpConfigSecrets(normalizedConfig, readMcpServerSecretMap(row.id))
     : maskMcpTransportConfig(normalizedConfig)
 
   return {
@@ -818,10 +844,7 @@ function mapInstalledMcpServer(
     registryVersion: row.registry_version,
     transport: row.transport,
     config,
-    capabilities: parseJsonValue<McpServerCapabilities>(
-      row.capabilities,
-      {}
-    ),
+    capabilities: parseJsonValue<McpServerCapabilities>(row.capabilities, {}),
     tools: parseJsonValue<McpServerToolSummary[]>(row.tools, []),
     resources: parseJsonValue<McpServerResourceSummary[]>(row.resources, []),
     prompts: parseJsonValue<McpServerPromptSummary[]>(row.prompts, []),
@@ -1397,15 +1420,11 @@ export function upsertStudioMcpServer(input: UpsertStudioMcpServerInput) {
   const createdAt = existing?.createdAt ?? nowIso()
   const updatedAt = nowIso()
   const title = input.title?.trim() || input.name.trim()
-  const {
-    storedConfig,
-    secretNames,
-    secretsToDelete,
-    secretsToSave,
-  } = prepareMcpConfigForStorage({
-    config: input.config,
-    serverId: id,
-  })
+  const { storedConfig, secretNames, secretsToDelete, secretsToSave } =
+    prepareMcpConfigForStorage({
+      config: input.config,
+      serverId: id,
+    })
   const database = getDb()
   const saveTransaction = database.transaction(() => {
     database
@@ -1773,12 +1792,7 @@ export function listStudioMcpRegistryServers({
   const filtered = rows.map(mapMcpRegistryServer).filter((server) => {
     if (
       normalizedKeyword &&
-      ![
-        server.name,
-        server.title,
-        server.description,
-        server.version,
-      ]
+      ![server.name, server.title, server.description, server.version]
         .join(" ")
         .toLowerCase()
         .includes(normalizedKeyword)
@@ -1794,10 +1808,7 @@ export function listStudioMcpRegistryServers({
       return false
     }
 
-    if (
-      normalizedStatus &&
-      server.status.toLowerCase() !== normalizedStatus
-    ) {
+    if (normalizedStatus && server.status.toLowerCase() !== normalizedStatus) {
       return false
     }
 
@@ -2541,6 +2552,7 @@ export function listStudioSavedGenericFiles(): StudioGenericLibraryFile[] {
     size: row.size,
     sandboxPath: row.sandbox_path,
     downloadUrl: `/api/studio/files/${row.id}/content?download=1`,
+    canOpenFolder: true,
     savedAt: row.saved_at ?? row.created_at,
     createdAt: row.created_at,
   }))
@@ -2735,6 +2747,7 @@ function mapImageOutput(row: DbImageOutputRow): StudioImageOutput {
     src,
     url: row.url,
     dataUrl: row.data_url,
+    storagePath: row.storage_path,
     mimeType: row.mime_type,
     width: row.width,
     height: row.height,
@@ -2787,8 +2800,9 @@ export function listStudioImageGenerations(sessionId: string) {
   const outputRows = database
     .prepare(
       `
-        SELECT id, generation_id, output_index, url, data_url, mime_type,
-               width, height, metadata, saved_at, created_at
+        SELECT id, generation_id, output_index, url, NULL AS data_url,
+               storage_path, mime_type, width, height, metadata, saved_at,
+               created_at
         FROM studio_image_outputs
         WHERE generation_id IN (${rows.map(() => "?").join(",")})
         ORDER BY generation_id, output_index ASC
@@ -2907,18 +2921,18 @@ export function updateStudioImageGeneration(
 export function createStudioImageOutput(
   input: CreateImageOutputInput
 ): StudioImageOutput {
-  const id = randomUUID()
+  const id = input.id ?? randomUUID()
   const createdAt = nowIso()
 
   getDb()
     .prepare(
       `
         INSERT INTO studio_image_outputs
-          (id, generation_id, output_index, url, data_url, mime_type,
-           width, height, metadata, saved_at, created_at)
+          (id, generation_id, output_index, url, data_url, storage_path,
+           mime_type, width, height, metadata, saved_at, created_at)
         VALUES
-          (@id, @generationId, @index, @url, @dataUrl, @mimeType,
-           @width, @height, @metadata, NULL, @createdAt)
+          (@id, @generationId, @index, @url, @dataUrl, @storagePath,
+           @mimeType, @width, @height, @metadata, NULL, @createdAt)
       `
     )
     .run({
@@ -2927,6 +2941,7 @@ export function createStudioImageOutput(
       index: input.index,
       url: input.url ?? null,
       dataUrl: input.dataUrl ?? null,
+      storagePath: input.storagePath ?? null,
       mimeType: input.mimeType ?? null,
       width: input.width ?? null,
       height: input.height ?? null,
@@ -2942,6 +2957,7 @@ export function createStudioImageOutput(
     src: input.dataUrl ?? input.url ?? "",
     url: input.url ?? null,
     dataUrl: input.dataUrl ?? null,
+    storagePath: input.storagePath ?? null,
     mimeType: input.mimeType ?? null,
     width: input.width ?? null,
     height: input.height ?? null,
@@ -2954,8 +2970,8 @@ export function getStudioImageOutput(outputId: string) {
   const row = getDb()
     .prepare(
       `
-        SELECT id, generation_id, output_index, url, data_url, mime_type,
-               width, height, metadata, saved_at, created_at
+        SELECT id, generation_id, output_index, url, data_url, storage_path,
+               mime_type, width, height, metadata, saved_at, created_at
         FROM studio_image_outputs
         WHERE id = ?
       `
@@ -2972,7 +2988,8 @@ export function listStudioSavedImageOutputs(): StudioSavedImageOutput[] {
         SELECT outputs.id, outputs.generation_id, generations.session_id,
                outputs.output_index, generations.prompt, generations.model_name,
                generations.manufacturer, outputs.mime_type, outputs.width,
-               outputs.height, outputs.saved_at, outputs.created_at
+               outputs.height, outputs.storage_path, outputs.saved_at,
+               outputs.created_at
         FROM studio_image_outputs AS outputs
         INNER JOIN studio_image_generations AS generations
           ON generations.id = outputs.generation_id
@@ -2993,14 +3010,15 @@ export function listStudioSavedImageOutputs(): StudioSavedImageOutput[] {
     mimeType: row.mime_type,
     width: row.width,
     height: row.height,
+    storagePath: row.storage_path,
     savedAt: row.saved_at,
     createdAt: row.created_at,
   }))
 }
 
-export function saveStudioImageOutputData(
+export function saveStudioImageOutputStorage(
   outputId: string,
-  dataUrl: string,
+  storagePath: string,
   mimeType?: string | null
 ) {
   const savedAt = nowIso()
@@ -3009,13 +3027,14 @@ export function saveStudioImageOutputData(
     .prepare(
       `
         UPDATE studio_image_outputs
-        SET data_url = ?,
+        SET storage_path = ?,
+            data_url = NULL,
             mime_type = COALESCE(?, mime_type),
             saved_at = ?
         WHERE id = ?
       `
     )
-    .run(dataUrl, mimeType ?? null, savedAt, outputId)
+    .run(storagePath, mimeType ?? null, savedAt, outputId)
 
   return getStudioImageOutput(outputId)
 }

@@ -1,32 +1,13 @@
 import { NextResponse } from "next/server"
 
 import { getStudioImageOutput } from "@/lib/studio-db"
+import { createStoredFileResponse } from "@/lib/studio-file-response"
+import { bufferToArrayBuffer, parseDataUrl } from "@/lib/studio-file-storage"
 
 export const runtime = "nodejs"
 
 type RouteContext = {
   params: Promise<{ outputId: string }>
-}
-
-function parseDataUrl(dataUrl: string) {
-  const match = dataUrl.match(/^data:([^;,]+)?(;base64)?,(.*)$/)
-
-  if (!match) {
-    return null
-  }
-
-  const mimeType = match[1] || "application/octet-stream"
-  const encoded = match[3]
-
-  try {
-    const buffer = match[2]
-      ? Buffer.from(encoded, "base64")
-      : Buffer.from(decodeURIComponent(encoded))
-
-    return { buffer, mimeType }
-  } catch {
-    return null
-  }
 }
 
 function getImageExtension(mimeType: string) {
@@ -50,7 +31,7 @@ export async function GET(request: Request, context: RouteContext) {
     )
   }
 
-  if (!output.dataUrl) {
+  if (!output.storagePath && !output.dataUrl) {
     if (output.url) {
       return NextResponse.redirect(output.url)
     }
@@ -61,7 +42,37 @@ export async function GET(request: Request, context: RouteContext) {
     )
   }
 
-  const parsed = parseDataUrl(output.dataUrl)
+  const download = new URL(request.url).searchParams.get("download") === "1"
+
+  if (output.storagePath) {
+    const mimeType = output.mimeType || "image/png"
+    const filename = `image-${output.id}.${getImageExtension(mimeType)}`
+
+    try {
+      return createStoredFileResponse({
+        request,
+        storagePath: output.storagePath,
+        mimeType,
+        filename,
+        download,
+      })
+    } catch {
+      return NextResponse.json(
+        { ok: false, error: "Output image data is unavailable." },
+        { status: 404 }
+      )
+    }
+  }
+
+  let parsed: { buffer: Buffer; mimeType: string } | null = null
+
+  if (output.dataUrl) {
+    try {
+      parsed = parseDataUrl(output.dataUrl)
+    } catch {
+      parsed = null
+    }
+  }
 
   if (!parsed) {
     return NextResponse.json(
@@ -70,12 +81,10 @@ export async function GET(request: Request, context: RouteContext) {
     )
   }
 
-  const download =
-    new URL(request.url).searchParams.get("download") === "1"
   const filename = `image-${output.id}.${getImageExtension(parsed.mimeType)}`
   const disposition = download ? "attachment" : "inline"
 
-  return new Response(parsed.buffer, {
+  return new Response(bufferToArrayBuffer(parsed.buffer), {
     headers: {
       "Cache-Control": "private, max-age=60",
       "Content-Disposition": `${disposition}; filename="${filename}"`,

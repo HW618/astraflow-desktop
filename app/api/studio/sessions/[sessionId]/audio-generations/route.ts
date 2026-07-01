@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { randomUUID } from "node:crypto"
 import { z } from "zod"
 
 import {
@@ -19,6 +20,7 @@ import type {
   StudioAudioParameterField,
 } from "@/lib/studio-audio-types"
 import { getStudioSession } from "@/lib/studio-db"
+import { writeDataUrlToStudioMediaFile } from "@/lib/studio-media-storage"
 
 export const runtime = "nodejs"
 
@@ -232,7 +234,10 @@ function buildJsonPayload({
 
     let value: unknown
 
-    if (field.kind === "prompt" && getFieldKey(field) === activePromptFieldKey) {
+    if (
+      field.kind === "prompt" &&
+      getFieldKey(field) === activePromptFieldKey
+    ) {
       value = prompt
     } else if (field.constantValue !== undefined) {
       value = field.constantValue
@@ -253,7 +258,9 @@ function buildJsonPayload({
     ) {
       const stringValue = String(value)
       value = [
-        field.arrayItemKey ? { [field.arrayItemKey]: stringValue } : stringValue,
+        field.arrayItemKey
+          ? { [field.arrayItemKey]: stringValue }
+          : stringValue,
       ]
     }
 
@@ -284,11 +291,7 @@ function attachmentToBlob(attachment: SubmitAttachment) {
   }
 }
 
-function appendFormDataValue(
-  formData: FormData,
-  key: string,
-  value: unknown
-) {
+function appendFormDataValue(formData: FormData, key: string, value: unknown) {
   if (value === undefined || value === null || value === "") {
     return
   }
@@ -348,10 +351,10 @@ function buildFormData({
       field.kind === "prompt" && getFieldKey(field) === activePromptFieldKey
         ? prompt
         : field.name === "model"
-          ? field.constantValue ?? openapi.modelConstant
-          : field.constantValue ??
+          ? (field.constantValue ?? openapi.modelConstant)
+          : (field.constantValue ??
             coerceFieldValue(field, getParamValue(params, field)) ??
-            getDefaultFieldValue(field)
+            getDefaultFieldValue(field))
 
     appendFormDataValue(formData, key, value)
   }
@@ -490,10 +493,7 @@ function parseMultipartAudio(buffer: Buffer, contentType: string) {
       break
     }
 
-    if (
-      buffer[partStart] === 13 &&
-      buffer[partStart + 1] === 10
-    ) {
+    if (buffer[partStart] === 13 && buffer[partStart + 1] === 10) {
       partStart += 2
     } else if (buffer[partStart] === 10) {
       partStart += 1
@@ -696,7 +696,9 @@ function readNumber(value: unknown) {
 }
 
 function isHexAudio(value: string) {
-  return value.length > 100 && value.length % 2 === 0 && /^[0-9a-f]+$/i.test(value)
+  return (
+    value.length > 100 && value.length % 2 === 0 && /^[0-9a-f]+$/i.test(value)
+  )
 }
 
 function findAudioUrl(payload: unknown): string | null {
@@ -758,9 +760,7 @@ function extractAudioOutputs(payload: unknown): NormalizedOutput[] {
   }
 
   const finalPayload =
-    "status" in payload
-      ? (payload as { status?: unknown }).status
-      : payload
+    "status" in payload ? (payload as { status?: unknown }).status : payload
 
   if (!finalPayload || typeof finalPayload !== "object") {
     return []
@@ -1015,13 +1015,26 @@ export async function POST(request: Request, context: RouteContext) {
     const stored: StudioAudioOutput[] = []
 
     outputs.forEach((output, index) => {
+      const outputId = randomUUID()
+      const storedMedia = output.dataUrl
+        ? writeDataUrlToStudioMediaFile({
+            kind: "audio",
+            generationId: generation.id,
+            outputId,
+            dataUrl: output.dataUrl,
+            fallbackMimeType: output.mimeType,
+          })
+        : null
+
       stored.push(
         createStudioAudioOutput({
+          id: outputId,
           generationId: generation.id,
           index,
           url: output.url ?? null,
-          dataUrl: output.dataUrl ?? null,
-          mimeType: output.mimeType ?? null,
+          dataUrl: null,
+          storagePath: storedMedia?.storagePath ?? null,
+          mimeType: storedMedia?.mimeType ?? output.mimeType ?? null,
           durationSeconds: output.durationSeconds ?? null,
           metadata: output.metadata,
         })

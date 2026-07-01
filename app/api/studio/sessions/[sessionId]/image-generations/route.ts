@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { randomUUID } from "node:crypto"
 import { z } from "zod"
 
 import { getAppAuthState } from "@/lib/app-auth"
@@ -10,6 +11,7 @@ import {
 } from "@/lib/image-model-openapi"
 import { loadImageModelOperationFields } from "@/lib/image-openapi"
 import { getStoredModelverseApiKey } from "@/lib/modelverse-openai"
+import { writeDataUrlToStudioMediaFile } from "@/lib/studio-media-storage"
 import {
   createStudioImageGeneration,
   createStudioImageOutput,
@@ -220,7 +222,11 @@ function buildOpenaiPayload(
       continue
     }
 
-    if (field.options && field.options.length > 0 && field.arrayItemKey !== undefined) {
+    if (
+      field.options &&
+      field.options.length > 0 &&
+      field.arrayItemKey !== undefined
+    ) {
       const stringValue = String(value)
       payload[field.name] = [
         field.arrayItemKey
@@ -308,9 +314,7 @@ function buildGeminiPayload(
 
   for (const attachment of attachments) {
     if (attachment.dataUrl) {
-      const match = attachment.dataUrl.match(
-        /^data:([^;]+);base64,(.+)$/
-      )
+      const match = attachment.dataUrl.match(/^data:([^;]+);base64,(.+)$/)
 
       if (match) {
         parts.push({
@@ -409,8 +413,7 @@ function extractOpenaiOutputs(payload: unknown): NormalizedOutput[] {
   const outputs: NormalizedOutput[] = []
 
   for (const item of data) {
-    const sizeRaw =
-      typeof item.size === "string" ? (item.size as string) : null
+    const sizeRaw = typeof item.size === "string" ? (item.size as string) : null
     let width: number | null = null
     let height: number | null = null
 
@@ -443,9 +446,11 @@ function extractGeminiOutputs(payload: unknown): NormalizedOutput[] {
     return []
   }
 
-  const candidates = (payload as {
-    candidates?: Array<Record<string, unknown>>
-  }).candidates
+  const candidates = (
+    payload as {
+      candidates?: Array<Record<string, unknown>>
+    }
+  ).candidates
 
   if (!Array.isArray(candidates)) {
     return []
@@ -461,8 +466,7 @@ function extractGeminiOutputs(payload: unknown): NormalizedOutput[] {
 
     for (const part of parts) {
       const inline = part.inlineData as
-        | { data?: string; mimeType?: string }
-        | undefined
+        { data?: string; mimeType?: string } | undefined
 
       if (inline?.data) {
         const mime = inline.mimeType ?? "image/png"
@@ -486,9 +490,7 @@ function extractAsyncTaskOutputs(payload: unknown): NormalizedOutput[] {
   }
 
   const finalPayload =
-    "status" in payload
-      ? (payload as { status?: unknown }).status
-      : payload
+    "status" in payload ? (payload as { status?: unknown }).status : payload
 
   if (!finalPayload || typeof finalPayload !== "object") {
     return []
@@ -531,9 +533,7 @@ function getProviderErrorMessage(payload: unknown, fallback: string) {
   }
 
   const statusPayload =
-    "status" in payload
-      ? (payload as { status?: unknown }).status
-      : payload
+    "status" in payload ? (payload as { status?: unknown }).status : payload
 
   if (statusPayload && typeof statusPayload === "object") {
     const output = (statusPayload as { output?: Record<string, unknown> })
@@ -914,10 +914,7 @@ export async function POST(request: Request, context: RouteContext) {
       )
     }
 
-    const outputs = extractOutputs(
-      openapi.adapter,
-      providerResponse.body
-    )
+    const outputs = extractOutputs(openapi.adapter, providerResponse.body)
 
     if (outputs.length === 0) {
       updateStudioImageGeneration(generation.id, {
@@ -935,13 +932,26 @@ export async function POST(request: Request, context: RouteContext) {
     const stored: StudioImageOutput[] = []
 
     outputs.forEach((output, index) => {
+      const outputId = randomUUID()
+      const storedMedia = output.dataUrl
+        ? writeDataUrlToStudioMediaFile({
+            kind: "image",
+            generationId: generation.id,
+            outputId,
+            dataUrl: output.dataUrl,
+            fallbackMimeType: output.mimeType,
+          })
+        : null
+
       stored.push(
         createStudioImageOutput({
+          id: outputId,
           generationId: generation.id,
           index,
           url: output.url ?? null,
-          dataUrl: output.dataUrl ?? null,
-          mimeType: output.mimeType ?? null,
+          dataUrl: null,
+          storagePath: storedMedia?.storagePath ?? null,
+          mimeType: storedMedia?.mimeType ?? output.mimeType ?? null,
           width: output.width ?? null,
           height: output.height ?? null,
         })
@@ -974,9 +984,6 @@ export async function POST(request: Request, context: RouteContext) {
       errorMessage: message,
     })
 
-    return NextResponse.json(
-      { ok: false, error: message },
-      { status: 500 }
-    )
+    return NextResponse.json({ ok: false, error: message }, { status: 500 })
   }
 }

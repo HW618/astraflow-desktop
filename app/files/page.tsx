@@ -19,6 +19,7 @@ function mapSavedOutputToLibraryFile(
     kind: "image",
     src: contentUrl,
     downloadUrl: `${contentUrl}?download=1`,
+    canOpenFolder: Boolean(output.storagePath),
   }
 }
 

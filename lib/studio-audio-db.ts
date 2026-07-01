@@ -33,6 +33,7 @@ type DbAudioOutputRow = {
   output_index: number
   url: string | null
   data_url: string | null
+  storage_path: string | null
   mime_type: string | null
   duration_seconds: number | null
   metadata: string | null
@@ -50,6 +51,7 @@ type DbSavedAudioOutputRow = {
   manufacturer: string | null
   mime_type: string | null
   duration_seconds: number | null
+  storage_path: string | null
   saved_at: string
   created_at: string
 }
@@ -67,10 +69,12 @@ type CreateAudioGenerationInput = {
 }
 
 type CreateAudioOutputInput = {
+  id?: string
   generationId: string
   index: number
   url?: string | null
   dataUrl?: string | null
+  storagePath?: string | null
   mimeType?: string | null
   durationSeconds?: number | null
   metadata?: unknown
@@ -105,6 +109,8 @@ function getAudioDb() {
   mkdirSync(dirname(dbPath), { recursive: true })
   audioDb = new Database(dbPath)
   audioDb.pragma("journal_mode = WAL")
+  audioDb.pragma("synchronous = NORMAL")
+  audioDb.pragma("busy_timeout = 5000")
   audioDb.pragma("foreign_keys = ON")
   initializeAudioSchema(audioDb)
 
@@ -137,6 +143,7 @@ function initializeAudioSchema(database: Database.Database) {
       output_index INTEGER NOT NULL,
       url TEXT,
       data_url TEXT,
+      storage_path TEXT,
       mime_type TEXT,
       duration_seconds REAL,
       metadata TEXT,
@@ -150,6 +157,32 @@ function initializeAudioSchema(database: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS studio_audio_outputs_generation_idx
       ON studio_audio_outputs(generation_id, output_index ASC);
+
+    CREATE INDEX IF NOT EXISTS studio_audio_outputs_saved_idx
+      ON studio_audio_outputs(saved_at DESC, created_at DESC);
+  `)
+
+  ensureAudioOutputStorageColumns(database)
+}
+
+function ensureAudioOutputStorageColumns(database: Database.Database) {
+  const columns = new Set(
+    (
+      database
+        .prepare("PRAGMA table_info(studio_audio_outputs)")
+        .all() as Array<{ name: string }>
+    ).map((column) => column.name)
+  )
+
+  if (!columns.has("storage_path")) {
+    database.exec(
+      `ALTER TABLE studio_audio_outputs ADD COLUMN storage_path TEXT`
+    )
+  }
+
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS studio_audio_outputs_saved_idx
+      ON studio_audio_outputs(saved_at DESC, created_at DESC);
   `)
 }
 
@@ -177,6 +210,7 @@ function mapAudioOutput(row: DbAudioOutputRow): StudioAudioOutput {
     src,
     url: row.url,
     dataUrl: row.data_url,
+    storagePath: row.storage_path,
     mimeType: row.mime_type,
     durationSeconds: row.duration_seconds,
     savedAt: row.saved_at,
@@ -228,8 +262,9 @@ export function listStudioAudioGenerations(sessionId: string) {
   const outputRows = database
     .prepare(
       `
-        SELECT id, generation_id, output_index, url, data_url, mime_type,
-               duration_seconds, metadata, saved_at, created_at
+        SELECT id, generation_id, output_index, url, NULL AS data_url,
+               storage_path, mime_type, duration_seconds, metadata, saved_at,
+               created_at
         FROM studio_audio_outputs
         WHERE generation_id IN (${rows.map(() => "?").join(",")})
         ORDER BY generation_id, output_index ASC
@@ -337,7 +372,9 @@ export function updateStudioAudioGeneration(
     .run(
       input.status,
       input.errorMessage ?? null,
-      input.rawResponse === undefined ? null : JSON.stringify(input.rawResponse),
+      input.rawResponse === undefined
+        ? null
+        : JSON.stringify(input.rawResponse),
       completedAt,
       generationId
     )
@@ -346,18 +383,18 @@ export function updateStudioAudioGeneration(
 export function createStudioAudioOutput(
   input: CreateAudioOutputInput
 ): StudioAudioOutput {
-  const id = randomUUID()
+  const id = input.id ?? randomUUID()
   const createdAt = nowIso()
 
   getAudioDb()
     .prepare(
       `
         INSERT INTO studio_audio_outputs
-          (id, generation_id, output_index, url, data_url, mime_type,
-           duration_seconds, metadata, saved_at, created_at)
+          (id, generation_id, output_index, url, data_url, storage_path,
+           mime_type, duration_seconds, metadata, saved_at, created_at)
         VALUES
-          (@id, @generationId, @index, @url, @dataUrl, @mimeType,
-           @durationSeconds, @metadata, NULL, @createdAt)
+          (@id, @generationId, @index, @url, @dataUrl, @storagePath,
+           @mimeType, @durationSeconds, @metadata, NULL, @createdAt)
       `
     )
     .run({
@@ -366,6 +403,7 @@ export function createStudioAudioOutput(
       index: input.index,
       url: input.url ?? null,
       dataUrl: input.dataUrl ?? null,
+      storagePath: input.storagePath ?? null,
       mimeType: input.mimeType ?? null,
       durationSeconds: input.durationSeconds ?? null,
       metadata:
@@ -380,6 +418,7 @@ export function createStudioAudioOutput(
     src: input.dataUrl ?? input.url ?? "",
     url: input.url ?? null,
     dataUrl: input.dataUrl ?? null,
+    storagePath: input.storagePath ?? null,
     mimeType: input.mimeType ?? null,
     durationSeconds: input.durationSeconds ?? null,
     savedAt: null,
@@ -391,8 +430,8 @@ export function getStudioAudioOutput(outputId: string) {
   const row = getAudioDb()
     .prepare(
       `
-        SELECT id, generation_id, output_index, url, data_url, mime_type,
-               duration_seconds, metadata, saved_at, created_at
+        SELECT id, generation_id, output_index, url, data_url, storage_path,
+               mime_type, duration_seconds, metadata, saved_at, created_at
         FROM studio_audio_outputs
         WHERE id = ?
       `
@@ -409,7 +448,8 @@ export function listStudioSavedAudioOutputs(): StudioSavedAudioOutput[] {
         SELECT outputs.id, outputs.generation_id, generations.session_id,
                outputs.output_index, generations.prompt, generations.model_name,
                generations.manufacturer, outputs.mime_type,
-               outputs.duration_seconds, outputs.saved_at, outputs.created_at
+               outputs.duration_seconds, outputs.storage_path, outputs.saved_at,
+               outputs.created_at
         FROM studio_audio_outputs AS outputs
         INNER JOIN studio_audio_generations AS generations
           ON generations.id = outputs.generation_id
@@ -429,14 +469,15 @@ export function listStudioSavedAudioOutputs(): StudioSavedAudioOutput[] {
     manufacturer: row.manufacturer,
     mimeType: row.mime_type,
     durationSeconds: row.duration_seconds,
+    storagePath: row.storage_path,
     savedAt: row.saved_at,
     createdAt: row.created_at,
   }))
 }
 
-export function saveStudioAudioOutputData(
+export function saveStudioAudioOutputStorage(
   outputId: string,
-  dataUrl: string,
+  storagePath: string,
   mimeType?: string | null
 ) {
   const savedAt = nowIso()
@@ -445,13 +486,14 @@ export function saveStudioAudioOutputData(
     .prepare(
       `
         UPDATE studio_audio_outputs
-        SET data_url = ?,
+        SET storage_path = ?,
+            data_url = NULL,
             mime_type = COALESCE(?, mime_type),
             saved_at = ?
         WHERE id = ?
       `
     )
-    .run(dataUrl, mimeType ?? null, savedAt, outputId)
+    .run(storagePath, mimeType ?? null, savedAt, outputId)
 
   return getStudioAudioOutput(outputId)
 }

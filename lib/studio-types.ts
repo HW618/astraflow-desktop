@@ -228,6 +228,7 @@ export type StudioImageOutput = {
   src: string
   url: string | null
   dataUrl: string | null
+  storagePath: string | null
   mimeType: string | null
   width: number | null
   height: number | null
@@ -246,6 +247,7 @@ export type StudioSavedImageOutput = {
   mimeType: string | null
   width: number | null
   height: number | null
+  storagePath: string | null
   savedAt: string
   createdAt: string
 }
@@ -254,6 +256,7 @@ export type StudioLibraryImageFile = StudioSavedImageOutput & {
   kind: "image"
   src: string
   downloadUrl: string
+  canOpenFolder: boolean
 }
 
 export type StudioImageLibraryFile = StudioLibraryImageFile
@@ -275,6 +278,7 @@ export type StudioGenericLibraryFile = {
   size: number | null
   sandboxPath: string | null
   downloadUrl: string
+  canOpenFolder: boolean
   savedAt: string
   createdAt: string
 }

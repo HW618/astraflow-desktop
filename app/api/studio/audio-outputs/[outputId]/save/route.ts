@@ -2,28 +2,17 @@ import { NextResponse } from "next/server"
 
 import {
   getStudioAudioOutput,
-  saveStudioAudioOutputData,
+  saveStudioAudioOutputStorage,
 } from "@/lib/studio-audio-db"
+import {
+  downloadUrlToStudioMediaFile,
+  writeDataUrlToStudioMediaFile,
+} from "@/lib/studio-media-storage"
 
 export const runtime = "nodejs"
 
 type RouteContext = {
   params: Promise<{ outputId: string }>
-}
-
-async function downloadAudioAsDataUrl(url: string) {
-  const response = await fetch(url)
-
-  if (!response.ok) {
-    throw new Error(`Failed to fetch audio (${response.status})`)
-  }
-
-  const mimeType =
-    response.headers.get("content-type")?.split(";")[0]?.trim() ?? "audio/mpeg"
-  const buffer = Buffer.from(await response.arrayBuffer())
-  const dataUrl = `data:${mimeType};base64,${buffer.toString("base64")}`
-
-  return { dataUrl, mimeType }
 }
 
 export async function POST(_request: Request, context: RouteContext) {
@@ -37,13 +26,36 @@ export async function POST(_request: Request, context: RouteContext) {
     )
   }
 
-  if (output.dataUrl) {
-    const saved = saveStudioAudioOutputData(
+  if (output.storagePath) {
+    const saved = saveStudioAudioOutputStorage(
       outputId,
-      output.dataUrl,
+      output.storagePath,
       output.mimeType ?? null
     )
     return NextResponse.json({ ok: true, data: saved })
+  }
+
+  if (output.dataUrl) {
+    try {
+      const stored = writeDataUrlToStudioMediaFile({
+        kind: "audio",
+        generationId: output.generationId,
+        outputId,
+        dataUrl: output.dataUrl,
+        fallbackMimeType: output.mimeType,
+      })
+      const saved = saveStudioAudioOutputStorage(
+        outputId,
+        stored.storagePath,
+        stored.mimeType
+      )
+      return NextResponse.json({ ok: true, data: saved })
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to save audio."
+
+      return NextResponse.json({ ok: false, error: message }, { status: 502 })
+    }
   }
 
   if (!output.url) {
@@ -54,16 +66,23 @@ export async function POST(_request: Request, context: RouteContext) {
   }
 
   try {
-    const { dataUrl, mimeType } = await downloadAudioAsDataUrl(output.url)
-    const saved = saveStudioAudioOutputData(outputId, dataUrl, mimeType)
+    const stored = await downloadUrlToStudioMediaFile({
+      kind: "audio",
+      generationId: output.generationId,
+      outputId,
+      url: output.url,
+      fallbackMimeType: output.mimeType,
+    })
+    const saved = saveStudioAudioOutputStorage(
+      outputId,
+      stored.storagePath,
+      stored.mimeType
+    )
     return NextResponse.json({ ok: true, data: saved })
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Failed to save audio."
 
-    return NextResponse.json(
-      { ok: false, error: message },
-      { status: 502 }
-    )
+    return NextResponse.json({ ok: false, error: message }, { status: 502 })
   }
 }

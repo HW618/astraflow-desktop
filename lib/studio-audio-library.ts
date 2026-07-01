@@ -14,6 +14,7 @@ export function mapSavedAudioOutputToLibraryFile(
     kind: "audio",
     src: contentUrl,
     downloadUrl: `${contentUrl}?download=1`,
+    canOpenFolder: Boolean(output.storagePath),
   }
 }
 

@@ -2,9 +2,12 @@ import { NextResponse } from "next/server"
 
 import {
   getStudioVideoOutput,
-  saveStudioVideoOutputData,
+  saveStudioVideoOutputStorage,
 } from "@/lib/studio-video-db"
-import { downloadVideoAsDataUrl } from "@/lib/studio-video-storage"
+import {
+  downloadUrlToStudioMediaFile,
+  writeDataUrlToStudioMediaFile,
+} from "@/lib/studio-media-storage"
 
 export const runtime = "nodejs"
 
@@ -23,13 +26,36 @@ export async function POST(_request: Request, context: RouteContext) {
     )
   }
 
-  if (output.dataUrl) {
-    const saved = saveStudioVideoOutputData(
+  if (output.storagePath) {
+    const saved = saveStudioVideoOutputStorage(
       outputId,
-      output.dataUrl,
+      output.storagePath,
       output.mimeType ?? null
     )
     return NextResponse.json({ ok: true, data: saved })
+  }
+
+  if (output.dataUrl) {
+    try {
+      const stored = writeDataUrlToStudioMediaFile({
+        kind: "video",
+        generationId: output.generationId,
+        outputId,
+        dataUrl: output.dataUrl,
+        fallbackMimeType: output.mimeType,
+      })
+      const saved = saveStudioVideoOutputStorage(
+        outputId,
+        stored.storagePath,
+        stored.mimeType
+      )
+      return NextResponse.json({ ok: true, data: saved })
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to save video."
+
+      return NextResponse.json({ ok: false, error: message }, { status: 502 })
+    }
   }
 
   if (!output.url) {
@@ -40,16 +66,23 @@ export async function POST(_request: Request, context: RouteContext) {
   }
 
   try {
-    const { dataUrl, mimeType } = await downloadVideoAsDataUrl(output.url)
-    const saved = saveStudioVideoOutputData(outputId, dataUrl, mimeType)
+    const stored = await downloadUrlToStudioMediaFile({
+      kind: "video",
+      generationId: output.generationId,
+      outputId,
+      url: output.url,
+      fallbackMimeType: output.mimeType,
+    })
+    const saved = saveStudioVideoOutputStorage(
+      outputId,
+      stored.storagePath,
+      stored.mimeType
+    )
     return NextResponse.json({ ok: true, data: saved })
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Failed to save video."
 
-    return NextResponse.json(
-      { ok: false, error: message },
-      { status: 502 }
-    )
+    return NextResponse.json({ ok: false, error: message }, { status: 502 })
   }
 }

@@ -1,4 +1,5 @@
 import { after, NextResponse } from "next/server"
+import { randomUUID } from "node:crypto"
 import { z } from "zod"
 
 import { getAppAuthState } from "@/lib/app-auth"
@@ -11,7 +12,10 @@ import {
   recordStudioVideoGenerationTask,
   updateStudioVideoGeneration,
 } from "@/lib/studio-video-db"
-import { downloadVideoAsDataUrl } from "@/lib/studio-video-storage"
+import {
+  downloadUrlToStudioMediaFile,
+  writeDataUrlToStudioMediaFile,
+} from "@/lib/studio-media-storage"
 import type {
   StudioVideoGeneration,
   StudioVideoModelOpenapi,
@@ -37,6 +41,7 @@ type NormalizedOutput = {
   width?: number | null
   height?: number | null
   durationSeconds?: number | null
+  storagePath?: string | null
   metadata?: unknown
 }
 
@@ -256,10 +261,7 @@ function mediaValueForField(
   return first
 }
 
-function buildContentItems(
-  prompt: string,
-  attachments: SubmitAttachment[]
-) {
+function buildContentItems(prompt: string, attachments: SubmitAttachment[]) {
   const content: Array<Record<string, unknown>> = [
     {
       type: "text",
@@ -343,7 +345,9 @@ function buildVideoPayload({
     ) {
       const stringValue = String(value)
       value = [
-        field.arrayItemKey ? { [field.arrayItemKey]: stringValue } : stringValue,
+        field.arrayItemKey
+          ? { [field.arrayItemKey]: stringValue }
+          : stringValue,
       ]
     }
 
@@ -385,9 +389,7 @@ function getProviderErrorMessage(payload: unknown, fallback: string) {
   }
 
   const statusPayload =
-    "status" in payload
-      ? (payload as { status?: unknown }).status
-      : payload
+    "status" in payload ? (payload as { status?: unknown }).status : payload
 
   if (statusPayload && typeof statusPayload === "object") {
     const output = (statusPayload as { output?: Record<string, unknown> })
@@ -516,11 +518,7 @@ function attachmentToBlob(attachment: SubmitAttachment) {
   }
 }
 
-function appendFormDataValue(
-  formData: FormData,
-  key: string,
-  value: unknown
-) {
+function appendFormDataValue(formData: FormData, key: string, value: unknown) {
   if (value === undefined || value === null || value === "") {
     return
   }
@@ -585,8 +583,9 @@ function buildOpenAiVideoFormData({
       field.name === "prompt" || field.name === "text"
         ? prompt
         : field.name === "model"
-          ? field.constantValue ?? openapi.modelConstant
-          : field.constantValue ?? coerceFieldValue(field, getParamValue(params, field))
+          ? (field.constantValue ?? openapi.modelConstant)
+          : (field.constantValue ??
+            coerceFieldValue(field, getParamValue(params, field)))
 
     appendFormDataValue(formData, key, value)
     appended.add(key)
@@ -886,9 +885,7 @@ function extractVideoOutputs(payload: unknown): NormalizedOutput[] {
   }
 
   const finalPayload =
-    "status" in payload
-      ? (payload as { status?: unknown }).status
-      : payload
+    "status" in payload ? (payload as { status?: unknown }).status : payload
 
   if (!finalPayload || typeof finalPayload !== "object") {
     return []
@@ -936,28 +933,56 @@ function mergeOutputMetadata(
   }
 }
 
-async function prepareAutoSavedOutput(
+async function prepareAutoSavedOutput({
+  output,
+  generationId,
+  outputId,
+}: {
   output: NormalizedOutput
-): Promise<NormalizedOutput> {
-  if (output.dataUrl || !output.url) {
+  generationId: string
+  outputId: string
+}): Promise<NormalizedOutput> {
+  if (output.storagePath) {
     return output
   }
 
   try {
-    const saved = await downloadVideoAsDataUrl(output.url)
+    const saved = output.dataUrl
+      ? writeDataUrlToStudioMediaFile({
+          kind: "video",
+          generationId,
+          outputId,
+          dataUrl: output.dataUrl,
+          fallbackMimeType: output.mimeType,
+        })
+      : output.url
+        ? await downloadUrlToStudioMediaFile({
+            kind: "video",
+            generationId,
+            outputId,
+            url: output.url,
+            fallbackMimeType: output.mimeType,
+          })
+        : null
+
+    if (!saved) {
+      return output
+    }
 
     return {
       ...output,
-      dataUrl: saved.dataUrl,
+      dataUrl: null,
+      storagePath: saved.storagePath,
       mimeType: output.mimeType ?? saved.mimeType,
       metadata: mergeOutputMetadata(output.metadata, {
-        sourceUrl: output.url,
+        sourceUrl: output.url ?? null,
         autoSaved: true,
       }),
     }
   } catch (error) {
     return {
       ...output,
+      dataUrl: null,
       metadata: mergeOutputMetadata(output.metadata, {
         autoSaved: true,
         autoSaveDownloadError:
@@ -1143,15 +1168,29 @@ async function completeStudioVideoGeneration({
     }
 
     const autoSavedOutputs = await Promise.all(
-      outputs.map((output) => prepareAutoSavedOutput(output))
+      outputs.map(async (output, index) => {
+        const outputId = randomUUID()
+
+        return {
+          outputId,
+          index,
+          output: await prepareAutoSavedOutput({
+            output,
+            generationId: generation.id,
+            outputId,
+          }),
+        }
+      })
     )
 
-    autoSavedOutputs.forEach((output, index) => {
+    autoSavedOutputs.forEach(({ output, outputId, index }) => {
       createStudioVideoOutput({
+        id: outputId,
         generationId: generation.id,
         index,
         url: output.url ?? null,
-        dataUrl: output.dataUrl ?? null,
+        dataUrl: null,
+        storagePath: output.storagePath ?? null,
         mimeType: output.mimeType ?? null,
         width: output.width ?? null,
         height: output.height ?? null,
@@ -1187,7 +1226,10 @@ async function resumeStudioVideoGeneration({
   generation: StudioVideoGeneration
   apiKey: string
 }) {
-  const entry = getVideoOpenapiEntry(generation.openapiFile, generation.operationId)
+  const entry = getVideoOpenapiEntry(
+    generation.openapiFile,
+    generation.operationId
+  )
   const taskId = generation.providerTaskId
 
   if (!entry || !taskId) {
@@ -1283,15 +1325,29 @@ async function resumeStudioVideoGeneration({
     }
 
     const autoSavedOutputs = await Promise.all(
-      outputs.map((output) => prepareAutoSavedOutput(output))
+      outputs.map(async (output, index) => {
+        const outputId = randomUUID()
+
+        return {
+          outputId,
+          index,
+          output: await prepareAutoSavedOutput({
+            output,
+            generationId: generation.id,
+            outputId,
+          }),
+        }
+      })
     )
 
-    autoSavedOutputs.forEach((output, index) => {
+    autoSavedOutputs.forEach(({ output, outputId, index }) => {
       createStudioVideoOutput({
+        id: outputId,
         generationId: generation.id,
         index,
         url: output.url ?? null,
-        dataUrl: output.dataUrl ?? null,
+        dataUrl: null,
+        storagePath: output.storagePath ?? null,
         mimeType: output.mimeType ?? null,
         width: output.width ?? null,
         height: output.height ?? null,
