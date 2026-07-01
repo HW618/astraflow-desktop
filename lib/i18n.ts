@@ -155,7 +155,26 @@ const en = {
   studioWorkspace: "Workspace",
   studioWorkspaceHint:
     "Choose a mode or session from the sidebar. The main Studio canvas will be built next.",
-  studioChatGreeting: "What are we planning today?",
+  studioChatGreeting: (period: string): string => {
+    switch (period) {
+      case "lateNight":
+        return "Still up? What should we untangle first?"
+      case "morning":
+        return "Good morning. Where should we start today?"
+      case "lateMorning":
+        return "Good morning. What should we work on first?"
+      case "noon":
+        return "Good afternoon. What should we tackle next?"
+      case "afternoon":
+        return "Good afternoon. What should we move forward?"
+      case "evening":
+        return "Good evening. Wrap up or start something new?"
+      case "night":
+        return "Good evening. What should we focus on next?"
+      default:
+        return "Where should we start?"
+    }
+  },
   studioChatModel: "Model",
   studioReasoningEffort: "Thinking mode",
   studioReasoningNone: "No thinking",
@@ -523,7 +542,26 @@ const zh: Dictionary = {
   studioDeleteConfirm: "该会话及其消息将被永久删除，此操作无法撤销。",
   studioWorkspace: "工作区",
   studioWorkspaceHint: "先从左侧选择模式或会话。右侧操作区后续继续实现。",
-  studioChatGreeting: "今天有什么计划？",
+  studioChatGreeting: (period: string): string => {
+    switch (period) {
+      case "lateNight":
+        return "夜深了，要我帮你把事情理清吗？"
+      case "morning":
+        return "早上好，今天从哪件事开始？"
+      case "lateMorning":
+        return "上午好，我们先从哪里开始？"
+      case "noon":
+        return "中午好，想快速处理点什么？"
+      case "afternoon":
+        return "下午好，继续推进什么？"
+      case "evening":
+        return "傍晚好，要不要整理一下今天的进展？"
+      case "night":
+        return "晚上好，要收尾还是开新任务？"
+      default:
+        return "我们先从哪里开始？"
+    }
+  },
   studioChatModel: "模型",
   studioReasoningEffort: "思考档位",
   studioReasoningNone: "不思考",

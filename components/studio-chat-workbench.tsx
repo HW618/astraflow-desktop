@@ -525,12 +525,60 @@ function mergeLiveMessage(
     ...currentMessages.slice(replacementIndex + 1),
   ]
 }
+
+function getStudioGreetingPeriod(date = new Date()) {
+  const hour = date.getHours()
+
+  if (hour < 5) {
+    return "lateNight"
+  }
+
+  if (hour < 10) {
+    return "morning"
+  }
+
+  if (hour < 12) {
+    return "lateMorning"
+  }
+
+  if (hour < 14) {
+    return "noon"
+  }
+
+  if (hour < 17) {
+    return "afternoon"
+  }
+
+  if (hour < 19) {
+    return "evening"
+  }
+
+  return "night"
+}
+
+function useStudioGreetingPeriod() {
+  const [period, setPeriod] = React.useState("anytime")
+
+  React.useEffect(() => {
+    const updatePeriod = () => setPeriod(getStudioGreetingPeriod())
+
+    updatePeriod()
+
+    const timer = window.setInterval(updatePeriod, 60_000)
+
+    return () => window.clearInterval(timer)
+  }, [])
+
+  return period
+}
+
 function StudioChatWorkbench({
   sessionId,
   onSessionChange,
   onSessionsChange,
 }: StudioChatWorkbenchProps) {
   const { t } = useI18n()
+  const greetingPeriod = useStudioGreetingPeriod()
   const [input, setInput] = React.useState("")
   const [selectedModel, setSelectedModel] = useChatModel()
   const [selectedReasoningEffort, setSelectedReasoningEffort] =
@@ -956,7 +1004,7 @@ function StudioChatWorkbench({
           <div className="flex h-full items-center justify-center px-8 pb-24">
             <div className="flex w-full max-w-3xl flex-col items-center gap-6">
               <h1 className="font-heading text-2xl font-semibold">
-                {t.studioChatGreeting}
+                {t.studioChatGreeting(greetingPeriod)}
               </h1>
               <ChatComposer
                 value={input}
