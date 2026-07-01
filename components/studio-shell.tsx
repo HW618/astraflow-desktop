@@ -1084,9 +1084,6 @@ function StudioShell({
         >
           <DialogHeader>
             <DialogTitle>{t.studioApiSettingsTitle}</DialogTitle>
-            <DialogDescription>
-              {t.studioApiSettingsDescription}
-            </DialogDescription>
           </DialogHeader>
 
           <div className="flex flex-col gap-3 text-sm">

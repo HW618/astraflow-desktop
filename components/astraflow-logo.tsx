@@ -2,10 +2,6 @@
 
 import Image from "next/image"
 
-import enLogoDark from "@/static/logo/en-logo-白.png"
-import enLogoLight from "@/static/logo/en-logo.png"
-import zhLogoDark from "@/static/logo/logo-白.png"
-import zhLogoLight from "@/static/logo/logo.png"
 import { useI18n } from "@/components/i18n-provider"
 import { cn } from "@/lib/utils"
 
@@ -16,12 +12,12 @@ type AstraFlowLogoProps = {
 
 const logos = {
   en: {
-    light: enLogoLight,
-    dark: enLogoDark,
+    light: { src: "/logo/en-logo.png", width: 530, height: 160 },
+    dark: { src: "/logo/en-logo-白.png", width: 530, height: 160 },
   },
   zh: {
-    light: zhLogoLight,
-    dark: zhLogoDark,
+    light: { src: "/logo/logo.png", width: 700, height: 160 },
+    dark: { src: "/logo/logo-白.png", width: 700, height: 160 },
   },
 } as const
 
@@ -32,14 +28,18 @@ function AstraFlowLogo({ className, fetchPriority }: AstraFlowLogoProps) {
   return (
     <>
       <Image
-        src={logo.light}
+        src={logo.light.src}
         alt="AstraFlow"
+        width={logo.light.width}
+        height={logo.light.height}
         className={cn("block h-8 w-auto dark:hidden", className)}
         fetchPriority={fetchPriority}
       />
       <Image
-        src={logo.dark}
+        src={logo.dark.src}
         alt="AstraFlow"
+        width={logo.dark.width}
+        height={logo.dark.height}
         className={cn("hidden h-8 w-auto dark:block", className)}
         fetchPriority={fetchPriority}
       />

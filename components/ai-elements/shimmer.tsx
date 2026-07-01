@@ -23,7 +23,7 @@ const ShimmerComponent = ({
   children,
   as = "p",
   className,
-  duration = 2,
+  duration = 3.6,
   spread = 2,
 }: ShimmerProps) => {
   const MotionComponent = motionComponents[as];

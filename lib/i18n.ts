@@ -272,8 +272,6 @@ const en = {
   studioSandboxError: "Error",
   studioApiSettings: "API Settings",
   studioApiSettingsTitle: "UCloud OAuth",
-  studioApiSettingsDescription:
-    "Sign in with your UCloud account to authorize Studio.",
   studioApiKeyLabel: "API Key",
   studioApiKeyPlaceholder: "Paste your API key",
   studioApiKeyGetLink: "Get API Key",
@@ -657,7 +655,6 @@ const zh: Dictionary = {
   studioSandboxError: "错误",
   studioApiSettings: "API 设置",
   studioApiSettingsTitle: "UCloud OAuth 登录",
-  studioApiSettingsDescription: "使用 UCloud 账号登录来授权操作台。",
   studioApiKeyLabel: "API Key",
   studioApiKeyPlaceholder: "粘贴你的 API Key",
   studioApiKeyGetLink: "获取 API Key",
