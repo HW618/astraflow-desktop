@@ -824,6 +824,17 @@ function SkillStat({ icon, label }: { icon: React.ReactNode; label: string }) {
   )
 }
 
+function PluginCardDescription({ children }: { children: string }) {
+  return (
+    <p
+      className="h-[64px] min-h-[64px] overflow-y-auto whitespace-pre-line pr-2 text-sm leading-5 text-muted-foreground [scrollbar-gutter:stable] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+      tabIndex={0}
+    >
+      {children}
+    </p>
+  )
+}
+
 function SkillCard({
   installedSkill,
   installing,
@@ -876,9 +887,9 @@ function SkillCard({
           ) : null}
         </div>
 
-        <p className="line-clamp-3 min-h-[60px] text-sm leading-5 text-muted-foreground">
+        <PluginCardDescription>
           {description || t.skillNoDescription}
-        </p>
+        </PluginCardDescription>
 
         <div className="grid grid-cols-2 gap-x-3 gap-y-2">
           <SkillStat
@@ -993,9 +1004,9 @@ function InstalledSkillCard({
           </Badge>
         </div>
 
-        <p className="line-clamp-3 min-h-[60px] text-sm leading-5 text-muted-foreground">
+        <PluginCardDescription>
           {description || t.skillNoDescription}
-        </p>
+        </PluginCardDescription>
 
         <div className="grid grid-cols-2 gap-x-3 gap-y-2">
           <SkillStat
@@ -1109,9 +1120,9 @@ function McpMarketCard({
           ) : null}
         </div>
 
-        <p className="line-clamp-3 min-h-[60px] text-sm leading-5 text-muted-foreground">
+        <PluginCardDescription>
           {server.description || t.skillNoDescription}
-        </p>
+        </PluginCardDescription>
 
         <div className="flex flex-wrap gap-2">
           {transports.length > 0 ? (
@@ -1196,9 +1207,9 @@ function InstalledMcpCard({
           </Badge>
         </div>
 
-        <p className="line-clamp-3 min-h-[60px] text-sm leading-5 text-muted-foreground">
+        <PluginCardDescription>
           {server.description || t.skillNoDescription}
-        </p>
+        </PluginCardDescription>
 
         <div className="grid grid-cols-2 gap-x-3 gap-y-2">
           <SkillStat
