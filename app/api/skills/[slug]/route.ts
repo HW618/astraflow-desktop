@@ -2,7 +2,10 @@ import { NextResponse } from "next/server"
 
 import type { DescribeSkillDetailResponse } from "@/lib/skill-market"
 import { resolveModelverseProjectId } from "@/lib/modelverse-api-keys"
-import { getStudioModelverseApiKey } from "@/lib/studio-db"
+import {
+  getSelectedUCloudProjectId,
+  getStudioModelverseApiKey,
+} from "@/lib/studio-db"
 import { callUCloudAction, UCloudApiError } from "@/lib/ucloud"
 import { getUCloudCredentials } from "@/lib/ucloud-credentials"
 
@@ -66,6 +69,7 @@ export async function GET(request: Request, context: SkillDetailRouteContext) {
       credentials,
       preferredProjectId:
         readString(searchParams.get("projectId")) ||
+        getSelectedUCloudProjectId() ||
         getStudioModelverseApiKey()?.projectId ||
         credentials.projectId,
     })

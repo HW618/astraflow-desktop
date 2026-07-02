@@ -19,10 +19,143 @@ const en = {
   logout: "Logout",
   toggleTheme: "Toggle theme",
   toggleLanguage: "Switch language",
+  appInfo: "App info",
+  appVersion: "Version",
+  appUpdateStatus: "Updates",
+  appUpdateChecking: "Checking...",
+  appUpdateCheck: "Check updates",
+  appUpdateCurrent: "AstraFlow is up to date.",
+  appUpdateAvailable: (version: string) => `Update available: v${version}`,
+  appUpdateLatest: (version: string) => `Latest: v${version}`,
+  appUpdateCheckFailed: "Unable to check updates.",
+  appUpdateOpenRelease: "Open release",
+  appUpdateBadge: "New version",
+  appUpdateInstallNow: "Update now",
+  appUpdateInstalling: "Downloading update...",
+  appUpdateInstallRestarting: "Update downloaded. AstraFlow will restart.",
+  appUpdateInstallFailed: "Unable to install update.",
+  appUpdateInstallUnavailable:
+    "Automatic update is only available in the desktop app.",
+  project: "Project",
+  projectLoading: "Loading projects",
+  projectEmpty: "No projects",
+  projectLoadFailed: "Failed to load projects.",
+  projectSelectFailed: "Failed to select project.",
   previous: "Previous",
   next: "Next",
   loginContinueWithUCloud: "Continue with UCloud",
   loginRestartUCloud: "Restart UCloud login",
+  // CodeBox
+  codeboxAttentionTitle: "CodeBox needs attention",
+  codeboxDone: "Done",
+  codeboxLoadFailed: "Failed to load CodeBox data.",
+  codeboxWaitingGithub: "Waiting for GitHub authorization...",
+  codeboxGithubConnected: "GitHub is connected.",
+  codeboxGithubConnectedLabel: "Connected",
+  codeboxGithubDeviceFlow: "Device Flow login",
+  codeboxGithubInjected:
+    "GitHub token will be injected into new and resumed sandboxes.",
+  codeboxGithubStopped: "GitHub authorization stopped.",
+  codeboxGithubFailed: "GitHub authorization failed.",
+  codeboxGithubLoginFailed: "Failed to start GitHub login.",
+  codeboxGithubRemoved: "GitHub authorization was removed from CodeBox.",
+  codeboxGithubLogoutFailed: "Failed to log out GitHub.",
+  codeboxApiKeySelected: (name: string) => `API key ${name} is selected.`,
+  codeboxApiKeySelectFailed: "Failed to select API key.",
+  codeboxVolumeReady: (name: string) => `Volume ${name} is ready.`,
+  codeboxVolumeCreateFailed: "Failed to create volume.",
+  codeboxVolumeDeleted: (name: string) => `Volume ${name} was deleted.`,
+  codeboxVolumeDeleteFailed: "Failed to delete volume.",
+  codeboxCreateVolumeFirst: "Create a volume before launching a sandbox.",
+  codeboxSelectedVolumeFallback: "the selected volume",
+  codeboxSandboxReady: (volumeName: string, passwordCopied: boolean) =>
+    passwordCopied
+      ? `code-server is running for ${volumeName}. Password copied.`
+      : `code-server is running for ${volumeName}.`,
+  codeboxSandboxCreateFailed: "Failed to create sandbox.",
+  codeboxSandboxActionCompleted: (action: string): string => {
+    switch (action) {
+      case "pause":
+        return "Sandbox paused."
+      case "resume":
+        return "Sandbox resumed."
+      case "kill":
+        return "Sandbox killed."
+      default:
+        return "Sandbox action completed."
+    }
+  },
+  codeboxSandboxActionFailed: (action: string): string => {
+    switch (action) {
+      case "pause":
+        return "Failed to pause sandbox."
+      case "resume":
+        return "Failed to resume sandbox."
+      case "kill":
+        return "Failed to kill sandbox."
+      default:
+        return "Failed to update sandbox."
+    }
+  },
+  codeboxVolumesTitle: "Volumes",
+  codeboxVolumeSummary: (count: number) =>
+    count === 1 ? "1 volume" : `${count} volumes`,
+  codeboxCreate: "Create",
+  codeboxEmptyCreateVolume: "Create a persistent volume first.",
+  codeboxReconnect: "Reconnect",
+  codeboxConnect: "Connect",
+  codeboxNewSandboxTitle: "New Sandbox",
+  codeboxNewSandboxDescription:
+    "Choose an API key, volume, and optional repository to start a code-server sandbox.",
+  codeboxMountsVolume: (name: string) => `Mounts ${name} at /workspace`,
+  codeboxSelectOrCreateVolume: "Select or create a volume",
+  codeboxLoadingApiKeys: "Loading API keys",
+  codeboxApiKey: "API key",
+  codeboxNoApiKeys: "No API keys",
+  codeboxSelectVolume: "Select volume",
+  codeboxRepoPlaceholder: "Optional GitHub repo URL",
+  codeboxLaunch: "Launch",
+  codeboxSandboxesTitle: "Sandboxes",
+  codeboxSandboxesShown: (count: number) => `${count} shown`,
+  codeboxRefreshSandboxes: "Refresh sandboxes",
+  codeboxFilterAll: "All",
+  codeboxFilterRunning: "Running",
+  codeboxFilterPaused: "Paused",
+  codeboxNoSandboxes: "No CodeBox sandboxes yet.",
+  codeboxStatusRunning: "Running",
+  codeboxStatusPaused: "Paused",
+  codeboxStatusUnknown: "Unknown",
+  codeboxSeenAt: (value: string) => `seen ${value}`,
+  codeboxDeleteVolumeAria: (name: string) => `Delete ${name}`,
+  codeboxUpdatedAt: (value: string) => `updated ${value}`,
+  codeboxOpen: "Open",
+  codeboxPauseSandbox: "Pause sandbox",
+  codeboxResumeSandbox: "Resume sandbox",
+  codeboxKillSandbox: "Kill sandbox",
+  codeboxUrl: "URL",
+  codeboxPassword: "Password",
+  codeboxWorkspace: "Workspace",
+  codeboxRepo: "Repo",
+  codeboxCopyLabel: (label: string) => `Copy ${label}`,
+  codeboxLoading: "Loading",
+  codeboxConnectGithubTitle: "Connect GitHub",
+  codeboxConnectGithubDescription:
+    "Authorize the device code in GitHub. CodeBox will poll until the token is ready or the code expires.",
+  codeboxDeviceCode: "Device code",
+  codeboxCopyCode: "Copy code",
+  codeboxCopyBlocked: "Copy is blocked here. Select the code manually.",
+  codeboxOpenGithub: "Open GitHub",
+  codeboxExpiresAt: (value: string) => `Expires at ${value}.`,
+  codeboxNoActiveGithubFlow: "No active GitHub device flow.",
+  codeboxDeleteVolumeTitle: "Delete volume?",
+  codeboxKillSandboxTitle: "Kill sandbox?",
+  codeboxDeleteVolumeConfirm: (target: string) =>
+    `Delete ${target}? Files on this volume will be removed.`,
+  codeboxKillSandboxConfirm: (target: string) =>
+    `Kill ${target}? The running code-server session will stop immediately.`,
+  codeboxCancel: "Cancel",
+  codeboxDelete: "Delete",
+  codeboxKill: "Kill",
   // Skills
   skillSearch: "Search Skills",
   mcpSearch: "Search MCP",
@@ -412,10 +545,140 @@ const zh: Dictionary = {
   logout: "登出",
   toggleTheme: "切换主题",
   toggleLanguage: "切换语言",
+  appInfo: "应用信息",
+  appVersion: "版本",
+  appUpdateStatus: "更新",
+  appUpdateChecking: "正在检查...",
+  appUpdateCheck: "检查更新",
+  appUpdateCurrent: "AstraFlow 已是最新版本。",
+  appUpdateAvailable: (version: string) => `发现新版本：v${version}`,
+  appUpdateLatest: (version: string) => `最新版本：v${version}`,
+  appUpdateCheckFailed: "检查更新失败。",
+  appUpdateOpenRelease: "打开发布页",
+  appUpdateBadge: "发现新版本",
+  appUpdateInstallNow: "立即更新",
+  appUpdateInstalling: "正在下载更新...",
+  appUpdateInstallRestarting: "更新已下载，AstraFlow 将自动重启安装。",
+  appUpdateInstallFailed: "无法安装更新。",
+  appUpdateInstallUnavailable: "自动更新只在桌面安装包中可用。",
+  project: "项目",
+  projectLoading: "正在加载项目",
+  projectEmpty: "暂无项目",
+  projectLoadFailed: "加载项目失败。",
+  projectSelectFailed: "选择项目失败。",
   previous: "上一页",
   next: "下一页",
   loginContinueWithUCloud: "继续使用 UCloud",
   loginRestartUCloud: "重新登录 UCloud",
+  // CodeBox
+  codeboxAttentionTitle: "CodeBox 需要处理",
+  codeboxDone: "已完成",
+  codeboxLoadFailed: "加载 CodeBox 数据失败。",
+  codeboxWaitingGithub: "等待 GitHub 授权...",
+  codeboxGithubConnected: "GitHub 已连接。",
+  codeboxGithubConnectedLabel: "已连接",
+  codeboxGithubDeviceFlow: "设备码登录",
+  codeboxGithubInjected: "GitHub 访问令牌会注入到新建和恢复的沙箱中。",
+  codeboxGithubStopped: "GitHub 授权已停止。",
+  codeboxGithubFailed: "GitHub 授权失败。",
+  codeboxGithubLoginFailed: "启动 GitHub 登录失败。",
+  codeboxGithubRemoved: "已移除 CodeBox 的 GitHub 授权。",
+  codeboxGithubLogoutFailed: "退出 GitHub 失败。",
+  codeboxApiKeySelected: (name: string) => `已选择 API Key ${name}。`,
+  codeboxApiKeySelectFailed: "选择 API Key 失败。",
+  codeboxVolumeReady: (name: string) => `存储卷 ${name} 已就绪。`,
+  codeboxVolumeCreateFailed: "创建存储卷失败。",
+  codeboxVolumeDeleted: (name: string) => `存储卷 ${name} 已删除。`,
+  codeboxVolumeDeleteFailed: "删除存储卷失败。",
+  codeboxCreateVolumeFirst: "请先创建存储卷，再启动沙箱。",
+  codeboxSelectedVolumeFallback: "选中的存储卷",
+  codeboxSandboxReady: (volumeName: string, passwordCopied: boolean) =>
+    passwordCopied
+      ? `${volumeName} 的 code-server 已启动，密码已复制。`
+      : `${volumeName} 的 code-server 已启动。`,
+  codeboxSandboxCreateFailed: "创建沙箱失败。",
+  codeboxSandboxActionCompleted: (action: string) => {
+    switch (action) {
+      case "pause":
+        return "沙箱已暂停。"
+      case "resume":
+        return "沙箱已恢复。"
+      case "kill":
+        return "沙箱已销毁。"
+      default:
+        return "沙箱操作已完成。"
+    }
+  },
+  codeboxSandboxActionFailed: (action: string) => {
+    switch (action) {
+      case "pause":
+        return "暂停沙箱失败。"
+      case "resume":
+        return "恢复沙箱失败。"
+      case "kill":
+        return "销毁沙箱失败。"
+      default:
+        return "更新沙箱失败。"
+    }
+  },
+  codeboxVolumesTitle: "存储卷",
+  codeboxVolumeSummary: (count: number) => `${count} 个存储卷`,
+  codeboxCreate: "创建",
+  codeboxEmptyCreateVolume: "请先创建一个持久化存储卷。",
+  codeboxReconnect: "重新连接",
+  codeboxConnect: "连接",
+  codeboxNewSandboxTitle: "新建沙箱",
+  codeboxNewSandboxDescription:
+    "选择 API Key、存储卷和可选仓库后启动 code-server 沙箱。",
+  codeboxMountsVolume: (name: string) => `将 ${name} 挂载到 /workspace`,
+  codeboxSelectOrCreateVolume: "选择或创建存储卷",
+  codeboxLoadingApiKeys: "正在加载 API Key",
+  codeboxApiKey: "API Key",
+  codeboxNoApiKeys: "暂无 API Key",
+  codeboxSelectVolume: "选择存储卷",
+  codeboxRepoPlaceholder: "可选的 GitHub 仓库 URL",
+  codeboxLaunch: "启动",
+  codeboxSandboxesTitle: "沙箱",
+  codeboxSandboxesShown: (count: number) => `显示 ${count} 个`,
+  codeboxRefreshSandboxes: "刷新沙箱",
+  codeboxFilterAll: "全部",
+  codeboxFilterRunning: "运行中",
+  codeboxFilterPaused: "已暂停",
+  codeboxNoSandboxes: "还没有 CodeBox 沙箱。",
+  codeboxStatusRunning: "运行中",
+  codeboxStatusPaused: "已暂停",
+  codeboxStatusUnknown: "未知",
+  codeboxSeenAt: (value: string) => `上次发现 ${value}`,
+  codeboxDeleteVolumeAria: (name: string) => `删除 ${name}`,
+  codeboxUpdatedAt: (value: string) => `更新于 ${value}`,
+  codeboxOpen: "打开",
+  codeboxPauseSandbox: "暂停沙箱",
+  codeboxResumeSandbox: "恢复沙箱",
+  codeboxKillSandbox: "销毁沙箱",
+  codeboxUrl: "URL",
+  codeboxPassword: "密码",
+  codeboxWorkspace: "工作区",
+  codeboxRepo: "仓库",
+  codeboxCopyLabel: (label: string) => `复制${label}`,
+  codeboxLoading: "加载中",
+  codeboxConnectGithubTitle: "连接 GitHub",
+  codeboxConnectGithubDescription:
+    "在 GitHub 中授权设备码。CodeBox 会轮询等待 token 就绪，直到授权完成或设备码过期。",
+  codeboxDeviceCode: "设备码",
+  codeboxCopyCode: "复制设备码",
+  codeboxCopyBlocked: "当前无法自动复制，请手动选中设备码。",
+  codeboxOpenGithub: "打开 GitHub",
+  codeboxExpiresAt: (value: string) => `${value} 过期。`,
+  codeboxNoActiveGithubFlow: "当前没有进行中的 GitHub 设备码授权。",
+  codeboxDeleteVolumeTitle: "删除存储卷？",
+  codeboxKillSandboxTitle: "销毁沙箱？",
+  codeboxDeleteVolumeConfirm: (target: string) =>
+    `删除 ${target}？这个存储卷上的文件也会被移除。`,
+  codeboxKillSandboxConfirm: (target: string) =>
+    `销毁 ${target}？正在运行的 code-server 会立即停止。`,
+  codeboxCancel: "取消",
+  codeboxDelete: "删除",
+  codeboxKill: "销毁",
   // Skills
   skillSearch: "搜索技能",
   mcpSearch: "搜索 MCP",

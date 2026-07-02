@@ -20,6 +20,7 @@ import {
   RiUser3Line,
   RiVerifiedBadgeLine,
 } from "@remixicon/react"
+import { toast } from "sonner"
 
 import { useI18n } from "@/components/i18n-provider"
 import { Markdown } from "@/components/prompt-kit/markdown"
@@ -66,6 +67,7 @@ import {
   type SkillMeta,
   type SkillOrderBy,
 } from "@/lib/skill-market"
+import { UCLOUD_PROJECT_CHANGED_EVENT } from "@/lib/project-selection"
 import { cn } from "@/lib/utils"
 
 const PAGE_SIZE = 24
@@ -1239,11 +1241,11 @@ function InstalledMcpCard({
         ) : null}
       </div>
 
-      <div className="flex min-w-0 items-center justify-between gap-3 border-t px-4 py-3">
-        <Badge variant="outline">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-t px-4 py-3">
+        <Badge variant="outline" className="shrink-0">
           {getMcpTransportLabel(server.transport, t)}
         </Badge>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
           <Button
             type="button"
             variant="outline"
@@ -1867,7 +1869,6 @@ function SkillsMarketPage({
   const [installedLoading, setInstalledLoading] = React.useState(true)
   const [mcpInstalledLoading, setMcpInstalledLoading] = React.useState(true)
   const [error, setError] = React.useState("")
-  const [mcpStatus, setMcpStatus] = React.useState("")
   const [detailOpen, setDetailOpen] = React.useState(false)
   const [selectedSkill, setSelectedSkill] = React.useState<SkillMeta | null>(
     null
@@ -1974,6 +1975,27 @@ function SkillsMarketPage({
 
     return () => window.clearTimeout(timer)
   }, [query])
+
+  React.useEffect(() => {
+    function handleProjectChanged() {
+      setPage(0)
+      setMcpCursor("")
+      setMcpCursorStack([])
+      setMcpNextCursor(null)
+      setDetail(null)
+      setDetailOpen(false)
+      setRefreshTick((current) => current + 1)
+    }
+
+    window.addEventListener(UCLOUD_PROJECT_CHANGED_EVENT, handleProjectChanged)
+
+    return () => {
+      window.removeEventListener(
+        UCLOUD_PROJECT_CHANGED_EVENT,
+        handleProjectChanged
+      )
+    }
+  }, [])
 
   React.useEffect(() => {
     if (pluginType !== "skills" || view !== "market") {
@@ -2437,7 +2459,7 @@ function SkillsMarketPage({
       upsertInstalledMcpServer(installed)
       setMcpManualOpen(false)
       setMcpEditingId("")
-      setMcpStatus(mcpEditingId ? t.mcpUpdated : t.mcpInstalled)
+      toast.success(mcpEditingId ? t.mcpUpdated : t.mcpInstalled)
     } catch (saveError) {
       if (redirectToLoginIfNeeded(saveError)) {
         return
@@ -2543,7 +2565,7 @@ function SkillsMarketPage({
       try {
         const updated = await testInstalledMcp(server.id)
         upsertInstalledMcpServer(updated)
-        setMcpStatus(t.mcpConnectionOk)
+        toast.success(t.mcpConnectionOk)
       } catch (testError) {
         if (redirectToLoginIfNeeded(testError)) {
           return
@@ -2812,13 +2834,6 @@ function SkillsMarketPage({
                   <AlertDescription>{error}</AlertDescription>
                 </Alert>
               ) : null}
-              {mcpStatus && !error ? (
-                <Alert className="mb-4">
-                  <AlertTitle>{t.pluginTypeMcp}</AlertTitle>
-                  <AlertDescription>{mcpStatus}</AlertDescription>
-                </Alert>
-              ) : null}
-
               {isMineView ? (
                 <div className="flex flex-col gap-6">
                   <section className="flex flex-col gap-3">

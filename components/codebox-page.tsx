@@ -19,7 +19,9 @@ import {
   RiRestartLine,
   RiTerminalBoxLine,
 } from "@remixicon/react"
+import { toast } from "sonner"
 
+import { useI18n } from "@/components/i18n-provider"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -46,6 +48,7 @@ import type {
   CodeBoxStatus,
   CodeBoxVolume,
 } from "@/lib/codebox-types"
+import { UCLOUD_PROJECT_CHANGED_EVENT } from "@/lib/project-selection"
 import { cn } from "@/lib/utils"
 
 type SandboxFilter = "all" | "running" | "paused"
@@ -111,7 +114,11 @@ type ConfirmAction =
 
 const DEFAULT_VOLUME_NAME = "workspace"
 
-async function apiRequest<T>(url: string, init?: RequestInit) {
+async function apiRequest<T>(
+  url: string,
+  init?: RequestInit,
+  fallbackMessage = "Request failed."
+) {
   const headers = new Headers(init?.headers)
 
   if (init?.body && !headers.has("Content-Type")) {
@@ -131,7 +138,7 @@ async function apiRequest<T>(url: string, init?: RequestInit) {
     const message =
       payload && "message" in payload && payload.message
         ? payload.message
-        : "Request failed."
+        : fallbackMessage
 
     throw new Error(message)
   }
@@ -139,7 +146,7 @@ async function apiRequest<T>(url: string, init?: RequestInit) {
   return payload.data
 }
 
-function formatDate(value: string | null) {
+function formatDate(value: string | null, locale?: string) {
   if (!value) {
     return "-"
   }
@@ -150,7 +157,7 @@ function formatDate(value: string | null) {
     return "-"
   }
 
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat(locale, {
     month: "short",
     day: "numeric",
     hour: "2-digit",
@@ -158,16 +165,19 @@ function formatDate(value: string | null) {
   }).format(date)
 }
 
-function getSandboxStatusLabel(status: CodeBoxSandbox["status"]) {
+function getSandboxStatusLabel(
+  status: CodeBoxSandbox["status"],
+  t: ReturnType<typeof useI18n>["t"]
+) {
   if (status === "running") {
-    return "Running"
+    return t.codeboxStatusRunning
   }
 
   if (status === "paused") {
-    return "Paused"
+    return t.codeboxStatusPaused
   }
 
-  return "Unknown"
+  return t.codeboxStatusUnknown
 }
 
 function copyWithFallback(value: string) {
@@ -247,6 +257,7 @@ async function writeClipboard(value: string) {
 }
 
 function CodeBoxPage() {
+  const { t } = useI18n()
   const [status, setStatus] = React.useState<CodeBoxStatus | null>(null)
   const [volumes, setVolumes] = React.useState<CodeBoxVolume[]>([])
   const [sandboxes, setSandboxes] = React.useState<CodeBoxSandbox[]>([])
@@ -255,13 +266,11 @@ function CodeBoxPage() {
   const [repoUrl, setRepoUrl] = React.useState("")
   const [apiKeys, setApiKeys] = React.useState<ModelverseApiKeyOption[]>([])
   const [selectedApiKeyId, setSelectedApiKeyId] = React.useState("")
-  const [apiKeyProjectId, setApiKeyProjectId] = React.useState("")
   const [isApiKeyLoading, setIsApiKeyLoading] = React.useState(true)
   const [sandboxFilter, setSandboxFilter] = React.useState<SandboxFilter>("all")
   const [isLoading, setIsLoading] = React.useState(true)
   const [busyAction, setBusyAction] = React.useState<string | null>(null)
   const [error, setError] = React.useState<string | null>(null)
-  const [notice, setNotice] = React.useState<string | null>(null)
   const [githubFlow, setGithubFlow] = React.useState<GithubDeviceFlow | null>(
     null
   )
@@ -270,15 +279,9 @@ function CodeBoxPage() {
   const [confirmAction, setConfirmAction] =
     React.useState<ConfirmAction | null>(null)
 
-  React.useEffect(() => {
-    if (!notice) {
-      return
-    }
-
-    const timeout = window.setTimeout(() => setNotice(null), 3200)
-
-    return () => window.clearTimeout(timeout)
-  }, [notice])
+  const showNotice = React.useCallback((message: string) => {
+    toast.success(message)
+  }, [])
 
   const selectedVolume = React.useMemo(
     () => volumes.find((volume) => volume.volumeId === selectedVolumeId),
@@ -291,18 +294,32 @@ function CodeBoxPage() {
 
     try {
       const [nextStatus, apiKeyData] = await Promise.all([
-        apiRequest<CodeBoxStatus>("/api/codebox/status"),
+        apiRequest<CodeBoxStatus>(
+          "/api/codebox/status",
+          undefined,
+          t.requestFailed
+        ),
         apiRequest<ModelverseApiKeysResponse>(
-          "/api/studio/modelverse-api-keys"
+          "/api/studio/modelverse-api-keys",
+          undefined,
+          t.requestFailed
         ),
       ])
+      const apiKeyConfigured = Boolean(apiKeyData.selected)
 
-      setStatus(nextStatus)
+      setStatus({
+        ...nextStatus,
+        modelverseApiKey: {
+          ...nextStatus.modelverseApiKey,
+          configured: apiKeyConfigured,
+          name: apiKeyData.selected?.name ?? null,
+          projectId: apiKeyData.projectId,
+        },
+      })
       setApiKeys(apiKeyData.items)
-      setApiKeyProjectId(apiKeyData.projectId)
       setSelectedApiKeyId(apiKeyData.selected?.id ?? "")
 
-      if (!nextStatus.modelverseApiKey.configured) {
+      if (!apiKeyConfigured) {
         setVolumes([])
         setSandboxes([])
         setSelectedVolumeId("")
@@ -310,9 +327,15 @@ function CodeBoxPage() {
       }
 
       const [nextVolumes, nextSandboxes] = await Promise.all([
-        apiRequest<CodeBoxVolume[]>("/api/codebox/volumes"),
+        apiRequest<CodeBoxVolume[]>(
+          "/api/codebox/volumes",
+          undefined,
+          t.requestFailed
+        ),
         apiRequest<CodeBoxSandbox[]>(
-          `/api/codebox/sandboxes?state=${sandboxFilter}`
+          `/api/codebox/sandboxes?state=${sandboxFilter}`,
+          undefined,
+          t.requestFailed
         ),
       ])
 
@@ -330,20 +353,35 @@ function CodeBoxPage() {
       })
     } catch (loadError) {
       setError(
-        loadError instanceof Error
-          ? loadError.message
-          : "Failed to load CodeBox data."
+        loadError instanceof Error ? loadError.message : t.codeboxLoadFailed
       )
     } finally {
       setIsLoading(false)
       setIsApiKeyLoading(false)
     }
-  }, [sandboxFilter])
+  }, [sandboxFilter, t])
 
   React.useEffect(() => {
     queueMicrotask(() => {
       void loadData()
     })
+  }, [loadData])
+
+  React.useEffect(() => {
+    function handleProjectChanged() {
+      setIsLoading(true)
+      setSelectedApiKeyId("")
+      void loadData()
+    }
+
+    window.addEventListener(UCLOUD_PROJECT_CHANGED_EVENT, handleProjectChanged)
+
+    return () => {
+      window.removeEventListener(
+        UCLOUD_PROJECT_CHANGED_EVENT,
+        handleProjectChanged
+      )
+    }
   }, [loadData])
 
   React.useEffect(() => {
@@ -362,7 +400,8 @@ function CodeBoxPage() {
           `/api/codebox/github/device/${activeFlow.flowId}/poll`,
           {
             method: "POST",
-          }
+          },
+          t.requestFailed
         )
 
         if (cancelled) {
@@ -374,7 +413,7 @@ function CodeBoxPage() {
             nextIntervalSeconds = Math.max(3, result.interval)
           }
 
-          setGithubMessage("Waiting for GitHub authorization...")
+          setGithubMessage(t.codeboxWaitingGithub)
           timer = window.setTimeout(
             () => void pollGithub(),
             nextIntervalSeconds * 1000
@@ -391,24 +430,22 @@ function CodeBoxPage() {
                 }
               : current
           )
-          setGithubMessage("GitHub is connected.")
+          setGithubMessage(t.codeboxGithubConnected)
           setGithubFlow(null)
           setGithubDialogOpen(false)
-          setNotice(
-            "GitHub token will be injected into new and resumed sandboxes."
-          )
+          showNotice(t.codeboxGithubInjected)
           void loadData()
           return
         }
 
-        setGithubMessage(result.message ?? "GitHub authorization stopped.")
+        setGithubMessage(result.message ?? t.codeboxGithubStopped)
         setGithubFlow(null)
       } catch (pollError) {
         if (!cancelled) {
           setGithubMessage(
             pollError instanceof Error
               ? pollError.message
-              : "GitHub authorization failed."
+              : t.codeboxGithubFailed
           )
           setGithubFlow(null)
         }
@@ -416,7 +453,7 @@ function CodeBoxPage() {
     }
 
     queueMicrotask(() => {
-      setGithubMessage("Waiting for GitHub authorization...")
+      setGithubMessage(t.codeboxWaitingGithub)
     })
     timer = window.setTimeout(
       () => void pollGithub(),
@@ -429,7 +466,7 @@ function CodeBoxPage() {
         window.clearTimeout(timer)
       }
     }
-  }, [githubFlow, loadData])
+  }, [githubFlow, loadData, showNotice, t])
 
   async function refresh() {
     setIsLoading(true)
@@ -446,7 +483,6 @@ function CodeBoxPage() {
     setSelectedApiKeyId(normalizedApiKeyId)
     setBusyAction("save-api-key")
     setError(null)
-    setNotice(null)
 
     try {
       const saved = await apiRequest<SaveModelverseApiKeyResponse>(
@@ -455,18 +491,18 @@ function CodeBoxPage() {
           method: "POST",
           body: JSON.stringify({
             apiKeyId: normalizedApiKeyId,
-            projectId: apiKeyProjectId || undefined,
           }),
-        }
+        },
+        t.requestFailed
       )
 
-      setNotice(`API key ${saved.selected.name} is selected.`)
+      showNotice(t.codeboxApiKeySelected(saved.selected.name))
       await loadData()
     } catch (selectError) {
       setError(
         selectError instanceof Error
           ? selectError.message
-          : "Failed to select API key."
+          : t.codeboxApiKeySelectFailed
       )
     } finally {
       setBusyAction(null)
@@ -478,23 +514,26 @@ function CodeBoxPage() {
 
     setBusyAction("create-volume")
     setError(null)
-    setNotice(null)
 
     try {
-      const volume = await apiRequest<CodeBoxVolume>("/api/codebox/volumes", {
-        method: "POST",
-        body: JSON.stringify({ name: volumeName }),
-      })
+      const volume = await apiRequest<CodeBoxVolume>(
+        "/api/codebox/volumes",
+        {
+          method: "POST",
+          body: JSON.stringify({ name: volumeName }),
+        },
+        t.requestFailed
+      )
 
       setVolumes((current) => [volume, ...current])
       setSelectedVolumeId(volume.volumeId)
       setVolumeName(DEFAULT_VOLUME_NAME)
-      setNotice(`Volume ${volume.name} is ready.`)
+      showNotice(t.codeboxVolumeReady(volume.name))
     } catch (createError) {
       setError(
         createError instanceof Error
           ? createError.message
-          : "Failed to create volume."
+          : t.codeboxVolumeCreateFailed
       )
     } finally {
       setBusyAction(null)
@@ -504,22 +543,22 @@ function CodeBoxPage() {
   async function deleteVolume(volume: CodeBoxVolume) {
     setBusyAction(`delete-volume:${volume.volumeId}`)
     setError(null)
-    setNotice(null)
 
     try {
       await apiRequest<{ volumeId: string }>(
         `/api/codebox/volumes/${volume.volumeId}`,
         {
           method: "DELETE",
-        }
+        },
+        t.requestFailed
       )
       await loadData()
-      setNotice(`Volume ${volume.name} was deleted.`)
+      showNotice(t.codeboxVolumeDeleted(volume.name))
     } catch (deleteError) {
       setError(
         deleteError instanceof Error
           ? deleteError.message
-          : "Failed to delete volume."
+          : t.codeboxVolumeDeleteFailed
       )
     } finally {
       setBusyAction(null)
@@ -530,13 +569,12 @@ function CodeBoxPage() {
     event.preventDefault()
 
     if (!selectedVolumeId) {
-      setError("Create a volume before launching a sandbox.")
+      setError(t.codeboxCreateVolumeFirst)
       return
     }
 
     setBusyAction("create-sandbox")
     setError(null)
-    setNotice(null)
 
     try {
       const sandbox = await apiRequest<CodeBoxSandbox>(
@@ -547,22 +585,24 @@ function CodeBoxPage() {
             volumeId: selectedVolumeId,
             repoUrl,
           }),
-        }
+        },
+        t.requestFailed
       )
 
       setSandboxes((current) => [sandbox, ...current])
       setRepoUrl("")
       const passwordCopied = await copyText(sandbox.password)
-      setNotice(
-        passwordCopied
-          ? `code-server is running for ${sandbox.volumeName ?? "the selected volume"}. Password copied.`
-          : `code-server is running for ${sandbox.volumeName ?? "the selected volume"}.`
+      showNotice(
+        t.codeboxSandboxReady(
+          sandbox.volumeName ?? t.codeboxSelectedVolumeFallback,
+          passwordCopied
+        )
       )
     } catch (createError) {
       setError(
         createError instanceof Error
           ? createError.message
-          : "Failed to create sandbox."
+          : t.codeboxSandboxCreateFailed
       )
     } finally {
       setBusyAction(null)
@@ -575,22 +615,22 @@ function CodeBoxPage() {
   ) {
     setBusyAction(`${action}:${sandbox.sandboxId}`)
     setError(null)
-    setNotice(null)
 
     try {
       await apiRequest<{ sandboxId: string }>(
         `/api/codebox/sandboxes/${sandbox.sandboxId}/${action}`,
         {
           method: "POST",
-        }
+        },
+        t.requestFailed
       )
       await loadData()
-      setNotice(`Sandbox ${action} completed.`)
+      showNotice(t.codeboxSandboxActionCompleted(action))
     } catch (actionError) {
       setError(
         actionError instanceof Error
           ? actionError.message
-          : `Failed to ${action} sandbox.`
+          : t.codeboxSandboxActionFailed(action)
       )
     } finally {
       setBusyAction(null)
@@ -636,17 +676,18 @@ function CodeBoxPage() {
         "/api/codebox/github/device",
         {
           method: "POST",
-        }
+        },
+        t.requestFailed
       )
 
       setGithubFlow(flow)
       setGithubDialogOpen(true)
-      setGithubMessage("Waiting for GitHub authorization...")
+      setGithubMessage(t.codeboxWaitingGithub)
     } catch (loginError) {
       setError(
         loginError instanceof Error
           ? loginError.message
-          : "Failed to start GitHub login."
+          : t.codeboxGithubLoginFailed
       )
     } finally {
       setBusyAction(null)
@@ -662,7 +703,8 @@ function CodeBoxPage() {
         "/api/codebox/github/logout",
         {
           method: "POST",
-        }
+        },
+        t.requestFailed
       )
 
       setStatus((current) =>
@@ -673,12 +715,12 @@ function CodeBoxPage() {
             }
           : current
       )
-      setNotice("GitHub authorization was removed from CodeBox.")
+      showNotice(t.codeboxGithubRemoved)
     } catch (logoutError) {
       setError(
         logoutError instanceof Error
           ? logoutError.message
-          : "Failed to log out GitHub."
+          : t.codeboxGithubLogoutFailed
       )
     } finally {
       setBusyAction(null)
@@ -700,24 +742,16 @@ function CodeBoxPage() {
           {error ? (
             <Alert variant="destructive" className="shrink-0">
               <RiInformationLine />
-              <AlertTitle>CodeBox needs attention</AlertTitle>
+              <AlertTitle>{t.codeboxAttentionTitle}</AlertTitle>
               <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          ) : null}
-
-          {notice ? (
-            <Alert className="shrink-0 border-emerald-200 bg-emerald-50 text-emerald-950 shadow-sm dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100 [&_[data-slot=alert-description]]:text-emerald-700 dark:[&_[data-slot=alert-description]]:text-emerald-200/80">
-              <RiCheckLine />
-              <AlertTitle>Done</AlertTitle>
-              <AlertDescription>{notice}</AlertDescription>
             </Alert>
           ) : null}
 
           <div className="grid min-h-0 flex-1 gap-4 overflow-hidden xl:grid-cols-[minmax(280px,0.72fr)_minmax(640px,1.6fr)]">
             <div className="flex min-h-0 flex-col gap-4 overflow-hidden">
               <Panel
-                title="Volumes"
-                description={`${volumes.length} volume${volumes.length === 1 ? "" : "s"}`}
+                title={t.codeboxVolumesTitle}
+                description={t.codeboxVolumeSummary(volumes.length)}
                 icon={<RiDatabase2Line className="size-4" aria-hidden />}
                 className="flex min-h-0 flex-1 flex-col"
                 bodyClassName="flex min-h-0 flex-1 flex-col"
@@ -740,13 +774,13 @@ function CodeBoxPage() {
                     ) : (
                       <RiAddLine />
                     )}
-                    Create
+                    {t.codeboxCreate}
                   </Button>
                 </form>
 
                 <div className="mt-3 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1">
                   {volumes.length === 0 ? (
-                    <EmptyBlock text="Create a persistent volume first." />
+                    <EmptyBlock text={t.codeboxEmptyCreateVolume} />
                   ) : (
                     volumes.map((volume) => (
                       <VolumeItem
@@ -768,53 +802,61 @@ function CodeBoxPage() {
                 title="GitHub"
                 description={
                   status?.github.configured
-                    ? (status.github.login ?? "Connected")
-                    : "Device Flow login"
+                    ? (status.github.login ?? t.codeboxGithubConnectedLabel)
+                    : t.codeboxGithubDeviceFlow
                 }
                 icon={<RiGithubLine className="size-4" aria-hidden />}
                 className="shrink-0"
-              >
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    onClick={() => void startGithubLogin()}
-                    disabled={busyAction === "github-login"}
-                  >
-                    {busyAction === "github-login" ? (
-                      <RiLoader4Line className="animate-spin" />
-                    ) : (
-                      <RiGithubLine />
-                    )}
-                    {status?.github.configured ? "Reconnect" : "Connect"}
-                  </Button>
-                  {status?.github.configured ? (
+                action={
+                  <div className="flex flex-wrap justify-end gap-2">
                     <Button
-                      variant="outline"
                       size="sm"
-                      onClick={() => void logoutGithub()}
-                      disabled={busyAction === "github-logout"}
+                      onClick={() => void startGithubLogin()}
+                      disabled={busyAction === "github-login"}
                     >
-                      <RiCloseLine />
-                      Logout
+                      {busyAction === "github-login" ? (
+                        <RiLoader4Line className="animate-spin" />
+                      ) : (
+                        <RiGithubLine />
+                      )}
+                      {status?.github.configured
+                        ? t.codeboxReconnect
+                        : t.codeboxConnect}
                     </Button>
-                  ) : null}
-                </div>
+                    {status?.github.configured ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void logoutGithub()}
+                        disabled={busyAction === "github-logout"}
+                      >
+                        <RiCloseLine />
+                        {t.logout}
+                      </Button>
+                    ) : null}
+                  </div>
+                }
+              >
+                {null}
               </Panel>
             </div>
 
             <div className="flex min-h-0 flex-col gap-4 overflow-hidden">
               <Panel
-                title="New Sandbox"
+                title={t.codeboxNewSandboxTitle}
                 description={
                   selectedVolume
-                    ? `Mounts ${selectedVolume.name} at /workspace`
-                    : "Select or create a volume"
+                    ? t.codeboxMountsVolume(selectedVolume.name)
+                    : t.codeboxSelectOrCreateVolume
                 }
                 icon={<RiTerminalBoxLine className="size-4" aria-hidden />}
                 className="shrink-0"
               >
+                <p className="mb-3 text-xs text-muted-foreground">
+                  {t.codeboxNewSandboxDescription}
+                </p>
                 <form
-                  className="grid gap-3 lg:grid-cols-[minmax(180px,0.8fr)_minmax(180px,0.8fr)_minmax(260px,1.2fr)_auto]"
+                  className="grid gap-3 lg:grid-cols-[minmax(170px,0.75fr)_minmax(160px,0.7fr)_minmax(220px,1.1fr)_auto]"
                   onSubmit={createSandbox}
                 >
                   <Select
@@ -826,20 +868,29 @@ function CodeBoxPage() {
                         void selectApiKey(nextValue)
                       }
                     }}
-                    disabled={isApiKeyLoading || busyAction === "save-api-key"}
+                    disabled={
+                      isApiKeyLoading ||
+                      busyAction === "save-api-key"
+                    }
                   >
                     <SelectTrigger className="w-full">
                       <SelectValue
                         placeholder={
-                          isApiKeyLoading ? "Loading API keys" : "API key"
+                          isApiKeyLoading
+                            ? t.codeboxLoadingApiKeys
+                            : t.codeboxApiKey
                         }
                       />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent
+                      align="start"
+                      className="max-h-80"
+                      position="popper"
+                    >
                       <SelectGroup>
                         {apiKeys.length === 0 ? (
                           <SelectItem value="__empty" disabled>
-                            No API keys
+                            {t.codeboxNoApiKeys}
                           </SelectItem>
                         ) : (
                           apiKeys.map((apiKey) => (
@@ -858,9 +909,13 @@ function CodeBoxPage() {
                     disabled={volumes.length === 0}
                   >
                     <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Select volume" />
+                      <SelectValue placeholder={t.codeboxSelectVolume} />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent
+                      align="start"
+                      className="max-h-72"
+                      position="popper"
+                    >
                       <SelectGroup>
                         {volumes.map((volume) => (
                           <SelectItem
@@ -878,7 +933,7 @@ function CodeBoxPage() {
                     type="url"
                     value={repoUrl}
                     onChange={(event) => setRepoUrl(event.target.value)}
-                    placeholder="Optional GitHub repo URL"
+                    placeholder={t.codeboxRepoPlaceholder}
                     className="h-9"
                   />
 
@@ -897,14 +952,14 @@ function CodeBoxPage() {
                     ) : (
                       <RiPlayLine />
                     )}
-                    Launch
+                    {t.codeboxLaunch}
                   </Button>
                 </form>
               </Panel>
 
               <Panel
-                title="Sandboxes"
-                description={`${sandboxes.length} shown`}
+                title={t.codeboxSandboxesTitle}
+                description={t.codeboxSandboxesShown(sandboxes.length)}
                 icon={<RiCodeBoxLine className="size-4" aria-hidden />}
                 className="flex min-h-0 flex-1 flex-col"
                 bodyClassName="min-h-0 flex-1"
@@ -915,7 +970,7 @@ function CodeBoxPage() {
                       size="icon-sm"
                       onClick={() => void refresh()}
                       disabled={isLoading}
-                      aria-label="Refresh sandboxes"
+                      aria-label={t.codeboxRefreshSandboxes}
                     >
                       <RiRefreshLine
                         className={cn(isLoading && "animate-spin")}
@@ -932,9 +987,15 @@ function CodeBoxPage() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectGroup>
-                          <SelectItem value="all">All</SelectItem>
-                          <SelectItem value="running">Running</SelectItem>
-                          <SelectItem value="paused">Paused</SelectItem>
+                          <SelectItem value="all">
+                            {t.codeboxFilterAll}
+                          </SelectItem>
+                          <SelectItem value="running">
+                            {t.codeboxFilterRunning}
+                          </SelectItem>
+                          <SelectItem value="paused">
+                            {t.codeboxFilterPaused}
+                          </SelectItem>
                         </SelectGroup>
                       </SelectContent>
                     </Select>
@@ -945,7 +1006,7 @@ function CodeBoxPage() {
                   {isLoading && sandboxes.length === 0 ? (
                     <LoadingBlock />
                   ) : sandboxes.length === 0 ? (
-                    <EmptyBlock text="No CodeBox sandboxes yet." />
+                    <EmptyBlock text={t.codeboxNoSandboxes} />
                   ) : (
                     sandboxes.map((sandbox) => (
                       <SandboxItem
@@ -1042,6 +1103,8 @@ function VolumeItem({
   onSelect: () => void
   onDelete: () => void
 }) {
+  const { locale, t } = useI18n()
+
   return (
     <div
       className={cn(
@@ -1051,12 +1114,13 @@ function VolumeItem({
     >
       <button
         type="button"
-        className="min-w-0 flex-1 text-left"
+        className="min-w-0 flex-1 pl-2 text-left"
         onClick={onSelect}
       >
         <div className="truncate text-sm font-medium">{volume.name}</div>
         <div className="truncate text-xs text-muted-foreground">
-          {formatDate(volume.createdAt)} / seen {formatDate(volume.lastSeenAt)}
+          {formatDate(volume.createdAt, locale)} /{" "}
+          {t.codeboxSeenAt(formatDate(volume.lastSeenAt, locale))}
         </div>
       </button>
       <Button
@@ -1064,7 +1128,7 @@ function VolumeItem({
         size="icon-sm"
         onClick={onDelete}
         disabled={busy}
-        aria-label={`Delete ${volume.name}`}
+        aria-label={t.codeboxDeleteVolumeAria(volume.name)}
       >
         {busy ? (
           <RiLoader4Line className="animate-spin" />
@@ -1090,7 +1154,8 @@ function SandboxItem({
     action: "pause" | "resume" | "kill"
   ) => Promise<void>
 }) {
-  const statusLabel = getSandboxStatusLabel(sandbox.status)
+  const { locale, t } = useI18n()
+  const statusLabel = getSandboxStatusLabel(sandbox.status, t)
   const isPaused = sandbox.status === "paused"
   const isRunning = sandbox.status === "running"
 
@@ -1111,7 +1176,8 @@ function SandboxItem({
             </Badge>
           </div>
           <p className="mt-1 truncate text-xs text-muted-foreground">
-            {sandbox.sandboxId} / updated {formatDate(sandbox.updatedAt)}
+            {sandbox.sandboxId} /{" "}
+            {t.codeboxUpdatedAt(formatDate(sandbox.updatedAt, locale))}
           </p>
         </div>
 
@@ -1119,7 +1185,7 @@ function SandboxItem({
           {isRunning && sandbox.codeServerUrl ? (
             <Button asChild size="sm">
               <a href={sandbox.codeServerUrl} target="_blank" rel="noreferrer">
-                Open
+                {t.codeboxOpen}
                 <RiArrowRightUpLine />
               </a>
             </Button>
@@ -1130,7 +1196,7 @@ function SandboxItem({
               size="icon-sm"
               onClick={() => void onAction(sandbox, "pause")}
               disabled={busyAction === `pause:${sandbox.sandboxId}`}
-              aria-label="Pause sandbox"
+              aria-label={t.codeboxPauseSandbox}
             >
               {busyAction === `pause:${sandbox.sandboxId}` ? (
                 <RiLoader4Line className="animate-spin" />
@@ -1145,7 +1211,7 @@ function SandboxItem({
               size="icon-sm"
               onClick={() => void onAction(sandbox, "resume")}
               disabled={busyAction === `resume:${sandbox.sandboxId}`}
-              aria-label="Resume sandbox"
+              aria-label={t.codeboxResumeSandbox}
             >
               {busyAction === `resume:${sandbox.sandboxId}` ? (
                 <RiLoader4Line className="animate-spin" />
@@ -1159,7 +1225,7 @@ function SandboxItem({
             size="icon-sm"
             onClick={() => void onAction(sandbox, "kill")}
             disabled={busyAction === `kill:${sandbox.sandboxId}`}
-            aria-label="Kill sandbox"
+            aria-label={t.codeboxKillSandbox}
           >
             {busyAction === `kill:${sandbox.sandboxId}` ? (
               <RiLoader4Line className="animate-spin" />
@@ -1172,17 +1238,17 @@ function SandboxItem({
 
       <div className="mt-3 grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
         <CopyLine
-          label="URL"
+          label={t.codeboxUrl}
           value={sandbox.codeServerUrl ?? "-"}
           onCopy={() => onCopy(sandbox.codeServerUrl)}
         />
         <CopyLine
-          label="Password"
+          label={t.codeboxPassword}
           value={sandbox.password ?? "-"}
           onCopy={() => onCopy(sandbox.password)}
         />
-        <InfoLine label="Workspace" value={sandbox.workspacePath} />
-        <InfoLine label="Repo" value={sandbox.repoUrl ?? "-"} />
+        <InfoLine label={t.codeboxWorkspace} value={sandbox.workspacePath} />
+        <InfoLine label={t.codeboxRepo} value={sandbox.repoUrl ?? "-"} />
       </div>
     </article>
   )
@@ -1198,6 +1264,7 @@ function CopyLine({
   onCopy: () => Promise<boolean>
 }) {
   const [copied, setCopied] = React.useState(false)
+  const { t } = useI18n()
 
   React.useEffect(() => {
     if (!copied) {
@@ -1223,7 +1290,7 @@ function CopyLine({
         size="icon-xs"
         onClick={() => void handleCopy()}
         disabled={value === "-"}
-        aria-label={`Copy ${label}`}
+        aria-label={t.codeboxCopyLabel(label)}
       >
         {copied ? <RiCheckLine /> : <RiFileCopyLine />}
       </Button>
@@ -1241,10 +1308,12 @@ function InfoLine({ label, value }: { label: string; value: string }) {
 }
 
 function LoadingBlock() {
+  const { t } = useI18n()
+
   return (
     <div className="flex min-h-32 items-center justify-center rounded-2xl border bg-background text-sm text-muted-foreground">
       <RiLoader4Line className="mr-2 size-4 animate-spin" aria-hidden />
-      Loading
+      {t.codeboxLoading}
     </div>
   )
 }
@@ -1270,6 +1339,7 @@ function GithubDeviceDialog({
   message: string
   onCopy: (value: string | null | undefined) => Promise<boolean>
 }) {
+  const { locale, t } = useI18n()
   const [copyState, setCopyState] = React.useState<{
     userCode: string | null
     status: "idle" | "copied" | "blocked"
@@ -1295,10 +1365,9 @@ function GithubDeviceDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Connect GitHub</DialogTitle>
+          <DialogTitle>{t.codeboxConnectGithubTitle}</DialogTitle>
           <DialogDescription>
-            Authorize the device code in GitHub. CodeBox will poll until the
-            token is ready or the code expires.
+            {t.codeboxConnectGithubDescription}
           </DialogDescription>
         </DialogHeader>
 
@@ -1306,7 +1375,7 @@ function GithubDeviceDialog({
           <div className="grid gap-3">
             <div className="rounded-2xl border bg-background p-4 text-center">
               <div className="text-xs font-medium text-muted-foreground uppercase">
-                Device code
+                {t.codeboxDeviceCode}
               </div>
               <div className="mt-2 font-mono text-2xl font-semibold tracking-normal">
                 {flow.userCode}
@@ -1322,29 +1391,30 @@ function GithubDeviceDialog({
                 ) : (
                   <RiFileCopyLine />
                 )}
-                {activeCopyStatus === "copied" ? "Copied" : "Copy code"}
+                {activeCopyStatus === "copied" ? t.copied : t.codeboxCopyCode}
               </Button>
               {activeCopyStatus === "blocked" ? (
                 <p className="mt-2 text-xs text-muted-foreground">
-                  Copy is blocked here. Select the code manually.
+                  {t.codeboxCopyBlocked}
                 </p>
               ) : null}
             </div>
 
             <Button asChild>
               <a href={flow.verificationUri} target="_blank" rel="noreferrer">
-                Open GitHub
+                {t.codeboxOpenGithub}
                 <RiArrowRightUpLine />
               </a>
             </Button>
 
             <p className="text-sm text-muted-foreground">
-              {message || `Expires at ${formatDate(flow.expiresAt)}.`}
+              {message ||
+                t.codeboxExpiresAt(formatDate(flow.expiresAt, locale))}
             </p>
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
-            {message || "No active GitHub device flow."}
+            {message || t.codeboxNoActiveGithubFlow}
           </p>
         )}
       </DialogContent>
@@ -1361,6 +1431,7 @@ function ConfirmActionDialog({
   onOpenChange: (open: boolean) => void
   onConfirm: () => void
 }) {
+  const { t } = useI18n()
   const isVolume = action?.kind === "volume"
   const target =
     action?.kind === "volume"
@@ -1375,22 +1446,22 @@ function ConfirmActionDialog({
             <RiDeleteBin6Line className="size-5" aria-hidden />
           </div>
           <DialogTitle>
-            {isVolume ? "Delete volume?" : "Kill sandbox?"}
+            {isVolume ? t.codeboxDeleteVolumeTitle : t.codeboxKillSandboxTitle}
           </DialogTitle>
           <DialogDescription>
             {isVolume
-              ? `Delete ${target}? Files on this volume will be removed.`
-              : `Kill ${target}? The running code-server session will stop immediately.`}
+              ? t.codeboxDeleteVolumeConfirm(target)
+              : t.codeboxKillSandboxConfirm(target)}
           </DialogDescription>
         </DialogHeader>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
+            {t.codeboxCancel}
           </Button>
           <Button variant="destructive" onClick={onConfirm}>
             <RiDeleteBin6Line />
-            {isVolume ? "Delete" : "Kill"}
+            {isVolume ? t.codeboxDelete : t.codeboxKill}
           </Button>
         </DialogFooter>
       </DialogContent>

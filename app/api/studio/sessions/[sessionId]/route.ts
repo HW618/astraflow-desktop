@@ -3,9 +3,12 @@ import { z } from "zod"
 
 import {
   deleteStudioSession,
+  getStudioModelverseApiKey,
   getStudioSession,
+  getStudioSessionSandbox,
   updateStudioSessionTitle,
 } from "@/lib/studio-db"
+import { cleanupSessionSandboxVolumeData } from "@/lib/astraflow-session-sandbox"
 
 export const runtime = "nodejs"
 
@@ -49,6 +52,41 @@ export async function DELETE(_request: Request, context: RouteContext) {
       { ok: false, error: "Session not found" },
       { status: 404 }
     )
+  }
+
+  const sandbox = getStudioSessionSandbox(sessionId)
+
+  if (sandbox?.volumePath) {
+    const apiKey = getStudioModelverseApiKey()
+
+    if (!apiKey?.key) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "Modelverse API key is required to remove this session's sandbox volume data.",
+        },
+        { status: 400 }
+      )
+    }
+
+    try {
+      await cleanupSessionSandboxVolumeData({
+        sessionId,
+        apiKey: apiKey.key,
+      })
+    } catch (error) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to remove session sandbox volume data.",
+        },
+        { status: 502 }
+      )
+    }
   }
 
   deleteStudioSession(sessionId)

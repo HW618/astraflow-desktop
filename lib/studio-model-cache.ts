@@ -1,3 +1,5 @@
+import { readSelectedUCloudProjectId } from "@/lib/project-selection"
+
 export type StudioGenerationMode = "image" | "video" | "audio"
 
 type StudioModelOptionWithId = {
@@ -19,7 +21,9 @@ export const STUDIO_SELECTED_MODEL_STORAGE_KEYS = {
 } as const satisfies Record<StudioGenerationMode, string>
 
 function getModelCacheKey(mode: StudioGenerationMode) {
-  return `${STUDIO_MODEL_CACHE_PREFIX}:${mode}`
+  const projectId = readSelectedUCloudProjectId()
+
+  return `${STUDIO_MODEL_CACHE_PREFIX}:${projectId || "default"}:${mode}`
 }
 
 function readRequestedModelId() {

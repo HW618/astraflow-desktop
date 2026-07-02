@@ -1,6 +1,19 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
-const { app, BrowserWindow, dialog, shell, utilityProcess } = require("electron")
-const { existsSync, mkdirSync } = require("node:fs")
+const {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  shell,
+  utilityProcess,
+} = require("electron")
+const {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} = require("node:fs")
 const { get } = require("node:http")
 const { createServer } = require("node:net")
 const { join, resolve } = require("node:path")
@@ -10,15 +23,16 @@ const LOOPBACK_HOST = "127.0.0.1"
 const SERVER_START_TIMEOUT_MS = 90_000
 const SMOKE_TIMEOUT_MS = 30_000
 const CODEBOX_GITHUB_OAUTH_CLIENT_ID = "Ov23li4imZRAMlx9enez"
+const PENDING_UPDATE_INSTALLERS_FILE = "pending-update-installers.json"
 
 const isSmokeRun = process.env.ASTRAFLOW_ELECTRON_SMOKE === "1"
-const shouldCheckForUpdates = app.isPackaged && !isSmokeRun
 let mainWindow = null
 let nextProcess = null
 let serverUrl = null
 let isQuitting = false
 let lastServerOutput = ""
-let updatePromptShown = false
+let autoUpdater = null
+let updateInstallPromise = null
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 
@@ -34,6 +48,55 @@ function rememberServerOutput(chunk) {
 
 function getAppRoot() {
   return app.isPackaged ? app.getAppPath() : resolve(__dirname, "..")
+}
+
+function getPendingUpdateInstallersPath() {
+  return join(app.getPath("userData"), PENDING_UPDATE_INSTALLERS_FILE)
+}
+
+function cleanupPendingUpdateInstallers() {
+  const markerPath = getPendingUpdateInstallersPath()
+
+  if (!existsSync(markerPath)) {
+    return
+  }
+
+  try {
+    const installerPaths = JSON.parse(readFileSync(markerPath, "utf8"))
+
+    if (Array.isArray(installerPaths)) {
+      for (const installerPath of installerPaths) {
+        if (typeof installerPath === "string" && installerPath.trim()) {
+          rmSync(installerPath, { force: true })
+        }
+      }
+    }
+  } catch (error) {
+    console.error("Failed to clean update installer.", error)
+  } finally {
+    rmSync(markerPath, { force: true })
+  }
+}
+
+function rememberUpdateInstallers(installerPaths) {
+  const normalizedPaths = (Array.isArray(installerPaths) ? installerPaths : [])
+    .filter((installerPath) => typeof installerPath === "string")
+    .map((installerPath) => installerPath.trim())
+    .filter(Boolean)
+
+  if (normalizedPaths.length === 0) {
+    return
+  }
+
+  try {
+    writeFileSync(
+      getPendingUpdateInstallersPath(),
+      JSON.stringify(normalizedPaths),
+      "utf8"
+    )
+  } catch (error) {
+    console.error("Failed to remember update installer.", error)
+  }
 }
 
 function getFreePort() {
@@ -257,6 +320,7 @@ function createMainWindow(url, { show = true } = {}) {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      preload: join(__dirname, "preload.cjs"),
       sandbox: true,
     },
   })
@@ -279,61 +343,99 @@ function createMainWindow(url, { show = true } = {}) {
   return window
 }
 
-function setupAutoUpdates() {
-  if (!shouldCheckForUpdates) {
-    return
+function getAutoUpdater() {
+  if (autoUpdater) {
+    return autoUpdater
   }
-
-  let autoUpdater
 
   try {
     autoUpdater = require("electron-updater").autoUpdater
   } catch (error) {
     console.error("Failed to load electron-updater.", error)
-    return
+    throw new Error("Updater is unavailable.")
   }
 
-  autoUpdater.autoDownload = true
-  autoUpdater.autoInstallOnAppQuit = true
+  autoUpdater.autoDownload = false
+  autoUpdater.autoInstallOnAppQuit = false
   autoUpdater.allowPrerelease = false
 
   autoUpdater.on("error", (error) => {
     console.error("Auto update failed.", error)
   })
 
-  autoUpdater.on("update-downloaded", (info) => {
-    if (updatePromptShown || !mainWindow || mainWindow.isDestroyed()) {
-      return
+  return autoUpdater
+}
+
+function installUpdateNow() {
+  if (!app.isPackaged && process.env.ASTRAFLOW_FORCE_UPDATE !== "1") {
+    throw new Error("Update installation is only available in packaged apps.")
+  }
+
+  if (updateInstallPromise) {
+    return updateInstallPromise
+  }
+
+  updateInstallPromise = new Promise((resolveInstall, rejectInstall) => {
+    const updater = getAutoUpdater()
+    let settled = false
+
+    function cleanup() {
+      updater.off("update-available", onUpdateAvailable)
+      updater.off("update-not-available", onUpdateNotAvailable)
+      updater.off("update-downloaded", onUpdateDownloaded)
+      updater.off("error", onError)
     }
 
-    updatePromptShown = true
+    function settle(error, value) {
+      if (settled) {
+        return
+      }
 
-    void dialog
-      .showMessageBox(mainWindow, {
-        type: "info",
-        title: `${APP_NAME} update ready`,
-        message: "A new AstraFlow update is ready to install.",
-        detail: info?.version
-          ? `Version ${info.version} has been downloaded. Restart AstraFlow to install it now, or install it when you quit later.`
-          : "The update has been downloaded. Restart AstraFlow to install it now, or install it when you quit later.",
-        buttons: ["Restart now", "Later"],
-        defaultId: 0,
-        cancelId: 1,
-        noLink: true,
-      })
-      .then(({ response }) => {
-        if (response === 0) {
-          autoUpdater.quitAndInstall(false, true)
-        }
-      })
-      .catch((error) => {
-        console.error("Failed to show update prompt.", error)
-      })
+      settled = true
+      cleanup()
+      updateInstallPromise = null
+
+      if (error) {
+        rejectInstall(error)
+      } else {
+        resolveInstall(value)
+      }
+    }
+
+    function onError(error) {
+      settle(error instanceof Error ? error : new Error(String(error)))
+    }
+
+    function onUpdateNotAvailable() {
+      settle(new Error("AstraFlow is already up to date."))
+    }
+
+    function onUpdateAvailable() {
+      updater.downloadUpdate().then(rememberUpdateInstallers).catch(onError)
+    }
+
+    function onUpdateDownloaded(info) {
+      const version = info?.version ?? null
+
+      settle(null, { version })
+      setTimeout(() => {
+        updater.quitAndInstall(false, true)
+      }, 250)
+    }
+
+    updater.once("update-available", onUpdateAvailable)
+    updater.once("update-not-available", onUpdateNotAvailable)
+    updater.once("update-downloaded", onUpdateDownloaded)
+    updater.once("error", onError)
+
+    updater.checkForUpdates().catch(onError)
   })
 
-  void autoUpdater.checkForUpdates().catch((error) => {
-    console.error("Failed to check for updates.", error)
-  })
+  return updateInstallPromise
+}
+
+function setupAppIpc() {
+  ipcMain.handle("astraflow:install-update", async () => installUpdateNow())
 }
 
 function stopNextServer() {
@@ -382,6 +484,8 @@ async function runSmoke(url) {
 
 async function bootstrap() {
   app.setAppUserModelId("cn.ucloud.astraflow.desktop")
+  cleanupPendingUpdateInstallers()
+  setupAppIpc()
 
   const url = await startNextServer()
 
@@ -391,7 +495,6 @@ async function bootstrap() {
   }
 
   mainWindow = createMainWindow(url)
-  setupAutoUpdates()
 }
 
 function showFatalError(error) {

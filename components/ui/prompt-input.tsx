@@ -112,11 +112,15 @@ export type PromptInputTextareaProps = {
 function PromptInputTextarea({
   className,
   onKeyDown,
+  onCompositionEnd,
+  onCompositionStart,
   disableAutosize = false,
   ...props
 }: PromptInputTextareaProps) {
   const { value, setValue, maxHeight, onSubmit, disabled, textareaRef } =
     usePromptInput()
+  const isComposingRef = useRef(false)
+  const suppressSubmitAfterCompositionRef = useRef(false)
 
   const adjustHeight = (el: HTMLTextAreaElement | null) => {
     if (!el || disableAutosize) return
@@ -154,12 +158,42 @@ function PromptInputTextarea({
     setValue(e.target.value)
   }
 
+  const handleCompositionStart = (
+    e: React.CompositionEvent<HTMLTextAreaElement>
+  ) => {
+    isComposingRef.current = true
+    suppressSubmitAfterCompositionRef.current = false
+    onCompositionStart?.(e)
+  }
+
+  const handleCompositionEnd = (
+    e: React.CompositionEvent<HTMLTextAreaElement>
+  ) => {
+    isComposingRef.current = false
+    suppressSubmitAfterCompositionRef.current = true
+    window.setTimeout(() => {
+      suppressSubmitAfterCompositionRef.current = false
+    }, 0)
+    onCompositionEnd?.(e)
+  }
+
+  const isImeComposing = (e: React.KeyboardEvent<HTMLTextAreaElement>) =>
+    isComposingRef.current ||
+    suppressSubmitAfterCompositionRef.current ||
+    e.nativeEvent.isComposing ||
+    e.keyCode === 229
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    onKeyDown?.(e)
+
+    if (e.defaultPrevented) {
+      return
+    }
+
+    if (e.key === "Enter" && !e.shiftKey && !isImeComposing(e)) {
       e.preventDefault()
       onSubmit?.()
     }
-    onKeyDown?.(e)
   }
 
   return (
@@ -167,6 +201,8 @@ function PromptInputTextarea({
       ref={handleRef}
       value={value}
       onChange={handleChange}
+      onCompositionEnd={handleCompositionEnd}
+      onCompositionStart={handleCompositionStart}
       onKeyDown={handleKeyDown}
       className={cn(
         "text-primary min-h-[44px] w-full resize-none border-none bg-transparent shadow-none outline-none focus-visible:ring-0 focus-visible:ring-offset-0",

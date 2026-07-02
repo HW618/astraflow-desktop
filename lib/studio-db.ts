@@ -90,6 +90,9 @@ type DbSessionSandboxRow = {
   template: string
   status: StudioSessionSandbox["status"]
   auto_pause_timeout_seconds: number
+  volume_id: string | null
+  volume_name: string | null
+  volume_path: string | null
   created_at: string
   updated_at: string
   last_used_at: string
@@ -186,6 +189,9 @@ type DbCodeBoxVolumeRow = {
 
 type DbCodeBoxSandboxRow = {
   sandbox_id: string
+  owner_key: string | null
+  owner_email: string | null
+  project_id: string | null
   volume_id: string | null
   volume_name: string | null
   sandbox_domain: string | null
@@ -247,6 +253,9 @@ type UpsertSessionSandboxInput = {
   template: string
   status?: StudioSessionSandbox["status"]
   autoPauseTimeoutSeconds: number
+  volumeId?: string | null
+  volumeName?: string | null
+  volumePath?: string | null
 }
 
 type CreateSessionFileInput = {
@@ -332,6 +341,9 @@ type UpsertCodeBoxVolumeInput = {
 
 type UpsertCodeBoxSandboxInput = {
   sandboxId: string
+  ownerKey?: string | null
+  ownerEmail?: string | null
+  projectId?: string | null
   volumeId?: string | null
   volumeName?: string | null
   sandboxDomain?: string | null
@@ -429,11 +441,43 @@ type UpdateImageGenerationInput = {
 
 const DEFAULT_SESSION_TITLE = "New chat"
 const STUDIO_MODELVERSE_API_KEY_SETTING = "modelverse_api_key"
+const SELECTED_UCLOUD_PROJECT_SETTING = "selected_ucloud_project"
 const STUDIO_EXA_API_KEY_SETTING = "exa_api_key"
 const STUDIO_OAUTH_SETTING = "ucloud_oauth_tokens"
 const CODEBOX_GITHUB_SETTING = "codebox_github_tokens"
+const STUDIO_SESSION_SANDBOX_VOLUME_SETTING = "studio_session_sandbox_volume"
 
 let db: Database.Database | undefined
+let codeBoxSandboxOwnerColumnsReady = false
+
+function ensureCodeBoxSandboxOwnerColumns(database = getDb()) {
+  if (codeBoxSandboxOwnerColumnsReady) {
+    return
+  }
+
+  const columns = database
+    .prepare(`PRAGMA table_info(codebox_sandboxes)`)
+    .all() as Array<{ name: string }>
+
+  if (!columns.some((column) => column.name === "owner_key")) {
+    database.exec(`ALTER TABLE codebox_sandboxes ADD COLUMN owner_key TEXT`)
+  }
+
+  if (!columns.some((column) => column.name === "owner_email")) {
+    database.exec(`ALTER TABLE codebox_sandboxes ADD COLUMN owner_email TEXT`)
+  }
+
+  if (!columns.some((column) => column.name === "project_id")) {
+    database.exec(`ALTER TABLE codebox_sandboxes ADD COLUMN project_id TEXT`)
+  }
+
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS codebox_sandboxes_owner_updated_idx
+      ON codebox_sandboxes(owner_key, updated_at DESC);
+  `)
+
+  codeBoxSandboxOwnerColumnsReady = true
+}
 
 function getDatabasePath() {
   return (
@@ -508,6 +552,9 @@ function initializeSchema(database: Database.Database) {
       template TEXT NOT NULL,
       status TEXT NOT NULL,
       auto_pause_timeout_seconds INTEGER NOT NULL,
+      volume_id TEXT,
+      volume_name TEXT,
+      volume_path TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       last_used_at TEXT NOT NULL,
@@ -578,6 +625,9 @@ function initializeSchema(database: Database.Database) {
 
     CREATE TABLE IF NOT EXISTS codebox_sandboxes (
       sandbox_id TEXT PRIMARY KEY,
+      owner_key TEXT,
+      owner_email TEXT,
+      project_id TEXT,
       volume_id TEXT,
       volume_name TEXT,
       sandbox_domain TEXT,
@@ -598,6 +648,9 @@ function initializeSchema(database: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS codebox_sandboxes_updated_idx
       ON codebox_sandboxes(updated_at DESC);
+
+    CREATE INDEX IF NOT EXISTS codebox_sandboxes_owner_updated_idx
+      ON codebox_sandboxes(owner_key, updated_at DESC);
 
     CREATE TABLE IF NOT EXISTS studio_mcp_servers (
       id TEXT PRIMARY KEY,
@@ -750,6 +803,30 @@ function migrateSchema(database: Database.Database) {
     database.exec(`ALTER TABLE studio_messages ADD COLUMN parts TEXT`)
   }
 
+  const sandboxColumns = database
+    .prepare(`PRAGMA table_info(studio_session_sandboxes)`)
+    .all() as Array<{ name: string }>
+
+  if (!sandboxColumns.some((column) => column.name === "volume_id")) {
+    database.exec(
+      `ALTER TABLE studio_session_sandboxes ADD COLUMN volume_id TEXT`
+    )
+  }
+
+  if (!sandboxColumns.some((column) => column.name === "volume_name")) {
+    database.exec(
+      `ALTER TABLE studio_session_sandboxes ADD COLUMN volume_name TEXT`
+    )
+  }
+
+  if (!sandboxColumns.some((column) => column.name === "volume_path")) {
+    database.exec(
+      `ALTER TABLE studio_session_sandboxes ADD COLUMN volume_path TEXT`
+    )
+  }
+
+  ensureCodeBoxSandboxOwnerColumns(database)
+
   const imageOutputColumns = database
     .prepare(`PRAGMA table_info(studio_image_outputs)`)
     .all() as Array<{ name: string }>
@@ -824,6 +901,9 @@ function mapSessionSandbox(row: DbSessionSandboxRow): StudioSessionSandbox {
     template: row.template,
     status: row.status,
     autoPauseTimeoutSeconds: row.auto_pause_timeout_seconds,
+    volumeId: row.volume_id,
+    volumeName: row.volume_name,
+    volumePath: row.volume_path,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     lastUsedAt: row.last_used_at,
@@ -1139,6 +1219,56 @@ function deleteStudioSetting(key: string) {
       `
     )
     .run(key)
+}
+
+export function getStudioSessionSandboxVolumeRecord() {
+  const row = readStudioSetting(STUDIO_SESSION_SANDBOX_VOLUME_SETTING)
+
+  if (!row?.value) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(row.value) as {
+      volumeId?: string
+      name?: string
+    }
+
+    if (!parsed.volumeId || !parsed.name) {
+      return null
+    }
+
+    return {
+      volumeId: parsed.volumeId,
+      name: parsed.name,
+      updatedAt: row.updated_at,
+    }
+  } catch {
+    return null
+  }
+}
+
+export function saveStudioSessionSandboxVolumeRecord({
+  volumeId,
+  name,
+}: {
+  volumeId: string
+  name: string
+}) {
+  const updatedAt = writeStudioSetting(
+    STUDIO_SESSION_SANDBOX_VOLUME_SETTING,
+    JSON.stringify({ volumeId, name })
+  )
+
+  return {
+    volumeId,
+    name,
+    updatedAt,
+  }
+}
+
+export function clearStudioSessionSandboxVolumeRecord() {
+  deleteStudioSetting(STUDIO_SESSION_SANDBOX_VOLUME_SETTING)
 }
 
 export function listStudioInstalledSkills({
@@ -2468,7 +2598,8 @@ export function getStudioSessionSandbox(sessionId: string) {
     .prepare(
       `
         SELECT session_id, sandbox_id, sandbox_domain, template, status,
-               auto_pause_timeout_seconds, created_at, updated_at, last_used_at
+               auto_pause_timeout_seconds, volume_id, volume_name,
+               volume_path, created_at, updated_at, last_used_at
         FROM studio_session_sandboxes
         WHERE session_id = ?
       `
@@ -2485,6 +2616,9 @@ export function upsertStudioSessionSandbox({
   template,
   status = "running",
   autoPauseTimeoutSeconds,
+  volumeId = null,
+  volumeName = null,
+  volumePath = null,
 }: UpsertSessionSandboxInput) {
   const existing = getStudioSessionSandbox(sessionId)
   const timestamp = nowIso()
@@ -2494,16 +2628,21 @@ export function upsertStudioSessionSandbox({
       `
         INSERT INTO studio_session_sandboxes
           (session_id, sandbox_id, sandbox_domain, template, status,
-           auto_pause_timeout_seconds, created_at, updated_at, last_used_at)
+           auto_pause_timeout_seconds, volume_id, volume_name, volume_path,
+           created_at, updated_at, last_used_at)
         VALUES
           (@sessionId, @sandboxId, @sandboxDomain, @template, @status,
-           @autoPauseTimeoutSeconds, @createdAt, @updatedAt, @lastUsedAt)
+           @autoPauseTimeoutSeconds, @volumeId, @volumeName, @volumePath,
+           @createdAt, @updatedAt, @lastUsedAt)
         ON CONFLICT(session_id) DO UPDATE SET
           sandbox_id = excluded.sandbox_id,
           sandbox_domain = excluded.sandbox_domain,
           template = excluded.template,
           status = excluded.status,
           auto_pause_timeout_seconds = excluded.auto_pause_timeout_seconds,
+          volume_id = excluded.volume_id,
+          volume_name = excluded.volume_name,
+          volume_path = excluded.volume_path,
           updated_at = excluded.updated_at,
           last_used_at = excluded.last_used_at
       `
@@ -2515,6 +2654,9 @@ export function upsertStudioSessionSandbox({
       template,
       status,
       autoPauseTimeoutSeconds,
+      volumeId,
+      volumeName,
+      volumePath,
       createdAt: existing?.createdAt ?? timestamp,
       updatedAt: timestamp,
       lastUsedAt: timestamp,
@@ -2612,42 +2754,83 @@ export function deleteCodeBoxVolumeRecord(volumeId: string) {
     .run(volumeId)
 }
 
-export function listCodeBoxSandboxRecords() {
-  const rows = getDb()
-    .prepare(
-      `
-        SELECT sandbox_id, volume_id, volume_name, sandbox_domain, template,
-               status, code_server_url, code_server_host, code_server_port,
-               password, workspace_path, repo_url, started_at, end_at,
-               created_at, updated_at, last_used_at
-        FROM codebox_sandboxes
-        ORDER BY updated_at DESC
-      `
-    )
-    .all() as DbCodeBoxSandboxRow[]
+export function listCodeBoxSandboxRecords(ownerKey?: string | null) {
+  ensureCodeBoxSandboxOwnerColumns()
+  const normalizedOwnerKey = ownerKey?.trim()
+  const rows = normalizedOwnerKey
+    ? (getDb()
+        .prepare(
+          `
+            SELECT sandbox_id, owner_key, owner_email, project_id, volume_id,
+                   volume_name, sandbox_domain, template, status,
+                   code_server_url, code_server_host, code_server_port,
+                   password, workspace_path, repo_url, started_at, end_at,
+                   created_at, updated_at, last_used_at
+            FROM codebox_sandboxes
+            WHERE owner_key = ?
+            ORDER BY updated_at DESC
+          `
+        )
+        .all(normalizedOwnerKey) as DbCodeBoxSandboxRow[])
+    : (getDb()
+        .prepare(
+          `
+            SELECT sandbox_id, owner_key, owner_email, project_id, volume_id,
+                   volume_name, sandbox_domain, template, status,
+                   code_server_url, code_server_host, code_server_port,
+                   password, workspace_path, repo_url, started_at, end_at,
+                   created_at, updated_at, last_used_at
+            FROM codebox_sandboxes
+            ORDER BY updated_at DESC
+          `
+        )
+        .all() as DbCodeBoxSandboxRow[])
 
   return rows.map(mapCodeBoxSandbox)
 }
 
-export function getCodeBoxSandboxRecord(sandboxId: string) {
-  const row = getDb()
-    .prepare(
-      `
-        SELECT sandbox_id, volume_id, volume_name, sandbox_domain, template,
-               status, code_server_url, code_server_host, code_server_port,
-               password, workspace_path, repo_url, started_at, end_at,
-               created_at, updated_at, last_used_at
-        FROM codebox_sandboxes
-        WHERE sandbox_id = ?
-      `
-    )
-    .get(sandboxId) as DbCodeBoxSandboxRow | undefined
+export function getCodeBoxSandboxRecord(
+  sandboxId: string,
+  ownerKey?: string | null
+) {
+  ensureCodeBoxSandboxOwnerColumns()
+  const normalizedOwnerKey = ownerKey?.trim()
+  const row = normalizedOwnerKey
+    ? (getDb()
+        .prepare(
+          `
+            SELECT sandbox_id, owner_key, owner_email, project_id, volume_id,
+                   volume_name, sandbox_domain, template, status,
+                   code_server_url, code_server_host, code_server_port,
+                   password, workspace_path, repo_url, started_at, end_at,
+                   created_at, updated_at, last_used_at
+            FROM codebox_sandboxes
+            WHERE sandbox_id = ? AND owner_key = ?
+          `
+        )
+        .get(sandboxId, normalizedOwnerKey) as DbCodeBoxSandboxRow | undefined)
+    : (getDb()
+        .prepare(
+          `
+            SELECT sandbox_id, owner_key, owner_email, project_id, volume_id,
+                   volume_name, sandbox_domain, template, status,
+                   code_server_url, code_server_host, code_server_port,
+                   password, workspace_path, repo_url, started_at, end_at,
+                   created_at, updated_at, last_used_at
+            FROM codebox_sandboxes
+            WHERE sandbox_id = ?
+          `
+        )
+        .get(sandboxId) as DbCodeBoxSandboxRow | undefined)
 
   return row ? mapCodeBoxSandbox(row) : null
 }
 
 export function upsertCodeBoxSandboxRecord({
   sandboxId,
+  ownerKey = null,
+  ownerEmail = null,
+  projectId = null,
   volumeId = null,
   volumeName = null,
   sandboxDomain = null,
@@ -2662,23 +2845,27 @@ export function upsertCodeBoxSandboxRecord({
   startedAt = null,
   endAt = null,
 }: UpsertCodeBoxSandboxInput) {
-  const existing = getCodeBoxSandboxRecord(sandboxId)
+  ensureCodeBoxSandboxOwnerColumns()
+  const existing = getCodeBoxSandboxRecord(sandboxId, ownerKey)
   const timestamp = nowIso()
 
   getDb()
     .prepare(
       `
         INSERT INTO codebox_sandboxes
-          (sandbox_id, volume_id, volume_name, sandbox_domain, template,
-           status, code_server_url, code_server_host, code_server_port,
-           password, workspace_path, repo_url, started_at, end_at,
-           created_at, updated_at, last_used_at)
+          (sandbox_id, owner_key, owner_email, project_id, volume_id,
+           volume_name, sandbox_domain, template, status, code_server_url,
+           code_server_host, code_server_port, password, workspace_path,
+           repo_url, started_at, end_at, created_at, updated_at, last_used_at)
         VALUES
-          (@sandboxId, @volumeId, @volumeName, @sandboxDomain, @template,
-           @status, @codeServerUrl, @codeServerHost, @codeServerPort,
-           @password, @workspacePath, @repoUrl, @startedAt, @endAt,
-           @createdAt, @updatedAt, @lastUsedAt)
+          (@sandboxId, @ownerKey, @ownerEmail, @projectId, @volumeId,
+           @volumeName, @sandboxDomain, @template, @status, @codeServerUrl,
+           @codeServerHost, @codeServerPort, @password, @workspacePath,
+           @repoUrl, @startedAt, @endAt, @createdAt, @updatedAt, @lastUsedAt)
         ON CONFLICT(sandbox_id) DO UPDATE SET
+          owner_key = excluded.owner_key,
+          owner_email = excluded.owner_email,
+          project_id = excluded.project_id,
           volume_id = excluded.volume_id,
           volume_name = excluded.volume_name,
           sandbox_domain = excluded.sandbox_domain,
@@ -2698,6 +2885,9 @@ export function upsertCodeBoxSandboxRecord({
     )
     .run({
       sandboxId,
+      ownerKey,
+      ownerEmail,
+      projectId,
       volumeId,
       volumeName,
       sandboxDomain,
@@ -2716,14 +2906,32 @@ export function upsertCodeBoxSandboxRecord({
       lastUsedAt: timestamp,
     })
 
-  return getCodeBoxSandboxRecord(sandboxId)
+  return getCodeBoxSandboxRecord(sandboxId, ownerKey)
 }
 
 export function touchCodeBoxSandboxRecord(
   sandboxId: string,
-  status: CodeBoxSandboxStatus
+  status: CodeBoxSandboxStatus,
+  ownerKey?: string | null
 ) {
+  ensureCodeBoxSandboxOwnerColumns()
   const timestamp = nowIso()
+  const normalizedOwnerKey = ownerKey?.trim()
+
+  if (normalizedOwnerKey) {
+    getDb()
+      .prepare(
+        `
+          UPDATE codebox_sandboxes
+          SET status = ?,
+              updated_at = ?,
+              last_used_at = ?
+          WHERE sandbox_id = ? AND owner_key = ?
+        `
+      )
+      .run(status, timestamp, timestamp, sandboxId, normalizedOwnerKey)
+    return
+  }
 
   getDb()
     .prepare(
@@ -2739,6 +2947,7 @@ export function touchCodeBoxSandboxRecord(
 }
 
 export function deleteCodeBoxSandboxRecord(sandboxId: string) {
+  ensureCodeBoxSandboxOwnerColumns()
   getDb()
     .prepare(
       `
@@ -3057,6 +3266,12 @@ export function getStudioModelverseApiKey(): StudioModelverseApiKey | null {
       return null
     }
 
+    const selectedProjectId = getSelectedUCloudProjectId()
+
+    if (selectedProjectId && parsed.projectId !== selectedProjectId) {
+      return null
+    }
+
     return {
       id: parsed.id,
       name: parsed.name,
@@ -3090,6 +3305,45 @@ export function saveStudioModelverseApiKey(
 
 export function clearStudioModelverseApiKey() {
   deleteStudioSetting(STUDIO_MODELVERSE_API_KEY_SETTING)
+}
+
+export function getSelectedUCloudProjectId() {
+  const row = readStudioSetting(SELECTED_UCLOUD_PROJECT_SETTING)
+
+  if (!row?.value) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(row.value) as {
+      projectId?: string
+    }
+
+    return parsed.projectId?.trim() || null
+  } catch {
+    return row.value.trim() || null
+  }
+}
+
+export function saveSelectedUCloudProjectId(projectId: string) {
+  const normalizedProjectId = projectId.trim()
+
+  if (!normalizedProjectId) {
+    deleteStudioSetting(SELECTED_UCLOUD_PROJECT_SETTING)
+    return null
+  }
+
+  const updatedAt = writeStudioSetting(
+    SELECTED_UCLOUD_PROJECT_SETTING,
+    JSON.stringify({
+      projectId: normalizedProjectId,
+    })
+  )
+
+  return {
+    projectId: normalizedProjectId,
+    updatedAt,
+  }
 }
 
 export function getStudioExaApiKey(): StudioExaApiKey | null {

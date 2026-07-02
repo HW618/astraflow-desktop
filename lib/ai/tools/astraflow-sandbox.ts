@@ -177,7 +177,7 @@ export function createRunCommandTool({
             ? normalizeSandboxFilePath(cwd, {
                 relativeBase: getSessionSandboxRoot(),
               })
-            : undefined
+            : getSessionSandboxRoot()
 
           return runCommandInAstraFlowSandbox({
             sandbox,
@@ -211,7 +211,7 @@ export function createRunCommandTool({
           .min(1)
           .optional()
           .describe(
-            "Optional working directory under /home/user/astraflow. Relative paths resolve under /home/user/astraflow."
+            "Optional working directory under /home/user/astraflow. Defaults to /home/user/astraflow; relative paths resolve there."
           ),
         env: z
           .record(z.string(), z.string())

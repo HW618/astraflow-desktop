@@ -3,8 +3,10 @@ import { z } from "zod"
 
 import {
   clearStudioModelverseApiKey,
+  getSelectedUCloudProjectId,
   getStudioModelverseApiKey,
   saveStudioModelverseApiKey,
+  saveSelectedUCloudProjectId,
 } from "@/lib/studio-db"
 import {
   findModelverseApiKey,
@@ -62,7 +64,9 @@ export async function GET(request: Request) {
     const projectId = await resolveModelverseProjectId({
       credentials,
       preferredProjectId:
-        readString(searchParams.get("projectId")) || savedApiKey?.projectId,
+        readString(searchParams.get("projectId")) ||
+        getSelectedUCloudProjectId() ||
+        savedApiKey?.projectId,
     })
     const apiKeys = await listModelverseApiKeys({ credentials, projectId })
     const selected = savedApiKey
@@ -112,7 +116,8 @@ export async function POST(request: Request) {
 
     const projectId = await resolveModelverseProjectId({
       credentials,
-      preferredProjectId: parsed.data.projectId,
+      preferredProjectId:
+        parsed.data.projectId || getSelectedUCloudProjectId() || undefined,
     })
     const apiKey = await findModelverseApiKey({
       credentials,
@@ -136,6 +141,7 @@ export async function POST(request: Request) {
       key: apiKey.key,
       projectId,
     })
+    saveSelectedUCloudProjectId(projectId)
 
     return NextResponse.json({
       ok: true,

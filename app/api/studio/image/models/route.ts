@@ -2,7 +2,10 @@ import { NextResponse } from "next/server"
 
 import { buildImageModelOption } from "@/lib/image-openapi"
 import { resolveModelverseProjectId } from "@/lib/modelverse-api-keys"
-import { getStudioModelverseApiKey } from "@/lib/studio-db"
+import {
+  getSelectedUCloudProjectId,
+  getStudioModelverseApiKey,
+} from "@/lib/studio-db"
 import { getUCloudCredentials } from "@/lib/ucloud-credentials"
 import {
   callUCloudAction,
@@ -133,7 +136,9 @@ export async function GET() {
     const projectId = await resolveModelverseProjectId({
       credentials,
       preferredProjectId:
-        getStudioModelverseApiKey()?.projectId || credentials.projectId,
+        getSelectedUCloudProjectId() ||
+        getStudioModelverseApiKey()?.projectId ||
+        credentials.projectId,
     })
 
     const models = await fetchAllImageModels({ credentials, projectId })

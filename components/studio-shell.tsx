@@ -44,6 +44,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { navigateOAuthPopup, openOAuthPopupShell } from "@/lib/oauth-popup"
+import { UCLOUD_PROJECT_CHANGED_EVENT } from "@/lib/project-selection"
 import type {
   StudioMode,
   StudioModelverseApiKeyOption,
@@ -51,7 +53,6 @@ import type {
   StudioOAuthStatus,
   StudioSession,
 } from "@/lib/studio-types"
-import { navigateOAuthPopup, openOAuthPopupShell } from "@/lib/oauth-popup"
 import { cn } from "@/lib/utils"
 
 type SessionsResponse =
@@ -494,9 +495,7 @@ function StudioShell({
         setModelverseApiKeyLoading(true)
         setModelverseApiKeyError("")
 
-        const next = await fetchModelverseApiKeys(
-          preferredProjectId || projectId
-        )
+        const next = await fetchModelverseApiKeys(preferredProjectId)
 
         setProjectId(next.projectId)
         setModelverseApiKeys(next.items)
@@ -525,7 +524,7 @@ function StudioShell({
         setModelverseApiKeyLoading(false)
       }
     },
-    [projectId, redirectToLogin, t.studioModelverseApiKeyEmpty]
+    [redirectToLogin, t.studioModelverseApiKeyEmpty]
   )
 
   const reloadExaApiKeyStatus = React.useCallback(async () => {
@@ -650,6 +649,32 @@ function StudioShell({
       return () => {
         window.clearTimeout(timer)
       }
+    }
+  }, [oauthStatus.configured, reloadModelverseApiKeys])
+
+  React.useEffect(() => {
+    function handleProjectChanged(event: Event) {
+      if (!oauthStatus.configured) {
+        return
+      }
+
+      const projectId =
+        (event as CustomEvent<{ projectId?: string }>).detail?.projectId ?? ""
+
+      setProjectId(projectId)
+      setModelverseApiKeys([])
+      setSavedModelverseApiKeyId("")
+      setSelectedModelverseApiKeyId("")
+      void reloadModelverseApiKeys(projectId)
+    }
+
+    window.addEventListener(UCLOUD_PROJECT_CHANGED_EVENT, handleProjectChanged)
+
+    return () => {
+      window.removeEventListener(
+        UCLOUD_PROJECT_CHANGED_EVENT,
+        handleProjectChanged
+      )
     }
   }, [oauthStatus.configured, reloadModelverseApiKeys])
 

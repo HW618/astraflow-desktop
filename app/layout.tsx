@@ -4,6 +4,7 @@ import "./globals.css"
 import { AppNavbar } from "@/components/app-navbar"
 import { ThemeProvider } from "@/components/theme-provider"
 import { I18nProvider } from "@/components/i18n-provider"
+import { Toaster } from "@/components/ui/sonner"
 import { cn } from "@/lib/utils"
 
 const interHeading = Inter({ subsets: ["latin"], variable: "--font-heading" })
@@ -37,6 +38,7 @@ export default function RootLayout({
           <I18nProvider>
             <AppNavbar />
             {children}
+            <Toaster />
           </I18nProvider>
         </ThemeProvider>
       </body>

@@ -34,6 +34,7 @@ import {
   getPreferredStudioModelId,
   saveSelectedStudioModel,
 } from "@/lib/studio-model-cache"
+import { UCLOUD_PROJECT_CHANGED_EVENT } from "@/lib/project-selection"
 import { cn, createClientId } from "@/lib/utils"
 import type { StudioSession } from "@/lib/studio-types"
 import type {
@@ -309,6 +310,7 @@ function StudioVideoWorkbench({
   }>({ supported: [], disabled: [] })
   const [modelsLoading, setModelsLoading] = React.useState(true)
   const [modelsError, setModelsError] = React.useState("")
+  const [modelRefreshNonce, setModelRefreshNonce] = React.useState(0)
   const [selectedModelId, setSelectedModelId] = React.useState("")
   const [prompt, setPrompt] = React.useState("")
   const [paramValues, setParamValues] = React.useState<Record<string, unknown>>(
@@ -350,7 +352,9 @@ function StudioVideoWorkbench({
       setModelsLoading(true)
       setModelsError("")
 
-      fetchStudioModelsWithCache("video", fetchVideoModels)
+      fetchStudioModelsWithCache("video", fetchVideoModels, {
+        force: modelRefreshNonce > 0,
+      })
         .then((data) => {
           if (cancelled) return
           setModels(data)
@@ -373,7 +377,22 @@ function StudioVideoWorkbench({
     return () => {
       cancelled = true
     }
-  }, [copy.modelsFailed])
+  }, [copy.modelsFailed, modelRefreshNonce])
+
+  React.useEffect(() => {
+    function handleProjectChanged() {
+      setModelRefreshNonce((value) => value + 1)
+    }
+
+    window.addEventListener(UCLOUD_PROJECT_CHANGED_EVENT, handleProjectChanged)
+
+    return () => {
+      window.removeEventListener(
+        UCLOUD_PROJECT_CHANGED_EVENT,
+        handleProjectChanged
+      )
+    }
+  }, [])
 
   React.useEffect(() => {
     if (!selectedModel) {

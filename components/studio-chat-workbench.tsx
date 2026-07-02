@@ -90,6 +90,7 @@ import {
   isMcpToolName,
   type InstalledMcpServersApiResponse,
 } from "@/lib/mcp"
+import { UCLOUD_PROJECT_CHANGED_EVENT } from "@/lib/project-selection"
 import type { InstalledSkillsApiResponse } from "@/lib/skill-market"
 import type {
   StudioAttachment,
@@ -1133,6 +1134,21 @@ function ChatComposerPluginsButton() {
       queueMicrotask(refreshInstalledSkills)
     }
   }, [open, refreshInstalledSkills])
+
+  React.useEffect(() => {
+    function handleProjectChanged() {
+      queueMicrotask(refreshInstalledSkills)
+    }
+
+    window.addEventListener(UCLOUD_PROJECT_CHANGED_EVENT, handleProjectChanged)
+
+    return () => {
+      window.removeEventListener(
+        UCLOUD_PROJECT_CHANGED_EVENT,
+        handleProjectChanged
+      )
+    }
+  }, [refreshInstalledSkills])
 
   return (
     <Dialog

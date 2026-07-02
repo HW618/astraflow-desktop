@@ -10,6 +10,7 @@ import {
   RiSearchLine,
   RiSparkling2Line,
 } from "@remixicon/react"
+import { toast } from "sonner"
 
 import {
   AudioPlayer,
@@ -254,7 +255,7 @@ function LibraryFileCard({
         throw new Error(t.fileLibraryOpenFolderFailed)
       }
     } catch {
-      window.alert(t.fileLibraryOpenFolderFailed)
+      toast.error(t.fileLibraryOpenFolderFailed)
     } finally {
       setIsOpeningFolder(false)
     }

@@ -19,6 +19,7 @@ import {
   getCodeBoxGithubTokens,
   getCodeBoxSandboxRecord,
   getStudioModelverseApiKey,
+  getStudioOAuthTokens,
   listCodeBoxSandboxRecords,
   listCodeBoxVolumeRecords,
   touchCodeBoxSandboxRecord,
@@ -31,7 +32,12 @@ import type {
   CodeBoxVolume,
 } from "@/lib/codebox-types"
 
-export const ASTRAFLOW_CODE_SANDBOX_TEMPLATE = "astraflow-code"
+const ASTRAFLOW_CODE_SANDBOX_DEFAULT_TEMPLATE = "yeyb5hbs2kweus6ku07l"
+export const ASTRAFLOW_CODE_SANDBOX_TEMPLATE =
+  process.env.ASTRAFLOW_CODE_SANDBOX_TEMPLATE?.trim() ||
+  process.env.CODEBOX_SANDBOX_TEMPLATE?.trim() ||
+  process.env.E2B_CODE_TEMPLATE?.trim() ||
+  ASTRAFLOW_CODE_SANDBOX_DEFAULT_TEMPLATE
 export const CODEBOX_CODE_SERVER_PORT = 8080
 export const CODEBOX_WORKSPACE_PATH = "/workspace"
 export const CODEBOX_INSTALLED_CLI = [
@@ -60,6 +66,12 @@ type SandboxConnectionOptions = ReturnType<
   typeof getAstraFlowSandboxConnectionOptions
 >
 
+type CodeBoxOwner = {
+  ownerKey: string
+  ownerEmail: string | null
+  projectId: string
+}
+
 function requireModelverseApiKey() {
   const apiKey = getStudioModelverseApiKey()
 
@@ -68,6 +80,32 @@ function requireModelverseApiKey() {
   }
 
   return apiKey
+}
+
+function getCodeBoxOwner(): CodeBoxOwner {
+  const apiKey = requireModelverseApiKey()
+  const oauth = getStudioOAuthTokens()
+  const ownerEmail = oauth?.email?.trim() || null
+  const projectId = apiKey.projectId.trim()
+  const ownerKey = `${ownerEmail ?? "unknown-account"}:${projectId}`
+
+  return {
+    ownerKey,
+    ownerEmail,
+    projectId,
+  }
+}
+
+function withCodeBoxOwner<T extends Record<string, unknown>>(
+  owner: CodeBoxOwner,
+  input: T
+) {
+  return {
+    ...input,
+    ownerKey: owner.ownerKey,
+    ownerEmail: owner.ownerEmail,
+    projectId: owner.projectId,
+  }
 }
 
 function getConnectionOptions(): SandboxConnectionOptions {
@@ -174,8 +212,11 @@ function normalizeVolumeName(name: string) {
   return normalized
 }
 
-function mergeSandboxRecord(info: SandboxInfo): CodeBoxSandbox {
-  const existing = getCodeBoxSandboxRecord(info.sandboxId)
+function mergeSandboxRecord(
+  info: SandboxInfo,
+  owner: CodeBoxOwner
+): CodeBoxSandbox {
+  const existing = getCodeBoxSandboxRecord(info.sandboxId, owner.ownerKey)
   const codeServerHost =
     existing?.codeServerHost ??
     getCodeServerHost(info.sandboxId, info.sandboxDomain ?? getSandboxDomain())
@@ -569,6 +610,7 @@ export async function listCodeBoxSandboxes({
 }: {
   state?: "running" | "paused" | "all"
 } = {}) {
+  const owner = getCodeBoxOwner()
   const connectionOptions = getConnectionOptions()
   const states: SandboxState[] =
     state === "running" || state === "paused" ? [state] : ["running", "paused"]
@@ -584,33 +626,38 @@ export async function listCodeBoxSandboxes({
   })
   const remote = await paginator.nextItems(connectionOptions)
   const localById = new Map(
-    listCodeBoxSandboxRecords().map((sandbox) => [sandbox.sandboxId, sandbox])
+    listCodeBoxSandboxRecords(owner.ownerKey).map((sandbox) => [
+      sandbox.sandboxId,
+      sandbox,
+    ])
   )
 
   for (const info of remote) {
-    const merged = mergeSandboxRecord(info)
-    upsertCodeBoxSandboxRecord({
-      sandboxId: merged.sandboxId,
-      volumeId: merged.volumeId,
-      volumeName: merged.volumeName,
-      sandboxDomain: info.sandboxDomain ?? getSandboxDomain(),
-      template: merged.template,
-      status: merged.status,
-      codeServerUrl: merged.codeServerUrl,
-      codeServerHost: merged.codeServerHost,
-      codeServerPort: merged.codeServerPort,
-      password: merged.password,
-      workspacePath: merged.workspacePath,
-      repoUrl: merged.repoUrl,
-      startedAt: merged.startedAt,
-      endAt: merged.endAt,
-    })
+    const merged = mergeSandboxRecord(info, owner)
+    upsertCodeBoxSandboxRecord(
+      withCodeBoxOwner(owner, {
+        sandboxId: merged.sandboxId,
+        volumeId: merged.volumeId,
+        volumeName: merged.volumeName,
+        sandboxDomain: info.sandboxDomain ?? getSandboxDomain(),
+        template: merged.template,
+        status: merged.status,
+        codeServerUrl: merged.codeServerUrl,
+        codeServerHost: merged.codeServerHost,
+        codeServerPort: merged.codeServerPort,
+        password: merged.password,
+        workspacePath: merged.workspacePath,
+        repoUrl: merged.repoUrl,
+        startedAt: merged.startedAt,
+        endAt: merged.endAt,
+      })
+    )
     localById.delete(info.sandboxId)
   }
 
   const now = new Date().toISOString()
   const staleLocalSandboxes = Array.from(localById.values()).map((sandbox) => {
-    touchCodeBoxSandboxRecord(sandbox.sandboxId, "unknown")
+    touchCodeBoxSandboxRecord(sandbox.sandboxId, "unknown", owner.ownerKey)
 
     return {
       ...sandbox,
@@ -621,7 +668,7 @@ export async function listCodeBoxSandboxes({
   })
 
   return [
-    ...remote.map(mergeSandboxRecord),
+    ...remote.map((info) => mergeSandboxRecord(info, owner)),
     ...(state === "all" ? staleLocalSandboxes : []),
   ].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
 }
@@ -633,6 +680,7 @@ export async function createCodeBoxSandbox({
   volumeId: string
   repoUrl?: string | null
 }) {
+  const owner = getCodeBoxOwner()
   const connectionOptions = getConnectionOptions()
   const volume = await Volume.connect(volumeId, connectionOptions)
   const password = randomBytes(12).toString("hex")
@@ -684,20 +732,22 @@ export async function createCodeBoxSandbox({
 
     const host = sandbox.getHost(CODEBOX_CODE_SERVER_PORT)
 
-    return upsertCodeBoxSandboxRecord({
-      sandboxId: sandbox.sandboxId,
-      volumeId,
-      volumeName: volume.name,
-      sandboxDomain: getSandboxDomain(),
-      template: ASTRAFLOW_CODE_SANDBOX_TEMPLATE,
-      status: "running",
-      codeServerUrl: getCodeServerUrl(host),
-      codeServerHost: host,
-      codeServerPort: CODEBOX_CODE_SERVER_PORT,
-      password,
-      workspacePath: CODEBOX_WORKSPACE_PATH,
-      repoUrl: normalizedRepoUrl || null,
-    }) as CodeBoxSandbox
+    return upsertCodeBoxSandboxRecord(
+      withCodeBoxOwner(owner, {
+        sandboxId: sandbox.sandboxId,
+        volumeId,
+        volumeName: volume.name,
+        sandboxDomain: getSandboxDomain(),
+        template: ASTRAFLOW_CODE_SANDBOX_TEMPLATE,
+        status: "running",
+        codeServerUrl: getCodeServerUrl(host),
+        codeServerHost: host,
+        codeServerPort: CODEBOX_CODE_SERVER_PORT,
+        password,
+        workspacePath: CODEBOX_WORKSPACE_PATH,
+        repoUrl: normalizedRepoUrl || null,
+      })
+    ) as CodeBoxSandbox
   } catch (error) {
     await sandbox
       .kill({ requestTimeoutMs: ASTRAFLOW_SANDBOX_REQUEST_TIMEOUT_MS })
@@ -707,20 +757,22 @@ export async function createCodeBoxSandbox({
 }
 
 export async function pauseCodeBoxSandbox(sandboxId: string) {
+  const owner = getCodeBoxOwner()
   const paused = await Sandbox.pause(sandboxId, {
     ...getConnectionOptions(),
     keepMemory: true,
   })
 
   if (paused) {
-    touchCodeBoxSandboxRecord(sandboxId, "paused")
+    touchCodeBoxSandboxRecord(sandboxId, "paused", owner.ownerKey)
   }
 
   return paused
 }
 
 export async function resumeCodeBoxSandbox(sandboxId: string) {
-  const existing = getCodeBoxSandboxRecord(sandboxId)
+  const owner = getCodeBoxOwner()
+  const existing = getCodeBoxSandboxRecord(sandboxId, owner.ownerKey)
   const sandbox = await Sandbox.connect(sandboxId, {
     ...getConnectionOptions(),
     timeoutMs: CODEBOX_AUTO_PAUSE_TIMEOUT_MS,
@@ -734,22 +786,24 @@ export async function resumeCodeBoxSandbox(sandboxId: string) {
 
   const host = sandbox.getHost(CODEBOX_CODE_SERVER_PORT)
 
-  upsertCodeBoxSandboxRecord({
-    sandboxId,
-    volumeId: existing?.volumeId ?? null,
-    volumeName: existing?.volumeName ?? null,
-    sandboxDomain: existing ? getSandboxDomain() : null,
-    template: existing?.template ?? ASTRAFLOW_CODE_SANDBOX_TEMPLATE,
-    status: "running",
-    codeServerUrl: getCodeServerUrl(host),
-    codeServerHost: host,
-    codeServerPort: CODEBOX_CODE_SERVER_PORT,
-    password,
-    workspacePath: existing?.workspacePath ?? CODEBOX_WORKSPACE_PATH,
-    repoUrl: existing?.repoUrl ?? null,
-    startedAt: existing?.startedAt ?? null,
-    endAt: existing?.endAt ?? null,
-  })
+  upsertCodeBoxSandboxRecord(
+    withCodeBoxOwner(owner, {
+      sandboxId,
+      volumeId: existing?.volumeId ?? null,
+      volumeName: existing?.volumeName ?? null,
+      sandboxDomain: existing ? getSandboxDomain() : null,
+      template: existing?.template ?? ASTRAFLOW_CODE_SANDBOX_TEMPLATE,
+      status: "running",
+      codeServerUrl: getCodeServerUrl(host),
+      codeServerHost: host,
+      codeServerPort: CODEBOX_CODE_SERVER_PORT,
+      password,
+      workspacePath: existing?.workspacePath ?? CODEBOX_WORKSPACE_PATH,
+      repoUrl: existing?.repoUrl ?? null,
+      startedAt: existing?.startedAt ?? null,
+      endAt: existing?.endAt ?? null,
+    })
+  )
 
   return true
 }

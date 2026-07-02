@@ -2,7 +2,10 @@ import { NextResponse } from "next/server"
 
 import { buildAudioModelOption } from "@/lib/audio-openapi"
 import { resolveModelverseProjectId } from "@/lib/modelverse-api-keys"
-import { getStudioModelverseApiKey } from "@/lib/studio-db"
+import {
+  getSelectedUCloudProjectId,
+  getStudioModelverseApiKey,
+} from "@/lib/studio-db"
 import {
   callUCloudAction,
   UCloudApiError,
@@ -133,7 +136,9 @@ export async function GET() {
     const projectId = await resolveModelverseProjectId({
       credentials,
       preferredProjectId:
-        getStudioModelverseApiKey()?.projectId || credentials.projectId,
+        getSelectedUCloudProjectId() ||
+        getStudioModelverseApiKey()?.projectId ||
+        credentials.projectId,
     })
 
     const models = await fetchAllAudioModels({ credentials, projectId })

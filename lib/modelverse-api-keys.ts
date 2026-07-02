@@ -9,6 +9,15 @@ export type ModelverseApiKey = ModelverseApiKeyOption & {
   key?: string
 }
 
+export type UCloudProjectOption = {
+  id: string
+  name: string
+  memberCount: number | null
+  resourceCount: number | null
+  createdAt: number | null
+  isDefault: boolean | null
+}
+
 type UMInferAPIKey = {
   KeyId?: string
   Name?: string
@@ -28,10 +37,16 @@ type ListUMInferAPIKeyResponse = {
 type UCloudProject = {
   ProjectId?: string
   ProjectName?: string
-  Name?: string
+  ParentId?: string
+  ParentName?: string
+  CreateTime?: number
+  IsDefault?: boolean
+  MemberCount?: number
+  ResourceCount?: number
 }
 
 type GetProjectListResponse = {
+  ProjectCount?: number
   ProjectSet?: UCloudProject[] | Record<string, UCloudProject>
 }
 
@@ -47,7 +62,9 @@ function normalizeApiKeys(data: ListUMInferAPIKeyResponse["Data"]) {
   return []
 }
 
-function normalizeProjects(data: GetProjectListResponse["ProjectSet"]) {
+function normalizeProjects(
+  data: GetProjectListResponse["ProjectSet"]
+) {
   if (Array.isArray(data)) {
     return data
   }
@@ -57,6 +74,45 @@ function normalizeProjects(data: GetProjectListResponse["ProjectSet"]) {
   }
 
   return []
+}
+
+function getProjectId(project: UCloudProject) {
+  return project.ProjectId?.trim() || ""
+}
+
+export async function listUCloudProjects({
+  credentials,
+}: {
+  credentials: UCloudCredentials
+}): Promise<UCloudProjectOption[]> {
+  const response = await callUCloudAction<GetProjectListResponse>({
+    credentials,
+    params: {
+      Action: "GetProjectList",
+    },
+  })
+  const projects = normalizeProjects(response.ProjectSet)
+
+  return projects
+    .map((project) => {
+      const id = getProjectId(project)
+
+      return {
+        id,
+        name: project.ProjectName || id || "Unnamed project",
+        memberCount:
+          typeof project.MemberCount === "number" ? project.MemberCount : null,
+        resourceCount:
+          typeof project.ResourceCount === "number"
+            ? project.ResourceCount
+            : null,
+        createdAt:
+          typeof project.CreateTime === "number" ? project.CreateTime : null,
+        isDefault:
+          typeof project.IsDefault === "boolean" ? project.IsDefault : null,
+      }
+    })
+    .filter((project) => project.id)
 }
 
 export async function resolveModelverseProjectId({
@@ -70,22 +126,15 @@ export async function resolveModelverseProjectId({
     return preferredProjectId.trim()
   }
 
-  const response = await callUCloudAction<GetProjectListResponse>({
-    credentials,
-    params: {
-      Action: "GetProjectList",
-    },
-  })
-
-  const project = normalizeProjects(response.ProjectSet).find((item) =>
-    item.ProjectId?.trim()
+  const project = (await listUCloudProjects({ credentials })).find((item) =>
+    item.id.trim()
   )
 
-  if (!project?.ProjectId) {
+  if (!project?.id) {
     throw new Error("No UCloud project is available for Modelverse API keys.")
   }
 
-  return project.ProjectId
+  return project.id
 }
 
 export async function listModelverseApiKeys({

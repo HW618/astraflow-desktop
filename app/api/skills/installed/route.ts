@@ -7,6 +7,7 @@ import {
 } from "@/lib/skill-market"
 import { resolveModelverseProjectId } from "@/lib/modelverse-api-keys"
 import {
+  getSelectedUCloudProjectId,
   getStudioInstalledSkill,
   getStudioModelverseApiKey,
   listStudioInstalledSkills,
@@ -93,7 +94,9 @@ export async function POST(request: Request) {
     const projectId = await resolveModelverseProjectId({
       credentials,
       preferredProjectId:
-        getStudioModelverseApiKey()?.projectId || credentials.projectId,
+        getSelectedUCloudProjectId() ||
+        getStudioModelverseApiKey()?.projectId ||
+        credentials.projectId,
     })
     const response = await callUCloudAction<DescribeSkillDetailResponse>({
       credentials,

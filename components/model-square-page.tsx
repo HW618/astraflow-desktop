@@ -45,6 +45,10 @@ import {
   saveSelectedStudioModel,
   type StudioGenerationMode,
 } from "@/lib/studio-model-cache"
+import {
+  readSelectedUCloudProjectId,
+  UCLOUD_PROJECT_CHANGED_EVENT,
+} from "@/lib/project-selection"
 import { cn } from "@/lib/utils"
 
 type OutputTypeFilter = "all" | "text" | "image" | "video" | "audio"
@@ -484,6 +488,27 @@ function parsePriceAmount(value: SquareModelPriceRate["Price"]) {
   return Number.isFinite(amount) ? amount : undefined
 }
 
+function formatPriceAmount(
+  value: SquareModelPriceRate["Price"],
+  locale: string
+) {
+  const amount = parsePriceAmount(value)
+
+  if (amount === undefined) {
+    return typeof value === "number" ? String(value) : String(value).trim()
+  }
+
+  const magnitude = Math.abs(amount)
+  const maximumFractionDigits =
+    magnitude >= 0.01 ? 4 : magnitude >= 0.0001 ? 6 : 8
+
+  return new Intl.NumberFormat(locale === "zh" ? "zh-CN" : "en-US", {
+    maximumFractionDigits,
+    minimumFractionDigits: 0,
+    useGrouping: false,
+  }).format(amount)
+}
+
 function formatPrice(
   price: SquareModelPriceRate["Price"],
   currency: string | undefined,
@@ -494,7 +519,7 @@ function formatPrice(
     return ""
   }
 
-  const value = typeof price === "number" ? String(price) : price
+  const value = formatPriceAmount(price, locale)
   const normalizedCurrency = currency?.trim()
   const normalizedUnit = unit?.trim()
   const displayCurrency =
@@ -905,7 +930,9 @@ function getPriceCacheKey(
   modelName: string,
   locale: string
 ) {
-  return `${MODEL_PRICE_CACHE_PREFIX}:${locale}:${projectId ?? ""}:${modelName}`
+  const scopedProjectId = projectId ?? readSelectedUCloudProjectId()
+
+  return `${MODEL_PRICE_CACHE_PREFIX}:${locale}:${scopedProjectId}:${modelName}`
 }
 
 function readCachedModelPrice(cacheKey: string) {
@@ -1087,6 +1114,22 @@ function ModelSquarePage({ projectId }: { projectId?: string }) {
       controller.abort()
     }
   }, [locale, queryUrl, refreshNonce, t.requestFailed])
+
+  React.useEffect(() => {
+    function handleProjectChanged() {
+      setStatus("loading")
+      setRefreshNonce((value) => value + 1)
+    }
+
+    window.addEventListener(UCLOUD_PROJECT_CHANGED_EVENT, handleProjectChanged)
+
+    return () => {
+      window.removeEventListener(
+        UCLOUD_PROJECT_CHANGED_EVENT,
+        handleProjectChanged
+      )
+    }
+  }, [])
 
   React.useEffect(() => {
     let cancelled = false

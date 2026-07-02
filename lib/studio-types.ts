@@ -296,6 +296,9 @@ export type StudioSessionSandbox = {
   template: string
   status: "running" | "paused" | "unknown"
   autoPauseTimeoutSeconds: number
+  volumeId: string | null
+  volumeName: string | null
+  volumePath: string | null
   createdAt: string
   updatedAt: string
   lastUsedAt: string

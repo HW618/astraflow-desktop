@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server"
 
-import { getStudioModelverseApiKey } from "@/lib/studio-db"
+import {
+  getSelectedUCloudProjectId,
+  getStudioModelverseApiKey,
+} from "@/lib/studio-db"
 import { resolveModelverseProjectId } from "@/lib/modelverse-api-keys"
 import { getUCloudCredentials } from "@/lib/ucloud-credentials"
 import {
@@ -165,6 +168,7 @@ export async function GET(request: Request) {
       credentials,
       preferredProjectId:
         readString(searchParams.get("projectId")) ||
+        getSelectedUCloudProjectId() ||
         getStudioModelverseApiKey()?.projectId ||
         credentials.projectId,
     })
