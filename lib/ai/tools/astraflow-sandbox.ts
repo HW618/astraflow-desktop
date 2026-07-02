@@ -198,7 +198,7 @@ export function createRunCommandTool({
     {
       name: "run_command",
       description:
-        "Run a shell command in this chat session's persistent AstraFlow Sandbox via sandbox.commands.run. Commands execute with /bin/bash -l -c. Use this for bash utilities, package or environment inspection, shell pipelines, and filesystem operations under /home/user/astraflow. Prefer run_code for calculations, data processing, and language-specific scripts. If a command starts a service that should be exposed outside the sandbox, run it in a detached tmux session instead of a foreground long-lived command such as python3 -m http.server 8080, which can block the tool call.",
+        "Run a shell command in this chat session's persistent AstraFlow Sandbox via sandbox.commands.run. Commands execute with /bin/bash -l -c. Use this for bash utilities, package or environment inspection, shell pipelines, and filesystem operations under /home/user/astraflow. Prefer run_code for calculations, data processing, and language-specific scripts. If a command starts a service that should be exposed outside the sandbox, it must listen on 0.0.0.0:<port>; services bound to localhost or 127.0.0.1 will not work with the sandbox proxy. Start long-lived services in a detached tmux session, then call sandbox_get_host with the port. Do not run foreground long-lived commands such as python3 -m http.server 8080 directly in run_command, because they can block the tool call.",
       schema: z.object({
         command: z
           .string()
@@ -267,7 +267,7 @@ export function createSandboxGetHostTool({
     {
       name: "sandbox_get_host",
       description:
-        "Resolve the public host address for a port in this chat session's persistent AstraFlow Sandbox. This wraps sandbox.getHost(port), equivalent to sandbox.get_host(port). Use it after starting a web server or WebSocket server inside the sandbox on 0.0.0.0:<port>. Long-lived servers should run in a detached tmux session, not as a foreground command.",
+        "Resolve the public host address for a port in this chat session's persistent AstraFlow Sandbox. This wraps sandbox.getHost(port), equivalent to sandbox.get_host(port). Use it after starting a web server or WebSocket server inside the sandbox. The service must listen on 0.0.0.0:<port>; localhost or 127.0.0.1 listeners are not reachable through the sandbox proxy. Long-lived servers should run in a detached tmux session, not as a foreground command.",
       schema: z.object({
         port: z
           .number()

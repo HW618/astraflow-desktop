@@ -495,13 +495,91 @@ function formatPrice(
   }
 
   const value = typeof price === "number" ? String(price) : price
+  const normalizedCurrency = currency?.trim()
+  const normalizedUnit = unit?.trim()
   const displayCurrency =
-    locale === "zh" && currency === "CNY" ? "元" : currency
+    locale === "zh" && normalizedCurrency === "CNY" ? "元" : normalizedCurrency
+  const displayUnit = translatePriceUnit(normalizedUnit, locale)
   const currencySuffix = displayCurrency ? ` ${displayCurrency}` : ""
-  const unitSuffix = unit ? ` / ${unit}` : ""
+  const unitSuffix = displayUnit ? ` / ${displayUnit}` : ""
 
   return `${value}${currencySuffix}${unitSuffix}`
 }
+
+const PRICE_LABEL_TRANSLATIONS = {
+  en: {
+    输入: "Input",
+    输出: "Output",
+    文本输入: "Text input",
+    文本输出: "Text output",
+    图像输入: "Image input",
+    图像输出: "Image output",
+    图片输入: "Image input",
+    图片输出: "Image output",
+    音频输入: "Audio input",
+    音频输出: "Audio output",
+    视频输入: "Video input",
+    视频输出: "Video output",
+    无视频输入: "No video input",
+    含视频输入: "With video input",
+    无音频: "No audio",
+    含音频: "With audio",
+    无参考: "No reference",
+    有参考: "With reference",
+    未指定音色: "No voice preset",
+    指定音色: "Voice preset",
+    含参考视频: "With reference video",
+    无参考视频: "No reference video",
+    图生视频: "Image to video",
+    文生视频: "Text to video",
+    运动控制: "Motion control",
+    默认: "Default",
+    默认档: "Default tier",
+  },
+  zh: {
+    Input: "输入",
+    Output: "输出",
+    "Text input": "文本输入",
+    "Text output": "文本输出",
+    "Image input": "图像输入",
+    "Image output": "图像输出",
+    "Audio input": "音频输入",
+    "Audio output": "音频输出",
+    "Video input": "视频输入",
+    "Video output": "视频输出",
+    "No video input": "无视频输入",
+    "With video input": "含视频输入",
+    "No audio": "无音频",
+    "With audio": "含音频",
+    "No reference": "无参考",
+    "With reference": "有参考",
+    "No voice preset": "未指定音色",
+    "Voice preset": "指定音色",
+    "With reference video": "含参考视频",
+    "No reference video": "无参考视频",
+    "Image to video": "图生视频",
+    "Text to video": "文生视频",
+    "Motion control": "运动控制",
+    Default: "默认",
+    "Default tier": "默认档",
+  },
+} as const
+
+const PRICE_UNIT_TRANSLATIONS = {
+  en: {
+    百万像素: "Million Pixels",
+    百万Tokens: "Million Tokens",
+    百万Token: "Million Tokens",
+    次: "Requests",
+    秒: "Seconds",
+  },
+  zh: {
+    "Million Pixels": "百万像素",
+    "Million Tokens": "百万 Tokens",
+    Requests: "次",
+    Seconds: "秒",
+  },
+} as const
 
 const EN_PRICE_LABEL_FALLBACKS: Record<string, string> = {
   输入: "Input",
@@ -524,6 +602,48 @@ const EN_PRICE_LABEL_FALLBACKS: Record<string, string> = {
   有参考: "With reference",
   默认: "Default",
   默认档: "Default tier",
+}
+
+function translatePriceLabel(label: string | undefined, locale: string) {
+  const normalized = label?.trim()
+
+  if (!normalized) {
+    return undefined
+  }
+
+  const translations =
+    PRICE_LABEL_TRANSLATIONS[locale as keyof typeof PRICE_LABEL_TRANSLATIONS]
+  const exact = translations?.[normalized as keyof typeof translations]
+
+  if (exact) {
+    return exact
+  }
+
+  const lower = normalized.toLowerCase()
+  const match = Object.entries(translations ?? {}).find(
+    ([source]) => source.toLowerCase() === lower
+  )
+
+  return match?.[1] ?? normalized
+}
+
+function translatePriceUnit(unit: string | undefined, locale: string) {
+  const normalized = unit?.trim()
+
+  if (!normalized) {
+    return undefined
+  }
+
+  const translations =
+    PRICE_UNIT_TRANSLATIONS[locale as keyof typeof PRICE_UNIT_TRANSLATIONS]
+
+  return (
+    translations?.[normalized as keyof typeof translations] ??
+    Object.entries(translations ?? {}).find(
+      ([source]) => source.toLowerCase() === normalized.toLowerCase()
+    )?.[1] ??
+    normalized
+  )
 }
 
 function hasCjkText(label: string) {
@@ -565,23 +685,28 @@ function getEnglishPriceLabel(
 }
 
 function getPriceRateLabel(rate: SquareModelPriceRate, locale: string) {
-  return locale === "zh"
-    ? rate.ChargeItemDescription || rate.ChargeItemDescriptionEn
-    : getEnglishPriceLabel(
-        rate.ChargeItemDescriptionEn,
-        rate.ChargeItemDescription,
-        rate.ChargeItem
-      )
+  const label =
+    locale === "zh"
+      ? rate.ChargeItemDescription || rate.ChargeItemDescriptionEn
+      : getEnglishPriceLabel(
+          rate.ChargeItemDescriptionEn,
+          rate.ChargeItemDescription,
+          rate.ChargeItem
+        )
+
+  return translatePriceLabel(label, locale)
 }
 
-function formatBareConditionValue(value: string) {
+function formatBareConditionValue(value: string, locale: string) {
   const normalized = value.trim()
 
   if (/^\d+p$/i.test(normalized) || normalized.toLowerCase() === "4k") {
     return normalized.toUpperCase()
   }
 
-  return modalityLabel(normalized)
+  const translated = translatePriceLabel(normalized, locale)
+
+  return translated === normalized ? modalityLabel(normalized) : translated
 }
 
 function formatConditionPart(part: string, locale: string) {
@@ -590,7 +715,7 @@ function formatConditionPart(part: string, locale: string) {
   const value = rawValue?.trim()
 
   if (!key || !value) {
-    return formatBareConditionValue(part)
+    return formatBareConditionValue(part, locale)
   }
 
   const isZh = locale === "zh"
@@ -641,7 +766,7 @@ function formatConditionPart(part: string, locale: string) {
   }
 
   if (key === "mode") {
-    return formatBareConditionValue(value)
+    return formatBareConditionValue(value, locale)
   }
 
   if (key === "service_tier") {
@@ -659,7 +784,7 @@ function formatConditionPart(part: string, locale: string) {
       mc: isZh ? "运动控制" : "Motion control",
     }
 
-    return variantLabels[normalizedValue] ?? formatBareConditionValue(value)
+    return variantLabels[normalizedValue] ?? formatBareConditionValue(value, locale)
   }
 
   if (key === "video") {
@@ -670,7 +795,7 @@ function formatConditionPart(part: string, locale: string) {
     return isZh ? "无参考视频" : "No reference video"
   }
 
-  return `${modalityLabel(key)} ${formatBareConditionValue(value)}`
+  return `${modalityLabel(key)} ${formatBareConditionValue(value, locale)}`
 }
 
 function getPriceTierLabels(tier: SquareModelPriceTier, locale: string) {
@@ -690,7 +815,7 @@ function getPriceTierLabels(tier: SquareModelPriceTier, locale: string) {
   return label
     .split(/\s+and\s+|\s*且\s*/)
     .map((part) => formatConditionPart(part, locale))
-    .filter(Boolean)
+    .filter((label): label is string => Boolean(label))
 }
 
 function getPriceSections(
