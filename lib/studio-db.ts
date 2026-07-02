@@ -430,6 +430,7 @@ type CreateImageOutputInput = {
   width?: number | null
   height?: number | null
   metadata?: unknown
+  autoSave?: boolean
 }
 
 type UpdateImageGenerationInput = {
@@ -3587,6 +3588,7 @@ export function createStudioImageOutput(
 ): StudioImageOutput {
   const id = input.id ?? randomUUID()
   const createdAt = nowIso()
+  const savedAt = input.autoSave ? createdAt : null
 
   getDb()
     .prepare(
@@ -3596,7 +3598,7 @@ export function createStudioImageOutput(
            mime_type, width, height, metadata, saved_at, created_at)
         VALUES
           (@id, @generationId, @index, @url, @dataUrl, @storagePath,
-           @mimeType, @width, @height, @metadata, NULL, @createdAt)
+           @mimeType, @width, @height, @metadata, @savedAt, @createdAt)
       `
     )
     .run({
@@ -3611,6 +3613,7 @@ export function createStudioImageOutput(
       height: input.height ?? null,
       metadata:
         input.metadata === undefined ? null : JSON.stringify(input.metadata),
+      savedAt,
       createdAt,
     })
 
@@ -3625,7 +3628,7 @@ export function createStudioImageOutput(
     mimeType: input.mimeType ?? null,
     width: input.width ?? null,
     height: input.height ?? null,
-    savedAt: null,
+    savedAt,
     createdAt,
   }
 }

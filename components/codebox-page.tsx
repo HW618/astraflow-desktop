@@ -1062,6 +1062,8 @@ function Panel({
   bodyClassName?: string
   children: React.ReactNode
 }) {
+  const hasBody = React.Children.count(children) > 0
+
   return (
     <section
       className={cn(
@@ -1069,7 +1071,12 @@ function Panel({
         className
       )}
     >
-      <div className="mb-3 flex items-center justify-between gap-3">
+      <div
+        className={cn(
+          "flex items-center justify-between gap-3",
+          hasBody && "mb-3"
+        )}
+      >
         <div className="flex min-w-0 items-center gap-2">
           <div className="flex size-8 shrink-0 items-center justify-center rounded-2xl bg-secondary text-secondary-foreground">
             {icon}
@@ -1085,7 +1092,7 @@ function Panel({
         </div>
         {action}
       </div>
-      <div className={bodyClassName}>{children}</div>
+      {hasBody ? <div className={bodyClassName}>{children}</div> : null}
     </section>
   )
 }

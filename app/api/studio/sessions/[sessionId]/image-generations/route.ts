@@ -11,7 +11,10 @@ import {
 } from "@/lib/image-model-openapi"
 import { loadImageModelOperationFields } from "@/lib/image-openapi"
 import { getStoredModelverseApiKey } from "@/lib/modelverse-openai"
-import { writeDataUrlToStudioMediaFile } from "@/lib/studio-media-storage"
+import {
+  downloadUrlToStudioMediaFile,
+  writeDataUrlToStudioMediaFile,
+} from "@/lib/studio-media-storage"
 import {
   createStudioImageGeneration,
   createStudioImageOutput,
@@ -61,9 +64,11 @@ type SubmitInput = z.infer<typeof submitSchema>
 type NormalizedOutput = {
   url?: string | null
   dataUrl?: string | null
+  storagePath?: string | null
   mimeType?: string | null
   width?: number | null
   height?: number | null
+  metadata?: unknown
 }
 
 const ASYNC_TASK_MAX_POLLS = 45
@@ -700,6 +705,86 @@ function getImageOutputContentUrl(outputId: string) {
   return `/api/studio/image-outputs/${encodeURIComponent(outputId)}/content`
 }
 
+function mergeOutputMetadata(
+  metadata: unknown,
+  extra: Record<string, unknown>
+) {
+  if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
+    return {
+      ...metadata,
+      ...extra,
+    }
+  }
+
+  if (metadata === undefined || metadata === null) {
+    return extra
+  }
+
+  return {
+    sourceMetadata: metadata,
+    ...extra,
+  }
+}
+
+async function prepareAutoSavedOutput({
+  output,
+  generationId,
+  outputId,
+}: {
+  output: NormalizedOutput
+  generationId: string
+  outputId: string
+}): Promise<NormalizedOutput> {
+  if (output.storagePath) {
+    return output
+  }
+
+  try {
+    const saved = output.dataUrl
+      ? writeDataUrlToStudioMediaFile({
+          kind: "image",
+          generationId,
+          outputId,
+          dataUrl: output.dataUrl,
+          fallbackMimeType: output.mimeType,
+        })
+      : output.url
+        ? await downloadUrlToStudioMediaFile({
+            kind: "image",
+            generationId,
+            outputId,
+            url: output.url,
+            fallbackMimeType: output.mimeType,
+          })
+        : null
+
+    if (!saved) {
+      return output
+    }
+
+    return {
+      ...output,
+      dataUrl: null,
+      storagePath: saved.storagePath,
+      mimeType: output.mimeType ?? saved.mimeType,
+      metadata: mergeOutputMetadata(output.metadata, {
+        sourceUrl: output.url ?? null,
+        autoSaved: true,
+      }),
+    }
+  } catch (error) {
+    return {
+      ...output,
+      dataUrl: output.url ? null : (output.dataUrl ?? null),
+      metadata: mergeOutputMetadata(output.metadata, {
+        autoSaved: true,
+        autoSaveDownloadError:
+          error instanceof Error ? error.message : "Failed to save image.",
+      }),
+    }
+  }
+}
+
 function toLightImageGeneration(
   generation: StudioImageGeneration
 ): StudioImageGeneration {
@@ -929,31 +1014,37 @@ export async function POST(request: Request, context: RouteContext) {
       )
     }
 
-    const stored: StudioImageOutput[] = []
+    const autoSavedOutputs = await Promise.all(
+      outputs.map(async (output, index) => {
+        const outputId = randomUUID()
 
-    outputs.forEach((output, index) => {
-      const outputId = randomUUID()
-      const storedMedia = output.dataUrl
-        ? writeDataUrlToStudioMediaFile({
-            kind: "image",
+        return {
+          index,
+          outputId,
+          output: await prepareAutoSavedOutput({
+            output,
             generationId: generation.id,
             outputId,
-            dataUrl: output.dataUrl,
-            fallbackMimeType: output.mimeType,
-          })
-        : null
+          }),
+        }
+      })
+    )
+    const stored: StudioImageOutput[] = []
 
+    autoSavedOutputs.forEach(({ output, outputId, index }) => {
       stored.push(
         createStudioImageOutput({
           id: outputId,
           generationId: generation.id,
           index,
           url: output.url ?? null,
-          dataUrl: null,
-          storagePath: storedMedia?.storagePath ?? null,
-          mimeType: storedMedia?.mimeType ?? output.mimeType ?? null,
+          dataUrl: output.dataUrl ?? null,
+          storagePath: output.storagePath ?? null,
+          mimeType: output.mimeType ?? null,
           width: output.width ?? null,
           height: output.height ?? null,
+          metadata: output.metadata,
+          autoSave: Boolean(output.storagePath || output.url || output.dataUrl),
         })
       )
     })
