@@ -12,11 +12,13 @@ const SERVER_START_TIMEOUT_MS = 90_000
 const SMOKE_TIMEOUT_MS = 30_000
 
 const isSmokeRun = process.env.ASTRAFLOW_ELECTRON_SMOKE === "1"
+const shouldCheckForUpdates = app.isPackaged && !isSmokeRun
 let mainWindow = null
 let nextProcess = null
 let serverUrl = null
 let isQuitting = false
 let lastServerOutput = ""
+let updatePromptShown = false
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 
@@ -270,6 +272,63 @@ function createMainWindow(url, { show = true } = {}) {
   return window
 }
 
+function setupAutoUpdates() {
+  if (!shouldCheckForUpdates) {
+    return
+  }
+
+  let autoUpdater
+
+  try {
+    autoUpdater = require("electron-updater").autoUpdater
+  } catch (error) {
+    console.error("Failed to load electron-updater.", error)
+    return
+  }
+
+  autoUpdater.autoDownload = true
+  autoUpdater.autoInstallOnAppQuit = true
+  autoUpdater.allowPrerelease = false
+
+  autoUpdater.on("error", (error) => {
+    console.error("Auto update failed.", error)
+  })
+
+  autoUpdater.on("update-downloaded", (info) => {
+    if (updatePromptShown || !mainWindow || mainWindow.isDestroyed()) {
+      return
+    }
+
+    updatePromptShown = true
+
+    void dialog
+      .showMessageBox(mainWindow, {
+        type: "info",
+        title: `${APP_NAME} update ready`,
+        message: "A new AstraFlow update is ready to install.",
+        detail: info?.version
+          ? `Version ${info.version} has been downloaded. Restart AstraFlow to install it now, or install it when you quit later.`
+          : "The update has been downloaded. Restart AstraFlow to install it now, or install it when you quit later.",
+        buttons: ["Restart now", "Later"],
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true,
+      })
+      .then(({ response }) => {
+        if (response === 0) {
+          autoUpdater.quitAndInstall(false, true)
+        }
+      })
+      .catch((error) => {
+        console.error("Failed to show update prompt.", error)
+      })
+  })
+
+  void autoUpdater.checkForUpdates().catch((error) => {
+    console.error("Failed to check for updates.", error)
+  })
+}
+
 function stopNextServer() {
   const child = nextProcess
 
@@ -325,6 +384,7 @@ async function bootstrap() {
   }
 
   mainWindow = createMainWindow(url)
+  setupAutoUpdates()
 }
 
 function showFatalError(error) {

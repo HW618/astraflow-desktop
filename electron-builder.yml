@@ -66,4 +66,8 @@ linux:
         - x64
 
 artifactName: ${productName}-${version}-${os}-${arch}.${ext}
-publish: null
+publish:
+  provider: github
+  owner: mfzzf
+  repo: astraflow-desktop
+  releaseType: release
