@@ -86,6 +86,44 @@ function getPackageNameFromNodeModulesPath(packagePath) {
   return firstPart
 }
 
+function getPackageNameFromPackageJson(packageDir) {
+  const packageJsonPath = join(packageDir, "package.json")
+
+  if (!existsSync(packageJsonPath)) {
+    return null
+  }
+
+  try {
+    const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"))
+    return typeof packageJson.name === "string" ? packageJson.name : null
+  } catch {
+    return null
+  }
+}
+
+function getPackagedPackageForAlias(sourceAlias, targetAppDir) {
+  let packageName = getPackageNameFromPackageJson(sourceAlias)
+
+  if (!packageName && lstatSync(sourceAlias).isSymbolicLink()) {
+    const realPath = realpathSync(sourceAlias)
+    packageName =
+      getPackageNameFromNodeModulesPath(realPath) ??
+      getPackageNameFromPackageJson(realPath)
+  }
+
+  if (!packageName) {
+    return null
+  }
+
+  const packagedPackage = join(
+    targetAppDir,
+    "node_modules",
+    ...packageName.split("/")
+  )
+
+  return existsSync(packagedPackage) ? packagedPackage : null
+}
+
 function copyNextModuleAliases(sourceAppDir, targetAppDir) {
   const sourceAliasesDir = join(sourceAppDir, ".next", "node_modules")
 
@@ -103,20 +141,8 @@ function copyNextModuleAliases(sourceAppDir, targetAppDir) {
     }
 
     const sourceAlias = join(sourceAliasesDir, entry.name)
-    let copySource = sourceAlias
-
-    if (lstatSync(sourceAlias).isSymbolicLink()) {
-      const packageName = getPackageNameFromNodeModulesPath(
-        realpathSync(sourceAlias)
-      )
-      const packagedPackage =
-        packageName &&
-        join(targetAppDir, "node_modules", ...packageName.split("/"))
-
-      if (packagedPackage && existsSync(packagedPackage)) {
-        copySource = packagedPackage
-      }
-    }
+    const copySource =
+      getPackagedPackageForAlias(sourceAlias, targetAppDir) ?? sourceAlias
 
     copyTree(copySource, join(targetAliasesDir, entry.name))
   }
