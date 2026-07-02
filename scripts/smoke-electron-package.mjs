@@ -44,6 +44,13 @@ function findPackagedExecutable() {
 }
 
 const executable = findPackagedExecutable()
+const smokeArgs = process.platform === "linux" ? ["--no-sandbox"] : []
+const smokeEnv =
+  process.platform === "linux"
+    ? {
+        ELECTRON_DISABLE_SANDBOX: "1",
+      }
+    : {}
 
 if (!executable) {
   throw new Error(
@@ -52,11 +59,12 @@ if (!executable) {
 }
 
 await new Promise((resolveRun, rejectRun) => {
-  const child = spawn(executable, [], {
+  const child = spawn(executable, smokeArgs, {
     env: {
       ...process.env,
       ASTRAFLOW_ELECTRON_SMOKE: "1",
       ELECTRON_ENABLE_LOGGING: "1",
+      ...smokeEnv,
     },
     stdio: "inherit",
     windowsHide: true,

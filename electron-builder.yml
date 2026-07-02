@@ -12,8 +12,8 @@ electronLanguages:
   - en-US
   - zh-CN
 asar: false
-npmRebuild: true
-buildDependenciesFromSource: false
+npmRebuild: false
+buildDependenciesFromSource: true
 afterPack: scripts/copy-electron-node-modules.cjs
 
 files:

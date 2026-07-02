@@ -14,6 +14,14 @@ const {
 } = require("node:fs")
 const { join, sep } = require("node:path")
 
+const ELECTRON_BUILDER_ARCH_NAMES = {
+  0: "ia32",
+  1: "x64",
+  2: "armv7l",
+  3: "arm64",
+  4: "universal",
+}
+
 function copyFilter(sourcePath) {
   return !sourcePath.endsWith(".map")
 }
@@ -246,6 +254,57 @@ function syncNodeModules(source, target) {
   }
 }
 
+function getElectronVersion(projectDir) {
+  const packageJson = JSON.parse(
+    readFileSync(join(projectDir, "package.json"), "utf8")
+  )
+  const version =
+    packageJson.devDependencies?.electron ?? packageJson.dependencies?.electron
+  const match =
+    typeof version === "string" ? version.match(/\d+\.\d+\.\d+/) : null
+
+  if (!match) {
+    throw new Error("Could not resolve Electron version from package.json.")
+  }
+
+  return match[0]
+}
+
+function getElectronRebuildArch(context) {
+  const arch =
+    typeof context.arch === "string"
+      ? context.arch
+      : ELECTRON_BUILDER_ARCH_NAMES[context.arch]
+
+  if (!arch || arch === "universal") {
+    throw new Error(`Unsupported Electron rebuild arch: ${context.arch}`)
+  }
+
+  return arch
+}
+
+async function rebuildElectronNativeModules(context, targetAppDir) {
+  const { rebuild } = await import("@electron/rebuild")
+  const electronVersion = getElectronVersion(context.packager.projectDir)
+  const arch = getElectronRebuildArch(context)
+
+  console.log(
+    `[electron-package] rebuilding native modules for Electron ${electronVersion} (${context.electronPlatformName}/${arch})`
+  )
+
+  await rebuild({
+    buildPath: targetAppDir,
+    electronVersion,
+    platform: context.electronPlatformName,
+    arch,
+    onlyModules: ["better-sqlite3"],
+    force: true,
+    buildFromSource: true,
+    disablePreGypCopy: true,
+    projectRootPath: context.packager.projectDir,
+  })
+}
+
 exports.default = async function copyElectronNodeModules(context) {
   const projectDir = context.packager.projectDir
   const sourceAppDir = join(projectDir, "dist", "electron-app")
@@ -258,5 +317,6 @@ exports.default = async function copyElectronNodeModules(context) {
   }
 
   syncNodeModules(source, target)
+  await rebuildElectronNativeModules(context, targetAppDir)
   copyNextModuleAliases(sourceAppDir, targetAppDir)
 }
