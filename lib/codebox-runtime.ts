@@ -97,6 +97,12 @@ function getCodeServerHost(
   return `${CODEBOX_CODE_SERVER_PORT}-${sandboxId}.${sandboxDomain}`
 }
 
+function getCodeServerUrl(host: string) {
+  const scheme = host.includes("localhost") ? "http" : "https"
+
+  return `${scheme}://${host}/?folder=${encodeURIComponent(CODEBOX_WORKSPACE_PATH)}`
+}
+
 function shellQuote(value: string) {
   return `'${value.replaceAll("'", "'\\''")}'`
 }
@@ -173,7 +179,6 @@ function mergeSandboxRecord(info: SandboxInfo): CodeBoxSandbox {
   const codeServerHost =
     existing?.codeServerHost ??
     getCodeServerHost(info.sandboxId, info.sandboxDomain ?? getSandboxDomain())
-  const scheme = codeServerHost.includes("localhost") ? "http" : "https"
   const volumeMount = info.volumeMounts?.find(
     (mount) => mount.path === CODEBOX_WORKSPACE_PATH
   )
@@ -184,7 +189,7 @@ function mergeSandboxRecord(info: SandboxInfo): CodeBoxSandbox {
     status: normalizeSandboxStatus(info.state),
     volumeId: existing?.volumeId ?? null,
     volumeName: existing?.volumeName ?? volumeMount?.name ?? null,
-    codeServerUrl: existing?.codeServerUrl ?? `${scheme}://${codeServerHost}`,
+    codeServerUrl: getCodeServerUrl(codeServerHost),
     codeServerHost,
     codeServerPort: existing?.codeServerPort ?? CODEBOX_CODE_SERVER_PORT,
     password: existing?.password ?? null,
@@ -613,7 +618,6 @@ export async function createCodeBoxSandbox({
     await startCodeServer(sandbox, password, envs)
 
     const host = sandbox.getHost(CODEBOX_CODE_SERVER_PORT)
-    const scheme = host.includes("localhost") ? "http" : "https"
 
     return upsertCodeBoxSandboxRecord({
       sandboxId: sandbox.sandboxId,
@@ -622,7 +626,7 @@ export async function createCodeBoxSandbox({
       sandboxDomain: getSandboxDomain(),
       template: ASTRAFLOW_CODE_SANDBOX_TEMPLATE,
       status: "running",
-      codeServerUrl: `${scheme}://${host}`,
+      codeServerUrl: getCodeServerUrl(host),
       codeServerHost: host,
       codeServerPort: CODEBOX_CODE_SERVER_PORT,
       password,
@@ -664,7 +668,6 @@ export async function resumeCodeBoxSandbox(sandboxId: string) {
   await startCodeServer(sandbox, password, envs)
 
   const host = sandbox.getHost(CODEBOX_CODE_SERVER_PORT)
-  const scheme = host.includes("localhost") ? "http" : "https"
 
   upsertCodeBoxSandboxRecord({
     sandboxId,
@@ -673,7 +676,7 @@ export async function resumeCodeBoxSandbox(sandboxId: string) {
     sandboxDomain: existing ? getSandboxDomain() : null,
     template: existing?.template ?? ASTRAFLOW_CODE_SANDBOX_TEMPLATE,
     status: "running",
-    codeServerUrl: `${scheme}://${host}`,
+    codeServerUrl: getCodeServerUrl(host),
     codeServerHost: host,
     codeServerPort: CODEBOX_CODE_SERVER_PORT,
     password,
