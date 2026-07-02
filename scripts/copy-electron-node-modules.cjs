@@ -318,6 +318,26 @@ function pruneRebuildableNativeModules(targetAppDir) {
     join(targetAppDir, "node_modules"),
     "better-sqlite3"
   )
+  const betterSqliteBinary = join(
+    betterSqliteDir,
+    "build",
+    "Release",
+    "better_sqlite3.node"
+  )
+
+  if (!existsSync(betterSqliteBinary)) {
+    throw new Error(
+      `Missing rebuilt better-sqlite3 binary: ${betterSqliteBinary}`
+    )
+  }
+
+  const binaryMode = lstatSync(betterSqliteBinary).mode
+  const binaryContents = readFileSync(betterSqliteBinary)
+
+  rmSync(join(betterSqliteDir, "build"), { recursive: true, force: true })
+  mkdirSync(join(betterSqliteDir, "build", "Release"), { recursive: true })
+  writeFileSync(betterSqliteBinary, binaryContents)
+  chmodSync(betterSqliteBinary, binaryMode)
 
   for (const entry of ["deps", "src", "test"]) {
     rmSync(join(betterSqliteDir, entry), { recursive: true, force: true })

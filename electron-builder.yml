@@ -7,7 +7,7 @@ directories:
   output: dist/electron
   buildResources: public/icon
 
-compression: normal
+compression: maximum
 electronLanguages:
   - en-US
   - zh-CN
@@ -28,15 +28,10 @@ extraMetadata:
 mac:
   category: public.app-category.productivity
   icon: public/icon/icon.svg
-  hardenedRuntime: false
+  hardenedRuntime: true
   gatekeeperAssess: false
-  identity: null
   target:
     - target: dmg
-      arch:
-        - x64
-        - arm64
-    - target: zip
       arch:
         - x64
         - arm64
@@ -49,9 +44,6 @@ win:
   requestedExecutionLevel: asInvoker
   target:
     - target: nsis
-      arch:
-        - x64
-    - target: zip
       arch:
         - x64
 
@@ -70,12 +62,6 @@ linux:
   syncDesktopName: true
   target:
     - target: AppImage
-      arch:
-        - x64
-    - target: deb
-      arch:
-        - x64
-    - target: tar.gz
       arch:
         - x64
 
