@@ -503,10 +503,75 @@ function formatPrice(
   return `${value}${currencySuffix}${unitSuffix}`
 }
 
+const EN_PRICE_LABEL_FALLBACKS: Record<string, string> = {
+  输入: "Input",
+  输出: "Output",
+  文本输入: "Text input",
+  文本输出: "Text output",
+  图像输入: "Image input",
+  图像输出: "Image output",
+  图片输入: "Image input",
+  图片输出: "Image output",
+  音频输入: "Audio input",
+  音频输出: "Audio output",
+  视频输入: "Video input",
+  视频输出: "Video output",
+  无视频输入: "No video input",
+  含视频输入: "With video input",
+  无音频: "No audio",
+  含音频: "With audio",
+  无参考: "No reference",
+  有参考: "With reference",
+  默认: "Default",
+  默认档: "Default tier",
+}
+
+function hasCjkText(label: string) {
+  return /[\u3400-\u9fff]/.test(label)
+}
+
+function getEnglishLabelFallback(label: string | undefined) {
+  const normalized = label?.trim()
+
+  return normalized ? EN_PRICE_LABEL_FALLBACKS[normalized] : undefined
+}
+
+function getEnglishPriceLabel(
+  ...labels: Array<string | undefined>
+): string | undefined {
+  let firstLabel: string | undefined
+
+  for (const label of labels) {
+    const normalized = label?.trim()
+
+    if (!normalized) {
+      continue
+    }
+
+    firstLabel ??= normalized
+
+    const fallback = getEnglishLabelFallback(normalized)
+
+    if (fallback) {
+      return fallback
+    }
+
+    if (!hasCjkText(normalized)) {
+      return normalized
+    }
+  }
+
+  return firstLabel
+}
+
 function getPriceRateLabel(rate: SquareModelPriceRate, locale: string) {
   return locale === "zh"
     ? rate.ChargeItemDescription || rate.ChargeItemDescriptionEn
-    : rate.ChargeItemDescription || rate.ChargeItemDescriptionEn
+    : getEnglishPriceLabel(
+        rate.ChargeItemDescriptionEn,
+        rate.ChargeItemDescription,
+        rate.ChargeItem
+      )
 }
 
 function formatBareConditionValue(value: string) {
@@ -612,7 +677,11 @@ function getPriceTierLabels(tier: SquareModelPriceTier, locale: string) {
   const label =
     locale === "zh"
       ? tier.Description || tier.Condition || tier.DescriptionEn
-      : tier.Description || tier.Condition || tier.DescriptionEn
+      : getEnglishPriceLabel(
+          tier.DescriptionEn,
+          tier.Description,
+          tier.Condition
+        )
 
   if (!label || label.toLowerCase() === "default" || label === "默认") {
     return []
