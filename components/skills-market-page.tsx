@@ -3054,8 +3054,8 @@ function SkillsMarketPage({
     <main className="h-full overflow-hidden bg-background">
       <div
         className={cn(
-          "mx-auto flex h-full min-h-0 w-full max-w-5xl flex-col",
-          embedded ? "px-4 pt-4" : "px-6 pt-6 lg:px-10 lg:pt-8"
+          "flex h-full min-h-0 w-full flex-col",
+          embedded ? "px-4 pt-4" : "px-6 pt-6 lg:px-8 lg:pt-8"
         )}
       >
         <header className="flex shrink-0 flex-col gap-4">
@@ -3240,7 +3240,7 @@ function SkillsMarketPage({
               </>
             ) : null}
 
-            <span className="ml-auto min-w-0 truncate text-xs text-muted-foreground">
+            <span className="min-w-0 shrink-0 truncate text-xs text-muted-foreground">
               {isMineView
                 ? t.mcpEnabledSummary(enabledPluginCount, totalPluginCount)
                 : pluginType === "mcp"

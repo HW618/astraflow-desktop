@@ -3,6 +3,7 @@ type AstraFlowDesktopUpdateResult = {
 }
 
 type AstraFlowDesktopBridge = {
+  platform: string
   installUpdate: () => Promise<AstraFlowDesktopUpdateResult>
 }
 

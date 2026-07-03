@@ -365,6 +365,14 @@ function attachNavigationGuards(window) {
 }
 
 function createMainWindow(url, { show = true } = {}) {
+  const macWindowOptions =
+    process.platform === "darwin"
+      ? {
+          titleBarStyle: "hiddenInset",
+          trafficLightPosition: { x: 13, y: 13 },
+        }
+      : {}
+
   const window = new BrowserWindow({
     width: 1320,
     height: 860,
@@ -373,6 +381,7 @@ function createMainWindow(url, { show = true } = {}) {
     title: APP_NAME,
     backgroundColor: "#f7f6f2",
     show: false,
+    ...macWindowOptions,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,

@@ -62,7 +62,9 @@
   --chart-3: oklch(0.546 0.245 262.881);
   --chart-4: oklch(0.488 0.243 264.376);
   --chart-5: oklch(0.424 0.199 265.638);
-  --radius: 0rem;
+  --radius: 0.25rem;
+  --electron-titlebar-height: 0px;
+  --sidebar-collapsed-resize-left: 6px;
   --sidebar: oklch(0.977 0 0);
   --sidebar-foreground: oklch(0.32 0 0);
   --sidebar-primary: oklch(0.235 0 0);
@@ -71,6 +73,23 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.93 0 0);
   --sidebar-ring: oklch(0.6 0 0);
+}
+
+html[data-astraflow-platform="darwin"] {
+  --electron-titlebar-height: 40px;
+}
+
+.electron-titlebar {
+  height: var(--electron-titlebar-height);
+  -webkit-app-region: drag;
+}
+
+html[data-astraflow-platform="darwin"] .electron-titlebar {
+  border-bottom: 1px solid var(--border);
+}
+
+.electron-titlebar [data-electron-titlebar-control] {
+  -webkit-app-region: no-drag;
 }
 
 .dark {

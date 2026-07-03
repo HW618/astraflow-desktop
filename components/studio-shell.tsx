@@ -81,7 +81,7 @@ function StudioShellInner({
   )
 
   return (
-    <main className="flex h-full min-h-0 overflow-hidden bg-background">
+    <main className="flex h-full min-h-0 w-full flex-1 overflow-hidden bg-background">
       {selectedMode === "chat" ? (
         <StudioChatWorkbench
           sessionId={selectedSessionId}

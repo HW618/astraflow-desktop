@@ -57,7 +57,6 @@ import {
   SidebarMenuSub,
   SidebarMenuSubButton,
   SidebarMenuSubItem,
-  SidebarTrigger,
 } from "@/components/ui/sidebar"
 import {
   dispatchStudioSessionsChanged,
@@ -374,7 +373,6 @@ function AppSidebar() {
       <Sidebar collapsible="offcanvas">
         <SidebarHeader>
           <div className="flex items-center gap-1.5 px-1 pt-1">
-            <SidebarTrigger className="shrink-0 text-sidebar-foreground/70" />
             <Link
               href="/explore"
               aria-label="AstraFlow"

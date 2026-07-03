@@ -998,52 +998,8 @@ function CodeBoxPage() {
             </Alert>
           ) : null}
 
-          <div className="grid min-h-0 flex-1 gap-4 overflow-hidden xl:grid-cols-[minmax(260px,0.55fr)_minmax(0,1.75fr)]">
-            <div className="flex min-h-0 flex-col gap-4 overflow-hidden">
-              <Panel
-                title="GitHub"
-                description={
-                  status?.github.configured
-                    ? (status.github.login ?? t.codeboxGithubConnectedLabel)
-                    : t.codeboxGithubDeviceFlow
-                }
-                icon={<RiGithubLine className="size-4" aria-hidden />}
-                className="shrink-0"
-                action={
-                  <div className="flex flex-wrap justify-end gap-2">
-                    <Button
-                      size="sm"
-                      onClick={() => void startGithubLogin()}
-                      disabled={busyAction === "github-login"}
-                    >
-                      {busyAction === "github-login" ? (
-                        <RiLoader4Line className="animate-spin" />
-                      ) : (
-                        <RiGithubLine />
-                      )}
-                      {status?.github.configured
-                        ? t.codeboxReconnect
-                        : t.codeboxConnect}
-                    </Button>
-                    {status?.github.configured ? (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => void logoutGithub()}
-                        disabled={busyAction === "github-logout"}
-                      >
-                        <RiCloseLine />
-                        {t.logout}
-                      </Button>
-                    ) : null}
-                  </div>
-                }
-              >
-                {null}
-              </Panel>
-            </div>
-
-            <div className="flex min-h-0 flex-col gap-4 overflow-hidden">
+          <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+            <div className="shrink-0">
               <Panel
                 title={t.codeboxNewSandboxTitle}
                 description={t.codeboxUsesHomeWorkspace(status?.workspacePath)}
@@ -1135,80 +1091,122 @@ function CodeBoxPage() {
                   </Button>
                 </form>
               </Panel>
+            </div>
 
-              <Panel
-                title={t.codeboxSandboxesTitle}
-                description={t.codeboxSandboxesShown(sandboxes.length)}
-                icon={<RiCodeBoxLine className="size-4" aria-hidden />}
-                className="flex min-h-0 flex-1 flex-col"
-                bodyClassName="min-h-0 flex-1"
-                action={
-                  <div className="flex items-center gap-2">
+            <Panel
+              title={t.codeboxSandboxesTitle}
+              description={t.codeboxSandboxesShown(sandboxes.length)}
+              icon={<RiCodeBoxLine className="size-4" aria-hidden />}
+              className="flex min-h-0 flex-1 flex-col"
+              bodyClassName="min-h-0 flex-1"
+              action={
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="icon-sm"
+                    onClick={() => void refresh()}
+                    disabled={isLoading}
+                    aria-label={t.codeboxRefreshSandboxes}
+                  >
+                    <RiRefreshLine
+                      className={cn(isLoading && "animate-spin")}
+                    />
+                  </Button>
+                  <Select
+                    value={sandboxFilter}
+                    onValueChange={(value) =>
+                      setSandboxFilter(value as SandboxFilter)
+                    }
+                  >
+                    <SelectTrigger size="sm">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        <SelectItem value="all">
+                          {t.codeboxFilterAll}
+                        </SelectItem>
+                        <SelectItem value="running">
+                          {t.codeboxFilterRunning}
+                        </SelectItem>
+                        <SelectItem value="paused">
+                          {t.codeboxFilterPaused}
+                        </SelectItem>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </div>
+              }
+            >
+              <div className="flex max-h-full min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1">
+                {isLoading && sandboxes.length === 0 ? (
+                  <LoadingBlock />
+                ) : status && !status.modelverseApiKey.configured ? (
+                  <ApiKeyRequiredBlock />
+                ) : sandboxes.length === 0 ? (
+                  <EmptyBlock text={t.codeboxNoSandboxes} />
+                ) : (
+                  sandboxes.map((sandbox) => (
+                    <SandboxItem
+                      key={sandbox.sandboxId}
+                      sandbox={sandbox}
+                      busyAction={busyAction}
+                      sshBusy={
+                        (isSshPreparing || isSshDependencyChecking) &&
+                        sshSandbox?.sandboxId === sandbox.sandboxId
+                      }
+                      onCopy={copyText}
+                      onAction={handleSandboxAction}
+                      onRename={openRenameSandbox}
+                      onOpenWorkspace={openWorkspaceDialog}
+                      onOpenVSCode={(item) => void prepareSandboxVSCode(item)}
+                    />
+                  ))
+                )}
+              </div>
+            </Panel>
+
+            <Panel
+              title="GitHub"
+              description={
+                status?.github.configured
+                  ? (status.github.login ?? t.codeboxGithubConnectedLabel)
+                  : t.codeboxGithubDeviceFlow
+              }
+              icon={<RiGithubLine className="size-4" aria-hidden />}
+              className="shrink-0"
+              action={
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Button
+                    size="sm"
+                    onClick={() => void startGithubLogin()}
+                    disabled={busyAction === "github-login"}
+                  >
+                    {busyAction === "github-login" ? (
+                      <RiLoader4Line className="animate-spin" />
+                    ) : (
+                      <RiGithubLine />
+                    )}
+                    {status?.github.configured
+                      ? t.codeboxReconnect
+                      : t.codeboxConnect}
+                  </Button>
+                  {status?.github.configured ? (
                     <Button
                       variant="outline"
-                      size="icon-sm"
-                      onClick={() => void refresh()}
-                      disabled={isLoading}
-                      aria-label={t.codeboxRefreshSandboxes}
+                      size="sm"
+                      onClick={() => void logoutGithub()}
+                      disabled={busyAction === "github-logout"}
                     >
-                      <RiRefreshLine
-                        className={cn(isLoading && "animate-spin")}
-                      />
+                      <RiCloseLine />
+                      {t.logout}
                     </Button>
-                    <Select
-                      value={sandboxFilter}
-                      onValueChange={(value) =>
-                        setSandboxFilter(value as SandboxFilter)
-                      }
-                    >
-                      <SelectTrigger size="sm">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value="all">
-                            {t.codeboxFilterAll}
-                          </SelectItem>
-                          <SelectItem value="running">
-                            {t.codeboxFilterRunning}
-                          </SelectItem>
-                          <SelectItem value="paused">
-                            {t.codeboxFilterPaused}
-                          </SelectItem>
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                }
-              >
-                <div className="flex max-h-full min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1">
-                  {isLoading && sandboxes.length === 0 ? (
-                    <LoadingBlock />
-                  ) : status && !status.modelverseApiKey.configured ? (
-                    <ApiKeyRequiredBlock />
-                  ) : sandboxes.length === 0 ? (
-                    <EmptyBlock text={t.codeboxNoSandboxes} />
-                  ) : (
-                    sandboxes.map((sandbox) => (
-                      <SandboxItem
-                        key={sandbox.sandboxId}
-                        sandbox={sandbox}
-                        busyAction={busyAction}
-                        sshBusy={
-                          (isSshPreparing || isSshDependencyChecking) &&
-                          sshSandbox?.sandboxId === sandbox.sandboxId
-                        }
-                        onCopy={copyText}
-                        onAction={handleSandboxAction}
-                        onRename={openRenameSandbox}
-                        onOpenWorkspace={openWorkspaceDialog}
-                        onOpenVSCode={(item) => void prepareSandboxVSCode(item)}
-                      />
-                    ))
-                  )}
+                  ) : null}
                 </div>
-              </Panel>
-            </div>
+              }
+            >
+              {null}
+            </Panel>
           </div>
         </div>
       </section>
