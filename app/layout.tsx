@@ -1,4 +1,4 @@
-import { Geist_Mono, Inter, Roboto } from "next/font/google"
+import localFont from "next/font/local"
 
 import "./globals.css"
 import { AppNavbar } from "@/components/app-navbar"
@@ -7,13 +7,25 @@ import { I18nProvider } from "@/components/i18n-provider"
 import { Toaster } from "@/components/ui/sonner"
 import { cn } from "@/lib/utils"
 
-const interHeading = Inter({ subsets: ["latin"], variable: "--font-heading" })
+const interHeading = localFont({
+  src: "./fonts/inter-latin.woff2",
+  variable: "--font-heading",
+  display: "swap",
+  weight: "100 900",
+})
 
-const roboto = Roboto({ subsets: ["latin"], variable: "--font-sans" })
+const roboto = localFont({
+  src: "./fonts/roboto-latin.woff2",
+  variable: "--font-sans",
+  display: "swap",
+  weight: "100 900",
+})
 
-const fontMono = Geist_Mono({
-  subsets: ["latin"],
+const fontMono = localFont({
+  src: "./fonts/geist-mono-latin.woff2",
   variable: "--font-mono",
+  display: "swap",
+  weight: "100 900",
 })
 
 export default function RootLayout({
