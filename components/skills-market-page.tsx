@@ -163,13 +163,13 @@ function createEmptyMcpForm(): McpManualFormState {
 function getSkillGridClass(size: SkillCardSize, spacious = false) {
   if (spacious) {
     return size === "large"
-      ? "grid justify-start grid-cols-[repeat(auto-fill,minmax(420px,520px))] gap-4"
-      : "grid justify-start grid-cols-[repeat(auto-fill,minmax(360px,440px))] gap-3"
+      ? "grid grid-cols-1 gap-4 xl:grid-cols-2"
+      : "grid grid-cols-1 gap-3 xl:grid-cols-2"
   }
 
   return size === "large"
-    ? "grid justify-start grid-cols-[repeat(auto-fill,minmax(340px,420px))] gap-4"
-    : "grid justify-start grid-cols-[repeat(auto-fill,minmax(280px,320px))] gap-3"
+    ? "grid grid-cols-1 gap-4 xl:grid-cols-2"
+    : "grid grid-cols-1 gap-3 xl:grid-cols-2"
 }
 
 function getLocaleTag(locale: string) {
@@ -250,10 +250,6 @@ function getSkillDescription(skill: SkillMeta, locale: string) {
   const fallback = locale === "zh" ? skill.Desc : skill.DescZh
 
   return preferred?.trim() || fallback?.trim() || ""
-}
-
-function getAuthor(skill: SkillMeta) {
-  return skill.Author?.trim() || "-"
 }
 
 function getSkillSearchText(skill: SkillMeta) {
@@ -951,12 +947,6 @@ function SkillCard({
               </p>
             </div>
           </div>
-          {skill.Latest ? (
-            <Badge variant="secondary" className="shrink-0">
-              <RiVerifiedBadgeLine aria-hidden />
-              {t.skillLatest}
-            </Badge>
-          ) : null}
         </div>
 
         <PluginCardDescription>
@@ -983,17 +973,7 @@ function SkillCard({
         </div>
       </div>
 
-      <div className="flex min-w-0 items-center justify-between gap-3 border-t px-4 py-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <Badge variant="outline" className="max-w-40">
-            <span className="truncate">
-              {skill.Category ? categoryLabel(skill.Category) : t.none}
-            </span>
-          </Badge>
-          <span className="truncate text-xs text-muted-foreground">
-            {getAuthor(skill)}
-          </span>
-        </div>
+      <div className="flex min-w-0 items-center justify-end gap-2 border-t px-4 py-3">
         <div className="flex shrink-0 items-center gap-2">
           <Button
             type="button"
@@ -1071,9 +1051,6 @@ function InstalledSkillCard({
               </p>
             </div>
           </div>
-          <Badge variant={installedSkill.enabled ? "secondary" : "outline"}>
-            {installedSkill.enabled ? t.skillEnabled : t.skillDisabled}
-          </Badge>
         </div>
 
         <PluginCardDescription>
@@ -1102,17 +1079,7 @@ function InstalledSkillCard({
         </div>
       </div>
 
-      <div className="flex min-w-0 items-center justify-between gap-3 border-t px-4 py-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <Badge variant="outline" className="max-w-40">
-            <span className="truncate">
-              {skill.Category ? categoryLabel(skill.Category) : t.none}
-            </span>
-          </Badge>
-          <span className="truncate text-xs text-muted-foreground">
-            {getAuthor(skill)}
-          </span>
-        </div>
+      <div className="flex min-w-0 items-center justify-end gap-2 border-t px-4 py-3">
         <div className="flex shrink-0 items-center gap-2">
           <Button
             type="button"

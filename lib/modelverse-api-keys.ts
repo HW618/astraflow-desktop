@@ -130,13 +130,17 @@ export async function resolveModelverseProjectId({
   credentials: UCloudCredentials
   preferredProjectId?: string
 }) {
-  if (preferredProjectId?.trim()) {
-    return preferredProjectId.trim()
+  const projects = await listUCloudProjects({ credentials })
+  const normalizedPreferredProjectId = preferredProjectId?.trim()
+
+  if (
+    normalizedPreferredProjectId &&
+    projects.some((project) => project.id === normalizedPreferredProjectId)
+  ) {
+    return normalizedPreferredProjectId
   }
 
-  const project = getDefaultUCloudProject(
-    await listUCloudProjects({ credentials })
-  )
+  const project = getDefaultUCloudProject(projects)
 
   if (!project?.id) {
     throw new Error("No UCloud project is available for Modelverse API keys.")

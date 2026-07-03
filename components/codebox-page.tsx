@@ -767,7 +767,7 @@ function CodeBoxPage() {
                   onSubmit={createSandbox}
                 >
                   <Select
-                    value={selectedApiKeyId || undefined}
+                    value={selectedApiKeyId}
                     onValueChange={(value) => {
                       const nextValue = value.trim()
 

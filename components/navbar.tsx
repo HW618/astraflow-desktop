@@ -416,7 +416,7 @@ function ProjectSwitcher() {
         />
       ) : null}
       <Select
-        value={selectedProjectId || undefined}
+        value={selectedProjectId}
         onValueChange={(value) => void selectProject(value)}
         disabled={isLoading || isSaving}
       >

@@ -10,7 +10,7 @@ export async function getAppAuthState() {
   return {
     oauthConfigured: Boolean(tokens?.accessToken),
     apiKeyConfigured: Boolean(modelverseApiKey?.key),
-    authenticated: Boolean(tokens?.accessToken && modelverseApiKey?.key),
+    authenticated: Boolean(tokens?.accessToken),
   }
 }
 

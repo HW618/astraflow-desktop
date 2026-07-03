@@ -1,7 +1,6 @@
 "use client"
 
 import * as React from "react"
-import { useRouter } from "next/navigation"
 import {
   RiArrowRightLine,
   RiExternalLinkLine,
@@ -187,7 +186,6 @@ async function saveModelverseApiKey(apiKeyId: string, projectId: string) {
 }
 
 function LoginForm() {
-  const router = useRouter()
   const { t } = useI18n()
   const initialStatusLoadedRef = React.useRef(false)
   const finalizeStartedRef = React.useRef(false)
@@ -220,20 +218,18 @@ function LoginForm() {
       const apiKeys = await fetchModelverseApiKeys()
       const preferredKeyId = apiKeys.selected?.id ?? apiKeys.items[0]?.id
 
-      if (!preferredKeyId) {
-        throw new Error("This UCloud account has no active Modelverse API key.")
+      if (preferredKeyId) {
+        await saveModelverseApiKey(preferredKeyId, apiKeys.projectId)
       }
-
-      await saveModelverseApiKey(preferredKeyId, apiKeys.projectId)
-
-      setPhase("done")
-      setMessage("Login complete. Redirecting to Models...")
-      router.replace("/explore")
-    } catch (nextError) {
-      finalizeStartedRef.current = false
-      throw nextError
+    } catch {
+      // UCloud OAuth is enough to enter the app; Modelverse key setup can be
+      // completed later from settings if this best-effort sync fails.
     }
-  }, [router])
+
+    setPhase("done")
+    setMessage("Login complete. Redirecting to Models...")
+    window.location.replace("/explore")
+  }, [])
 
   const reloadStatus = React.useCallback(
     async (

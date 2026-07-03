@@ -679,7 +679,7 @@ function StudioImageWorkbench({
             </label>
             <ToggleGroup
               type="single"
-              value={selectedOperation?.id}
+              value={selectedOperation?.id ?? ""}
               onValueChange={(value) => {
                 if (value) {
                   setSelectedOperationId(value)
@@ -962,7 +962,8 @@ function ParameterControl({
   }
 
   if (field.kind === "number") {
-    const numeric = typeof value === "number" ? value : value === "" ? "" : value
+    const numeric =
+      typeof value === "number" ? value : typeof value === "string" ? value : ""
     return (
       <div className="flex flex-col gap-1.5">
         <ParameterLabel field={field} />
