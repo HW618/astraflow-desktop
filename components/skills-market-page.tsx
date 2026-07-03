@@ -1341,6 +1341,32 @@ function McpHeadersEditor({
   const { t } = useI18n()
   const rows = value.length > 0 ? value : [createEmptyKeyValueRow()]
 
+  // McpKeyValue has no intrinsic id, so we keep a stable id per logical row in
+  // state aligned to row order. This survives edits (updateRow preserves length
+  // and order) and deletions (removeRow drops the matching id), so React keys
+  // stay stable and inputs no longer shift onto the wrong row after a middle
+  // delete. Length reconciliation uses the render-time state adjustment pattern.
+  const [rowIdState, setRowIdState] = React.useState(() => ({
+    counter: rows.length,
+    ids: rows.map((_, index) => `mcp-header-${index + 1}`),
+  }))
+
+  let rowIds = rowIdState.ids
+  if (rowIds.length !== rows.length) {
+    if (rowIds.length < rows.length) {
+      let counter = rowIdState.counter
+      rowIds = [...rowIds]
+      while (rowIds.length < rows.length) {
+        counter += 1
+        rowIds.push(`mcp-header-${counter}`)
+      }
+      setRowIdState({ counter, ids: rowIds })
+    } else {
+      rowIds = rowIds.slice(0, rows.length)
+      setRowIdState({ counter: rowIdState.counter, ids: rowIds })
+    }
+  }
+
   function updateRow(index: number, updates: Partial<McpKeyValue>) {
     onChange(
       rows.map((row, rowIndex) =>
@@ -1350,6 +1376,10 @@ function McpHeadersEditor({
   }
 
   function removeRow(index: number) {
+    setRowIdState((state) => ({
+      counter: state.counter,
+      ids: state.ids.filter((_, rowIndex) => rowIndex !== index),
+    }))
     onChange(rows.filter((_, rowIndex) => rowIndex !== index))
   }
 
@@ -1372,7 +1402,7 @@ function McpHeadersEditor({
       <div className="space-y-2">
         {rows.map((row, index) => (
           <div
-            key={`mcp-header-${index}`}
+            key={rowIds[index]}
             className="grid gap-2 rounded-lg border bg-muted/20 p-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.35fr)_auto_auto] sm:items-center"
           >
             <Input
@@ -2112,12 +2142,15 @@ function SkillsMarketPage({
 
     return slug ? installedBySlug.get(slug) : undefined
   }, [installedBySlug, selectedSkill])
-  const visibleSkills =
-    debouncedQuery || !normalizedQuery
-      ? skills
-      : skills.filter((skill) =>
-          getSkillSearchText(skill).includes(normalizedQuery)
-        )
+  const visibleSkills = React.useMemo(() => {
+    if (debouncedQuery || !normalizedQuery) {
+      return skills
+    }
+
+    return skills.filter((skill) =>
+      getSkillSearchText(skill).includes(normalizedQuery)
+    )
+  }, [debouncedQuery, normalizedQuery, skills])
   const visibleInstalledSkills = React.useMemo(() => {
     if (!normalizedQuery) {
       return installedSkills
@@ -3226,9 +3259,9 @@ function SkillsMarketPage({
                       </div>
                     ) : (
                       <div className={installedGridClass}>
-                        {visibleInstalledSkills.map((installedSkill) => (
+                        {visibleInstalledSkills.map((installedSkill, index) => (
                           <InstalledSkillCard
-                            key={`${installedSkill.slug}-${installedSkill.version}`}
+                            key={`${installedSkill.slug}-${installedSkill.version}-${index}`}
                             busy={
                               updatingSlug === installedSkill.slug ||
                               removingSlug === installedSkill.slug
@@ -3359,9 +3392,9 @@ function SkillsMarketPage({
                 </div>
               ) : view === "market" ? (
                 <div className={skillGridClass}>
-                  {visibleSkills.map((skill) => (
+                  {visibleSkills.map((skill, index) => (
                     <SkillCard
-                      key={`${skill.Slug}-${skill.Version}`}
+                      key={`${skill.Slug}-${skill.Version}-${index}`}
                       installedSkill={
                         skill.Slug ? installedBySlug.get(skill.Slug) : undefined
                       }
@@ -3376,9 +3409,9 @@ function SkillsMarketPage({
                 </div>
               ) : (
                 <div className={skillGridClass}>
-                  {visibleInstalledSkills.map((installedSkill) => (
+                  {visibleInstalledSkills.map((installedSkill, index) => (
                     <InstalledSkillCard
-                      key={`${installedSkill.slug}-${installedSkill.version}`}
+                      key={`${installedSkill.slug}-${installedSkill.version}-${index}`}
                       busy={
                         updatingSlug === installedSkill.slug ||
                         removingSlug === installedSkill.slug

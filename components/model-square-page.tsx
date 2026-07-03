@@ -984,9 +984,7 @@ function findPriceGroup(model: SquareModel, groups?: ModelPriceGroup[]) {
         priceModelId === modelName ||
         priceModelId === modelId
       )
-    }) ??
-    groups?.[0] ??
-    null
+    }) ?? null
   )
 }
 
@@ -1057,6 +1055,10 @@ function ModelSquarePage({ projectId }: { projectId?: string }) {
   })
   const [studioExperienceIndex, setStudioExperienceIndex] =
     React.useState<StudioExperienceIndex>(() => new Map())
+  const [priceGroups, setPriceGroups] = React.useState<
+    ModelPriceGroup[] | null
+  >(null)
+  const [pricesLoading, setPricesLoading] = React.useState(false)
   const [status, setStatus] = React.useState<"loading" | "success" | "error">(
     "loading"
   )
@@ -1174,6 +1176,55 @@ function ModelSquarePage({ projectId }: { projectId?: string }) {
       cancelled = true
     }
   }, [refreshNonce])
+
+  React.useEffect(() => {
+    const controller = new AbortController()
+
+    async function loadPrices() {
+      setPricesLoading(true)
+
+      try {
+        const params = new URLSearchParams()
+
+        if (projectId) {
+          params.set("projectId", projectId)
+        }
+
+        const query = params.toString()
+        const response = await fetch(
+          `/api/model-square/prices${query ? `?${query}` : ""}`,
+          {
+            cache: "no-store",
+            headers: locale === "en" ? { "x-api-lang": "en_US" } : undefined,
+            signal: controller.signal,
+          }
+        )
+        const result = (await response.json()) as ModelPriceResponse
+        const nextGroups =
+          response.ok && result.ok && Array.isArray(result.data)
+            ? result.data
+            : []
+
+        setPriceGroups(nextGroups)
+      } catch {
+        if (controller.signal.aborted) {
+          return
+        }
+
+        setPriceGroups([])
+      } finally {
+        if (!controller.signal.aborted) {
+          setPricesLoading(false)
+        }
+      }
+    }
+
+    void loadPrices()
+
+    return () => {
+      controller.abort()
+    }
+  }, [locale, projectId, refreshNonce])
 
   const models = React.useMemo(
     () =>
@@ -1382,13 +1433,15 @@ function ModelSquarePage({ projectId }: { projectId?: string }) {
                 <ModelGridSkeleton />
               ) : visibleModels.length > 0 ? (
                 <div className="grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-2">
-                  {visibleModels.map((model) => (
+                  {visibleModels.map((model, index) => (
                     <ModelCard
-                      key={model.Id || model.Name}
+                      key={model.Id ?? model.Name ?? `model-${index}`}
                       model={model}
                       locale={locale}
                       projectId={projectId}
                       studioExperienceIndex={studioExperienceIndex}
+                      priceGroups={priceGroups}
+                      pricesLoading={pricesLoading}
                     />
                   ))}
                 </div>
@@ -1483,28 +1536,36 @@ function VendorIcon({ vendor }: { vendor?: VendorFacet }) {
   )
 }
 
-function ModelCard({
+const ModelCard = React.memo(function ModelCard({
   model,
   locale,
   projectId,
   studioExperienceIndex,
+  priceGroups,
+  pricesLoading,
 }: {
   model: SquareModel
   locale: string
   projectId?: string
   studioExperienceIndex: StudioExperienceIndex
+  priceGroups: ModelPriceGroup[] | null
+  pricesLoading: boolean
 }) {
   const { t } = useI18n()
   const description = getPrimaryDescription(model, locale, t.noModelDescription)
   const contextLength = getModelContextLength(model)
   const inputModalities = model.InputModalities ?? []
   const outputModalities = model.OutputModalities ?? []
-  const capabilities = (model.SupportedCapabilities ?? []).filter(
-    (capability) => !isHiddenCapability(capability)
+  const capabilities = React.useMemo(
+    () =>
+      (model.SupportedCapabilities ?? []).filter(
+        (capability) => !isHiddenCapability(capability)
+      ),
+    [model.SupportedCapabilities]
   )
-  const studioMatches = getStudioExperienceMatches(
-    model,
-    studioExperienceIndex
+  const studioMatches = React.useMemo(
+    () => getStudioExperienceMatches(model, studioExperienceIndex),
+    [model, studioExperienceIndex]
   )
 
   return (
@@ -1581,6 +1642,8 @@ function ModelCard({
             model={model}
             projectId={projectId}
             locale={locale}
+            priceGroups={priceGroups}
+            pricesLoading={pricesLoading}
             className="min-w-0 flex-1"
           />
 
@@ -1594,7 +1657,7 @@ function ModelCard({
       </CardContent>
     </Card>
   )
-}
+})
 
 function StudioExperienceActions({
   matches,
@@ -1735,87 +1798,57 @@ function ModelPriceSummary({
   model,
   projectId,
   locale,
+  priceGroups,
+  pricesLoading,
   className,
 }: {
   model: SquareModel
   projectId?: string
   locale: string
+  priceGroups: ModelPriceGroup[] | null
+  pricesLoading: boolean
   className?: string
 }) {
   const { t } = useI18n()
-  const [priceGroup, setPriceGroup] = React.useState<ModelPriceGroup | null>(
-    null
-  )
-  const [isLoading, setIsLoading] = React.useState(false)
+  const [cachedPriceGroup, setCachedPriceGroup] =
+    React.useState<ModelPriceGroup | null>(null)
   const modelName = model.Name ?? ""
 
   React.useEffect(() => {
-    if (!modelName) {
+    if (!modelName || priceGroups !== null) {
       return
     }
 
     const cacheKey = getPriceCacheKey(projectId, modelName, locale)
-    const cachedPrice = readCachedModelPrice(cacheKey)
+    const cached = readCachedModelPrice(cacheKey)
 
-    if (cachedPrice !== undefined) {
-      const timeout = window.setTimeout(() => {
-        setPriceGroup(cachedPrice)
-      }, 0)
+    queueMicrotask(() => setCachedPriceGroup(cached ?? null))
+  }, [locale, modelName, priceGroups, projectId])
 
-      return () => window.clearTimeout(timeout)
+  React.useEffect(() => {
+    if (!modelName || priceGroups === null) {
+      return
     }
 
-    let isCancelled = false
+    const cacheKey = getPriceCacheKey(projectId, modelName, locale)
 
-    async function loadPrice() {
-      setIsLoading(true)
+    writeCachedModelPrice(cacheKey, findPriceGroup(model, priceGroups))
+  }, [locale, model, modelName, priceGroups, projectId])
 
-      try {
-        const params = new URLSearchParams({ keyword: modelName })
-
-        if (projectId) {
-          params.set("projectId", projectId)
-        }
-
-        const response = await fetch(
-          `/api/model-square/prices?${params.toString()}`,
-          {
-            cache: "no-store",
-            headers: locale === "en" ? { "x-api-lang": "en_US" } : undefined,
-          }
-        )
-        const result = (await response.json()) as ModelPriceResponse
-        const nextPriceGroup =
-          response.ok && result.ok && Array.isArray(result.data)
-            ? findPriceGroup(model, result.data)
-            : null
-
-        if (!isCancelled) {
-          setPriceGroup(nextPriceGroup)
-          writeCachedModelPrice(cacheKey, nextPriceGroup)
-        }
-      } catch {
-        if (!isCancelled) {
-          setPriceGroup(null)
-        }
-      } finally {
-        if (!isCancelled) {
-          setIsLoading(false)
-        }
-      }
-    }
-
-    void loadPrice()
-
-    return () => {
-      isCancelled = true
-    }
-  }, [locale, model, modelName, projectId])
-
+  const priceGroup =
+    priceGroups !== null ? findPriceGroup(model, priceGroups) : cachedPriceGroup
   const effectivePriceGroup = modelName ? priceGroup : null
-  const priceSections = getPriceSections(effectivePriceGroup, locale)
-  const inlinePriceSections = getInlinePriceSections(priceSections)
+  const priceSections = React.useMemo(
+    () => getPriceSections(effectivePriceGroup, locale),
+    [effectivePriceGroup, locale]
+  )
+  const inlinePriceSections = React.useMemo(
+    () => getInlinePriceSections(priceSections),
+    [priceSections]
+  )
   const isTieredPricing = priceSections.length > 1
+  const isLoading =
+    pricesLoading && priceGroups === null && cachedPriceGroup === null
 
   if (isLoading) {
     return (

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 
+import { getAppAuthState } from "@/lib/app-auth"
 import { getStudioSessionFile } from "@/lib/studio-db"
 import { createStoredFileResponse } from "@/lib/studio-file-response"
 import { storagePathToDownloadName } from "@/lib/studio-file-storage"
@@ -11,6 +12,15 @@ type RouteContext = {
 }
 
 export async function GET(request: Request, context: RouteContext) {
+  const auth = await getAppAuthState()
+
+  if (!auth.authenticated) {
+    return NextResponse.json(
+      { ok: false, error: "Login is required." },
+      { status: 401 }
+    )
+  }
+
   const { fileId } = await context.params
   const file = getStudioSessionFile(fileId)
 

@@ -40,7 +40,7 @@ import type {
 } from "@/lib/studio-types"
 
 const STUDIO_CHAT_DEBUG = process.env.ASTRAFLOW_STUDIO_CHAT_DEBUG === "1"
-const LIVE_SNAPSHOT_INTERVAL_MS = 50
+const LIVE_SNAPSHOT_INTERVAL_MS = 150
 const SNAPSHOT_PERSIST_INTERVAL_MS = 350
 const COMPLETED_RUN_RETENTION_MS = 5 * 60_000
 
@@ -76,6 +76,7 @@ type StudioChatRunRecord = StudioChatRunSnapshot & {
   abortController: AbortController
   cleanupTimer: ReturnType<typeof setTimeout> | null
   latestSnapshot: ChatStreamSnapshot
+  liveMessageBase: ReturnType<typeof getStudioMessage>
   livePublishTimer: ReturnType<typeof setTimeout> | null
   lastLivePublishedAt: number
   promise: Promise<void> | null
@@ -138,7 +139,11 @@ function getLiveMessageStatus(
 function toRunLiveSnapshot(
   record: StudioChatRunRecord
 ): StudioChatRunLiveSnapshot {
-  const message = getStudioMessage(record.assistantMessageId)
+  if (!record.liveMessageBase) {
+    record.liveMessageBase = getStudioMessage(record.assistantMessageId)
+  }
+
+  const message = record.liveMessageBase
   const latest = record.latestSnapshot
 
   return {
@@ -1311,6 +1316,7 @@ export function startStudioChatRun({
     abortController: new AbortController(),
     cleanupTimer: null,
     latestSnapshot: createInitialSnapshot(),
+    liveMessageBase: assistantMessage,
     livePublishTimer: null,
     lastLivePublishedAt: 0,
     promise: null,

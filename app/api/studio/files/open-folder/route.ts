@@ -4,6 +4,7 @@ import { dirname } from "node:path"
 import { z } from "zod"
 
 import { openFolder } from "@/lib/open-folder"
+import { getAppAuthState } from "@/lib/app-auth"
 import { getStudioAudioOutput } from "@/lib/studio-audio-db"
 import { getStudioImageOutput, getStudioSessionFile } from "@/lib/studio-db"
 import { resolveStudioStoragePath } from "@/lib/studio-file-storage"
@@ -52,6 +53,15 @@ function getContainingFolder(storagePath: string) {
 }
 
 export async function POST(request: Request) {
+  const auth = await getAppAuthState()
+
+  if (!auth.authenticated) {
+    return NextResponse.json(
+      { ok: false, error: "Login is required." },
+      { status: 401 }
+    )
+  }
+
   const parsed = openFolderSchema.safeParse(await request.json())
 
   if (!parsed.success) {

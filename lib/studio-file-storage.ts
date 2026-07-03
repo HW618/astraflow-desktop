@@ -187,6 +187,15 @@ export function removeStudioFile(storagePath: string) {
   rmSync(/* turbopackIgnore: true */ absolutePath, { force: true })
 }
 
+export function removeStudioDirectory(storagePath: string) {
+  const absolutePath = resolveStudioStoragePath(storagePath)
+
+  rmSync(/* turbopackIgnore: true */ absolutePath, {
+    force: true,
+    recursive: true,
+  })
+}
+
 export function storagePathToDownloadName(storagePath: string) {
   return safeFileName(storagePath.split(/[\\/]/).at(-1) ?? "file")
 }

@@ -7,12 +7,11 @@ import {
   type ChatReasoningEffort,
   type SupportedChatModel,
 } from "@/lib/chat-models"
+import { MODELVERSE_BASE_URL as MODELVERSE_ANTHROPIC_BASE_URL } from "@/lib/modelverse-config"
 import {
   getStoredModelverseApiKey,
   MODELVERSE_BASE_URL,
 } from "@/lib/modelverse-openai"
-
-const MODELVERSE_ANTHROPIC_BASE_URL = "https://api.modelverse.cn"
 
 function getLangChainApiKey() {
   const apiKey = getStoredModelverseApiKey()

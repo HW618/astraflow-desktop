@@ -6,6 +6,22 @@ import { getAppAuthState } from "@/lib/app-auth"
 import { getStoredModelverseApiKey } from "@/lib/modelverse-openai"
 import { getStudioSession } from "@/lib/studio-db"
 import {
+  appendFormDataValue,
+  coerceFieldValue,
+  getAsyncTaskId,
+  getAsyncTaskStatus,
+  getFieldKey,
+  getParamValue,
+  getProviderErrorMessage,
+  isTaskFailure,
+  isTaskSuccess,
+  mergeOutputMetadata,
+  parseDataUrl,
+  readNumber,
+  setPayloadValue,
+  sleep,
+} from "@/lib/studio-generation-shared"
+import {
   createStudioVideoGeneration,
   createStudioVideoOutput,
   listStudioVideoGenerations,
@@ -89,84 +105,6 @@ type SubmitInput = z.infer<typeof submitSchema>
 type SubmitAttachment = z.infer<typeof mediaAttachmentSchema>
 type ProviderResponse = { ok: boolean; status: number; body: unknown }
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-function parseDataUrl(value: string) {
-  const match = value.match(/^data:([^;]+);base64,(.+)$/)
-
-  if (!match) {
-    return null
-  }
-
-  return {
-    mimeType: match[1],
-    base64: match[2],
-  }
-}
-
-function coerceFieldValue(
-  field: StudioVideoParameterField,
-  value: unknown
-): unknown {
-  if (value === undefined || value === null || value === "") {
-    return undefined
-  }
-
-  if (field.kind === "boolean") {
-    if (typeof value === "boolean") {
-      return value
-    }
-    if (typeof value === "string") {
-      if (value === "true") return true
-      if (value === "false") return false
-    }
-    return undefined
-  }
-
-  if (field.kind === "number" || field.kind === "slider") {
-    const parsed = typeof value === "number" ? value : Number(value)
-    if (!Number.isFinite(parsed)) {
-      return undefined
-    }
-    return parsed
-  }
-
-  return value
-}
-
-function setPayloadValue(
-  payload: Record<string, unknown>,
-  path: string[],
-  value: unknown
-) {
-  let target: Record<string, unknown> = payload
-
-  for (const segment of path.slice(0, -1)) {
-    const current = target[segment]
-
-    if (!current || typeof current !== "object" || Array.isArray(current)) {
-      target[segment] = {}
-    }
-
-    target = target[segment] as Record<string, unknown>
-  }
-
-  target[path[path.length - 1]] = value
-}
-
-function getVideoFieldKey(field: StudioVideoParameterField) {
-  return field.payloadPath.join(".") || field.name
-}
-
-function getParamValue(
-  params: Record<string, unknown>,
-  field: StudioVideoParameterField
-) {
-  return params[getVideoFieldKey(field)] ?? params[field.name]
-}
-
 function mediaForField({
   media,
   attachments,
@@ -177,7 +115,7 @@ function mediaForField({
   field: StudioVideoParameterField
 }) {
   const specific =
-    media[getVideoFieldKey(field)] ??
+    media[getFieldKey(field)] ??
     media[field.name] ??
     media[field.payloadPath.at(-1) ?? ""]
 
@@ -378,49 +316,6 @@ function buildVideoPayload({
   return payload
 }
 
-function getProviderErrorMessage(payload: unknown, fallback: string) {
-  if (!payload || typeof payload !== "object") {
-    return fallback
-  }
-
-  const error = (payload as { error?: { message?: unknown } }).error
-  if (typeof error?.message === "string" && error.message) {
-    return error.message
-  }
-
-  const statusPayload =
-    "status" in payload ? (payload as { status?: unknown }).status : payload
-
-  if (statusPayload && typeof statusPayload === "object") {
-    const output = (statusPayload as { output?: Record<string, unknown> })
-      .output
-    if (typeof output?.error_message === "string" && output.error_message) {
-      return output.error_message
-    }
-  }
-
-  return fallback
-}
-
-function getAsyncTaskId(payload: unknown) {
-  if (!payload || typeof payload !== "object") {
-    return null
-  }
-
-  const output = (payload as { output?: Record<string, unknown> }).output
-  const taskId = output?.task_id
-
-  if (typeof taskId === "string" && taskId) {
-    return taskId
-  }
-
-  if (typeof taskId === "number" && Number.isFinite(taskId)) {
-    return String(taskId)
-  }
-
-  return null
-}
-
 function getProviderRequestId(payload: unknown) {
   if (!payload || typeof payload !== "object") {
     return null
@@ -437,29 +332,6 @@ function getProviderRequestId(payload: unknown) {
   }
 
   return null
-}
-
-function getAsyncTaskStatus(payload: unknown) {
-  if (!payload || typeof payload !== "object") {
-    return null
-  }
-
-  const output = (payload as { output?: Record<string, unknown> }).output
-  const status = output?.task_status
-
-  return typeof status === "string" ? status : null
-}
-
-function isTaskSuccess(status: string | null) {
-  return ["success", "succeeded", "complete", "completed"].includes(
-    status?.toLowerCase() ?? ""
-  )
-}
-
-function isTaskFailure(status: string | null) {
-  return ["failure", "failed", "error", "cancelled", "canceled"].includes(
-    status?.toLowerCase() ?? ""
-  )
 }
 
 function isTransientProviderStatus(status: number) {
@@ -516,24 +388,6 @@ function attachmentToBlob(attachment: SubmitAttachment) {
       attachment.name?.trim() ||
       `reference.${parsed.mimeType.split("/")[1] ?? "jpg"}`,
   }
-}
-
-function appendFormDataValue(formData: FormData, key: string, value: unknown) {
-  if (value === undefined || value === null || value === "") {
-    return
-  }
-
-  if (typeof value === "string") {
-    formData.append(key, value)
-    return
-  }
-
-  if (typeof value === "number" || typeof value === "boolean") {
-    formData.append(key, String(value))
-    return
-  }
-
-  formData.append(key, JSON.stringify(value))
 }
 
 function buildOpenAiVideoFormData({
@@ -864,21 +718,6 @@ async function downloadOpenAiVideoContent({
   }
 }
 
-function readNumber(value: unknown) {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value
-  }
-
-  if (typeof value === "string") {
-    const parsed = Number(value)
-    if (Number.isFinite(parsed)) {
-      return parsed
-    }
-  }
-
-  return null
-}
-
 function extractVideoOutputs(payload: unknown): NormalizedOutput[] {
   if (!payload || typeof payload !== "object") {
     return []
@@ -910,27 +749,6 @@ function extractVideoOutputs(payload: unknown): NormalizedOutput[] {
       durationSeconds,
       metadata: output ?? null,
     }))
-}
-
-function mergeOutputMetadata(
-  metadata: unknown,
-  extra: Record<string, unknown>
-) {
-  if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
-    return {
-      ...metadata,
-      ...extra,
-    }
-  }
-
-  if (metadata === undefined || metadata === null) {
-    return extra
-  }
-
-  return {
-    sourceMetadata: metadata,
-    ...extra,
-  }
 }
 
 async function prepareAutoSavedOutput({

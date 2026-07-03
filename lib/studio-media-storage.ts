@@ -144,6 +144,71 @@ export function writeDataUrlToStudioMediaFile({
   }
 }
 
+function isBlockedIpv4(hostname: string) {
+  const parts = hostname.split(".")
+
+  if (parts.length !== 4) {
+    return false
+  }
+
+  const octets = parts.map((part) => Number(part))
+
+  if (octets.some((value) => !Number.isInteger(value) || value < 0 || value > 255)) {
+    return false
+  }
+
+  const [a, b] = octets
+
+  // 127.0.0.0/8 loopback, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 private,
+  // 169.254.0.0/16 link-local (includes cloud metadata 169.254.169.254),
+  // 0.0.0.0/8 "this host".
+  return (
+    a === 127 ||
+    a === 10 ||
+    a === 0 ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 169 && b === 254)
+  )
+}
+
+function isBlockedIpv6(hostname: string) {
+  const normalized = hostname.replace(/^\[/, "").replace(/\]$/, "").toLowerCase()
+
+  if (normalized === "::1" || normalized === "::") {
+    return true
+  }
+
+  // Unique local addresses fc00::/7 (fc.. and fd..) and link-local fe80::/10.
+  return (
+    normalized.startsWith("fc") ||
+    normalized.startsWith("fd") ||
+    normalized.startsWith("fe8") ||
+    normalized.startsWith("fe9") ||
+    normalized.startsWith("fea") ||
+    normalized.startsWith("feb")
+  )
+}
+
+function assertPublicMediaUrl(parsedUrl: URL) {
+  const hostname = parsedUrl.hostname.toLowerCase()
+
+  const blockedHostnames = new Set([
+    "localhost",
+    "ip6-localhost",
+    "ip6-loopback",
+  ])
+
+  if (
+    blockedHostnames.has(hostname) ||
+    hostname.endsWith(".localhost") ||
+    isBlockedIpv4(hostname) ||
+    isBlockedIpv6(hostname)
+  ) {
+    throw new Error("Refusing to fetch media from a private or local address.")
+  }
+}
+
 export async function downloadUrlToStudioMediaFile({
   kind,
   generationId,
@@ -162,6 +227,8 @@ export async function downloadUrlToStudioMediaFile({
   if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
     throw new Error("Only http and https media URLs can be saved.")
   }
+
+  assertPublicMediaUrl(parsedUrl)
 
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), getDownloadTimeoutMs())

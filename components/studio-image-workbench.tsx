@@ -5,6 +5,7 @@ import {
   RiAddLine,
   RiCloseLine,
   RiDownloadLine,
+  RiErrorWarningLine,
   RiLoader4Line,
   RiQuestionLine,
   RiSaveLine,
@@ -1154,17 +1155,30 @@ type CanvasTile =
       key: string
       generation: StudioImageGeneration
     }
+  | {
+      kind: "error"
+      key: string
+      generation: StudioImageGeneration
+    }
 
 function buildCanvasTiles(generations: StudioImageGeneration[]): CanvasTile[] {
   const tiles: CanvasTile[] = []
 
   for (const generation of generations) {
-    if (generation.outputs.length === 0 && generation.status === "running") {
-      tiles.push({
-        kind: "pending",
-        key: `pending-${generation.id}`,
-        generation,
-      })
+    if (generation.outputs.length === 0) {
+      if (generation.status === "running") {
+        tiles.push({
+          kind: "pending",
+          key: `pending-${generation.id}`,
+          generation,
+        })
+      } else if (generation.status === "error") {
+        tiles.push({
+          kind: "error",
+          key: `error-${generation.id}`,
+          generation,
+        })
+      }
       continue
     }
 
@@ -1197,7 +1211,10 @@ function OutputCanvas({
   onDownloadOutput,
 }: OutputCanvasProps) {
   const { t } = useI18n()
-  const tiles = buildCanvasTiles(generations)
+  const tiles = React.useMemo(
+    () => buildCanvasTiles(generations),
+    [generations]
+  )
 
   if (tiles.length === 0) {
     return (
@@ -1231,6 +1248,12 @@ function OutputCanvas({
               onSave={() => onSaveOutput(tile.output.id)}
               onDownload={() => onDownloadOutput(tile.output)}
             />
+          ) : tile.kind === "error" ? (
+            <CanvasErrorTile
+              key={tile.key}
+              generation={tile.generation}
+              onSelect={() => onSelectGeneration(tile.generation)}
+            />
           ) : (
             <CanvasPendingTile
               key={tile.key}
@@ -1263,7 +1286,9 @@ function CanvasOutputTile({
   const { t } = useI18n()
   const src = getImageOutputSrc(output)
   const [loadedSrc, setLoadedSrc] = React.useState<string | null>(null)
+  const [failedSrc, setFailedSrc] = React.useState<string | null>(null)
   const loaded = loadedSrc === src
+  const failed = failedSrc === src
 
   return (
     <div className="group relative flex min-h-0 flex-col overflow-hidden rounded-2xl border bg-muted">
@@ -1272,7 +1297,7 @@ function CanvasOutputTile({
         onClick={onSelect}
         className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden focus-visible:ring-2 focus-visible:ring-ring"
       >
-        {!loaded ? (
+        {!loaded && !failed ? (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-muted">
             <div className="flex flex-col items-center gap-2 text-center text-muted-foreground">
               <div className="size-10 animate-pulse rounded-full border bg-background" />
@@ -1282,7 +1307,18 @@ function CanvasOutputTile({
             </div>
           </div>
         ) : null}
-        {src ? (
+        {failed ? (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-muted">
+            <div className="flex flex-col items-center gap-2 px-4 text-center text-muted-foreground">
+              <RiErrorWarningLine
+                className="size-8 text-destructive"
+                aria-hidden
+              />
+              <p className="text-xs">{t.studioImageFailed}</p>
+            </div>
+          </div>
+        ) : null}
+        {src && !failed ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={src}
@@ -1293,6 +1329,7 @@ function CanvasOutputTile({
             )}
             loading="lazy"
             onLoad={() => setLoadedSrc(src)}
+            onError={() => setFailedSrc(src)}
           />
         ) : null}
       </button>
@@ -1358,6 +1395,54 @@ function CanvasPendingTile({
         <RiLoader4Line className="size-8 animate-spin" aria-hidden />
       </div>
       <div className="absolute top-0 left-0 right-0 flex items-start justify-between gap-2 bg-gradient-to-b from-black/30 to-transparent p-2 text-xs">
+        <div className="flex min-w-0 flex-col">
+          <p className="truncate font-medium text-foreground">
+            {generation.prompt}
+          </p>
+          <p className="truncate text-[10px] text-muted-foreground">
+            {generation.modelName}
+          </p>
+        </div>
+        <StatusBadge generation={generation} />
+      </div>
+    </div>
+  )
+}
+
+function CanvasErrorTile({
+  generation,
+  onSelect,
+}: {
+  generation: StudioImageGeneration
+  onSelect: () => void
+}) {
+  const { t } = useI18n()
+  const message = generation.errorMessage?.trim() || t.studioImageSubmitFailed
+
+  return (
+    <div
+      onDoubleClick={onSelect}
+      className="relative flex min-h-0 flex-col overflow-hidden rounded-2xl border border-destructive/30 bg-destructive/5 text-foreground"
+    >
+      <div className="relative z-10 flex flex-1 items-center justify-center p-6">
+        <div className="flex max-w-full flex-col items-center gap-3 text-center">
+          <div className="flex size-14 items-center justify-center rounded-full border border-destructive/30 bg-background text-destructive shadow-sm">
+            <RiErrorWarningLine className="size-8" aria-hidden />
+          </div>
+          <div className="flex min-w-0 flex-col items-center gap-2">
+            <p className="text-sm font-medium text-destructive">
+              {t.studioImageFailed}
+            </p>
+            <p className="line-clamp-2 max-w-full text-xs text-muted-foreground">
+              {generation.prompt}
+            </p>
+            <p className="max-h-24 max-w-full overflow-y-auto break-words rounded-xl border border-destructive/20 bg-background/80 px-3 py-2 text-xs leading-relaxed text-destructive">
+              {message}
+            </p>
+          </div>
+        </div>
+      </div>
+      <div className="absolute top-0 left-0 right-0 flex items-start justify-between gap-2 bg-gradient-to-b from-background/90 to-transparent p-2 text-xs">
         <div className="flex min-w-0 flex-col">
           <p className="truncate font-medium text-foreground">
             {generation.prompt}

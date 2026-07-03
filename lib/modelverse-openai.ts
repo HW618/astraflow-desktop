@@ -1,8 +1,9 @@
 import OpenAI from "openai"
 
+import { MODELVERSE_BASE_URL_V1 } from "@/lib/modelverse-config"
 import { getStudioModelverseApiKey } from "@/lib/studio-db"
 
-export const MODELVERSE_BASE_URL = "https://api.modelverse.cn/v1"
+export const MODELVERSE_BASE_URL = MODELVERSE_BASE_URL_V1
 
 export const DEFAULT_SYSTEM_PROMPT = `You are a software engineering assistant built with LangChain.
 

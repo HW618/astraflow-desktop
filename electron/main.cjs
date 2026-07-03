@@ -4,6 +4,7 @@ const {
   BrowserWindow,
   dialog,
   ipcMain,
+  safeStorage,
   shell,
   utilityProcess,
 } = require("electron")
@@ -14,6 +15,7 @@ const {
   rmSync,
   writeFileSync,
 } = require("node:fs")
+const { randomBytes } = require("node:crypto")
 const { get } = require("node:http")
 const { createServer } = require("node:net")
 const { join, resolve } = require("node:path")
@@ -24,6 +26,7 @@ const SERVER_START_TIMEOUT_MS = 90_000
 const SMOKE_TIMEOUT_MS = 30_000
 const CODEBOX_GITHUB_OAUTH_CLIENT_ID = "Ov23li4imZRAMlx9enez"
 const PENDING_UPDATE_INSTALLERS_FILE = "pending-update-installers.json"
+const SECRET_KEY_FILE = "studio-secret.key"
 
 const isSmokeRun = process.env.ASTRAFLOW_ELECTRON_SMOKE === "1"
 let mainWindow = null
@@ -222,6 +225,42 @@ function startServerProcess(script, args, { appRoot, env }) {
   return child
 }
 
+function resolveStudioSecretKey() {
+  // Persist a 32-byte key encrypted at rest with the OS keychain (safeStorage)
+  // and hand it to the server process as hex so it can encrypt sensitive
+  // settings. Returns null when encryption is unavailable so the server falls
+  // back to plaintext storage.
+  if (!safeStorage.isEncryptionAvailable()) {
+    return null
+  }
+
+  const keyPath = join(app.getPath("userData"), SECRET_KEY_FILE)
+
+  if (existsSync(keyPath)) {
+    try {
+      const decrypted = safeStorage.decryptString(readFileSync(keyPath))
+      const trimmed = decrypted.trim()
+
+      if (/^[0-9a-f]{64}$/i.test(trimmed)) {
+        return trimmed
+      }
+    } catch {
+      // Fall through and regenerate the key below.
+    }
+  }
+
+  const key = randomBytes(32).toString("hex")
+
+  try {
+    writeFileSync(keyPath, safeStorage.encryptString(key))
+  } catch {
+    // If persistence fails, still return the key for this run so credentials
+    // are encrypted in memory; they simply won't decrypt on the next launch.
+  }
+
+  return key
+}
+
 async function startNextServer() {
   const appRoot = getAppRoot()
   const standaloneServer = join(appRoot, "server.js")
@@ -243,6 +282,8 @@ async function startNextServer() {
   mkdirSync(filesDir, { recursive: true })
   mkdirSync(skillsDir, { recursive: true })
 
+  const secretKey = resolveStudioSecretKey()
+
   const env = {
     ...process.env,
     ASTRAFLOW_ELECTRON: "1",
@@ -255,6 +296,10 @@ async function startNextServer() {
     NEXT_TELEMETRY_DISABLED: "1",
     NODE_ENV: "production",
     PORT: String(port),
+  }
+
+  if (secretKey) {
+    env.ASTRAFLOW_SECRET_KEY = secretKey
   }
 
   const child = existsSync(standaloneServer)

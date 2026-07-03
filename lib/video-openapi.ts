@@ -1,11 +1,10 @@
 import { VIDEO_OPENAPI_FIELDS, VIDEO_OPENAPI_MODELS } from "@/lib/generated/video-openapi-fields"
+import { MODELVERSE_BASE_URL } from "@/lib/modelverse-config"
 import type {
   StudioVideoModelOption,
   StudioVideoOpenapiModelEntry,
   StudioVideoParameterField,
 } from "@/lib/studio-video-types"
-
-const MODELVERSE_BASE_URL = "https://api.modelverse.cn"
 
 const VIDEO_MODEL_DISPLAY_NAMES: Record<string, string> = {
   "doubao-seedance-1-5-pro-251215": "Doubao Seedance 1.5 Pro",

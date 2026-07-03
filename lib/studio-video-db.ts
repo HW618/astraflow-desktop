@@ -1,7 +1,7 @@
 import Database from "better-sqlite3"
 import { randomUUID } from "node:crypto"
-import { mkdirSync } from "node:fs"
-import { dirname, join } from "node:path"
+
+import { getStudioDatabase } from "@/lib/studio-db"
 
 import type {
   StudioSavedVideoOutput,
@@ -107,34 +107,21 @@ type RecordVideoGenerationTaskInput = {
   providerRequestId?: string | null
 }
 
-let videoDb: Database.Database | undefined
-
-function getDatabasePath() {
-  return (
-    process.env.ASTRAFLOW_SQLITE_PATH?.trim() ??
-    join(process.cwd(), ".data", "astraflow.sqlite")
-  )
-}
+let videoSchemaReady = false
 
 function nowIso() {
   return new Date().toISOString()
 }
 
 function getVideoDb() {
-  if (videoDb) {
-    return videoDb
+  const database = getStudioDatabase()
+
+  if (!videoSchemaReady) {
+    initializeVideoSchema(database)
+    videoSchemaReady = true
   }
 
-  const dbPath = getDatabasePath()
-  mkdirSync(dirname(dbPath), { recursive: true })
-  videoDb = new Database(dbPath)
-  videoDb.pragma("journal_mode = WAL")
-  videoDb.pragma("synchronous = NORMAL")
-  videoDb.pragma("busy_timeout = 5000")
-  videoDb.pragma("foreign_keys = ON")
-  initializeVideoSchema(videoDb)
-
-  return videoDb
+  return database
 }
 
 function initializeVideoSchema(database: Database.Database) {

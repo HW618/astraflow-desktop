@@ -87,6 +87,7 @@ function getVideoCopy(locale: string) {
       failed: "失败",
       errorTitle: "视频生成失败",
       errorFallback: "Provider 没有返回错误详情。",
+      mediaFailed: "视频加载失败",
     }
   }
 
@@ -117,6 +118,7 @@ function getVideoCopy(locale: string) {
     failed: "Failed",
     errorTitle: "Video generation failed",
     errorFallback: "The provider did not return error details.",
+    mediaFailed: "Failed to load video",
   }
 }
 
@@ -327,6 +329,12 @@ function StudioVideoWorkbench({
   const [generations, setGenerations] = React.useState<StudioVideoGeneration[]>(
     []
   )
+  const generationsRef = React.useRef(generations)
+  const hasPendingGeneration = generations.some(isVideoGenerationPending)
+
+  React.useEffect(() => {
+    generationsRef.current = generations
+  }, [generations])
 
   const selectedModel = React.useMemo(
     () => models.supported.find((option) => option.id === selectedModelId),
@@ -440,16 +448,19 @@ function StudioVideoWorkbench({
   }, [sessionId, reloadGenerations])
 
   React.useEffect(() => {
-    if (!sessionId || !generations.some(isVideoGenerationPending)) {
+    if (!sessionId || !hasPendingGeneration) {
       return
     }
 
     const interval = window.setInterval(() => {
+      if (!generationsRef.current.some(isVideoGenerationPending)) {
+        return
+      }
       void reloadGenerations(sessionId, { clearOnError: false })
     }, 5_000)
 
     return () => window.clearInterval(interval)
-  }, [generations, sessionId, reloadGenerations])
+  }, [hasPendingGeneration, sessionId, reloadGenerations])
 
   function updateParam(field: StudioVideoParameterField, value: unknown) {
     setParamValues((current) => ({
@@ -1165,7 +1176,10 @@ function OutputCanvas({
 }: OutputCanvasProps) {
   const { locale } = useI18n()
   const copy = getVideoCopy(locale)
-  const tiles = buildCanvasTiles(generations)
+  const tiles = React.useMemo(
+    () => buildCanvasTiles(generations),
+    [generations]
+  )
 
   if (tiles.length === 0) {
     return (
@@ -1227,7 +1241,9 @@ function CanvasOutputTile({
   const copy = getVideoCopy(locale)
   const src = getVideoOutputSrc(output)
   const [loadedSrc, setLoadedSrc] = React.useState<string | null>(null)
+  const [failedSrc, setFailedSrc] = React.useState<string | null>(null)
   const loaded = loadedSrc === src
+  const failed = failedSrc === src
 
   return (
     <div className="group relative flex min-h-0 flex-col overflow-hidden rounded-2xl border bg-muted shadow-sm">
@@ -1235,7 +1251,7 @@ function CanvasOutputTile({
         onDoubleClick={onSelect}
         className="relative aspect-video min-h-64 overflow-hidden bg-black"
       >
-        {!loaded ? (
+        {!loaded && !failed ? (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-muted">
             <div className="flex flex-col items-center gap-2 text-center text-muted-foreground">
               <div className="size-10 animate-pulse rounded-full border bg-background" />
@@ -1245,7 +1261,18 @@ function CanvasOutputTile({
             </div>
           </div>
         ) : null}
-        {src ? (
+        {failed ? (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-muted">
+            <div className="flex flex-col items-center gap-2 px-4 text-center text-muted-foreground">
+              <RiErrorWarningLine
+                className="size-8 text-destructive"
+                aria-hidden
+              />
+              <p className="text-xs">{copy.mediaFailed}</p>
+            </div>
+          </div>
+        ) : null}
+        {src && !failed ? (
           <VideoPlayer
             src={src}
             aria-label={generation.prompt}
@@ -1256,6 +1283,7 @@ function CanvasOutputTile({
             )}
             onLoadedData={() => setLoadedSrc(src)}
             onLoadedMetadata={() => setLoadedSrc(src)}
+            onError={() => setFailedSrc(src)}
             playsInline
             preload="metadata"
             size="full"

@@ -1,7 +1,18 @@
 import Database from "better-sqlite3"
 import { mkdirSync } from "node:fs"
 import { dirname, join } from "node:path"
-import { randomUUID } from "node:crypto"
+import {
+  createCipheriv,
+  createDecipheriv,
+  randomBytes,
+  randomUUID,
+} from "node:crypto"
+
+import {
+  removeStudioDirectory,
+  removeStudioFile,
+  safeFileName,
+} from "@/lib/studio-file-storage"
 
 import {
   applyMcpConfigSecrets,
@@ -507,8 +518,28 @@ function getDb() {
   db.pragma("foreign_keys = ON")
   initializeSchema(db)
   migrateSchema(db)
+  reconcileInterruptedRuns(db)
 
   return db
+}
+
+export function getStudioDatabase() {
+  return getDb()
+}
+
+function reconcileInterruptedRuns(database: Database.Database) {
+  // Streaming state only lives in an in-memory map (see studio-chat-runner),
+  // so any message still marked as streaming when the process starts is a
+  // leftover from a crash or forced shutdown and can never resume.
+  database
+    .prepare(
+      `
+        UPDATE studio_messages
+        SET status = 'error'
+        WHERE status = 'streaming'
+      `
+    )
+    .run()
 }
 
 function initializeSchema(database: Database.Database) {
@@ -545,6 +576,9 @@ function initializeSchema(database: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS studio_messages_session_id_created_at_idx
       ON studio_messages(session_id, created_at ASC);
+
+    CREATE INDEX IF NOT EXISTS studio_messages_version_group_idx
+      ON studio_messages(session_id, version_group_id);
 
     CREATE TABLE IF NOT EXISTS studio_settings (
       key TEXT PRIMARY KEY,
@@ -1228,6 +1262,95 @@ function deleteStudioSetting(key: string) {
       `
     )
     .run(key)
+}
+
+const ENCRYPTED_SETTING_PREFIX = "enc:v1:"
+
+let cachedSecretKey: Buffer | null | undefined
+
+function getSecretKey(): Buffer | null {
+  if (cachedSecretKey !== undefined) {
+    return cachedSecretKey
+  }
+
+  const raw = process.env.ASTRAFLOW_SECRET_KEY?.trim()
+
+  if (raw && /^[0-9a-f]{64}$/i.test(raw)) {
+    cachedSecretKey = Buffer.from(raw, "hex")
+  } else {
+    cachedSecretKey = null
+  }
+
+  return cachedSecretKey
+}
+
+// Encrypts a settings value with AES-256-GCM when a secret key is available.
+// Without a key (e.g. plain `next dev`) the value is stored as-is, preserving
+// the previous plaintext behavior.
+function encryptSettingValue(value: string): string {
+  const key = getSecretKey()
+
+  if (!key) {
+    return value
+  }
+
+  const iv = randomBytes(12)
+  const cipher = createCipheriv("aes-256-gcm", key, iv)
+  const encrypted = Buffer.concat([
+    cipher.update(value, "utf8"),
+    cipher.final(),
+  ])
+  const authTag = cipher.getAuthTag()
+
+  return `${ENCRYPTED_SETTING_PREFIX}${Buffer.concat([iv, authTag, encrypted]).toString("base64")}`
+}
+
+// Decrypts a value produced by encryptSettingValue. Legacy plaintext values
+// (no prefix) are returned unchanged, and undecryptable values fall back to
+// the raw stored string so reads never throw.
+function decryptSettingValue(value: string): string {
+  if (!value.startsWith(ENCRYPTED_SETTING_PREFIX)) {
+    return value
+  }
+
+  const key = getSecretKey()
+
+  if (!key) {
+    return value
+  }
+
+  try {
+    const payload = Buffer.from(
+      value.slice(ENCRYPTED_SETTING_PREFIX.length),
+      "base64"
+    )
+    const iv = payload.subarray(0, 12)
+    const authTag = payload.subarray(12, 28)
+    const encrypted = payload.subarray(28)
+    const decipher = createDecipheriv("aes-256-gcm", key, iv)
+    decipher.setAuthTag(authTag)
+
+    return Buffer.concat([
+      decipher.update(encrypted),
+      decipher.final(),
+    ]).toString("utf8")
+  } catch {
+    return value
+  }
+}
+
+function readSecretSetting(key: string) {
+  const row = readStudioSetting(key)
+
+  if (!row?.value) {
+    return row
+  }
+
+  return { ...row, value: decryptSettingValue(row.value) }
+}
+
+function writeSecretSetting(key: string, value: string, updatedAt = nowIso()) {
+  return writeStudioSetting(key, encryptSettingValue(value), updatedAt)
 }
 
 export function getStudioSessionSandboxVolumeRecord() {
@@ -2184,7 +2307,48 @@ export function updateStudioSessionTitle(sessionId: string, title: string) {
 }
 
 export function deleteStudioSession(sessionId: string) {
-  const result = getDb()
+  const database = getDb()
+
+  // Collect on-disk artifacts before the DB rows (and their storage paths)
+  // are gone. File removal is best-effort so it never blocks the deletion.
+  const storagePaths = new Set<string>()
+
+  const mediaQueries = [
+    `SELECT outputs.storage_path AS storage_path
+       FROM studio_image_outputs AS outputs
+       INNER JOIN studio_image_generations AS generations
+         ON generations.id = outputs.generation_id
+       WHERE generations.session_id = ?`,
+    `SELECT outputs.storage_path AS storage_path
+       FROM studio_audio_outputs AS outputs
+       INNER JOIN studio_audio_generations AS generations
+         ON generations.id = outputs.generation_id
+       WHERE generations.session_id = ?`,
+    `SELECT outputs.storage_path AS storage_path
+       FROM studio_video_outputs AS outputs
+       INNER JOIN studio_video_generations AS generations
+         ON generations.id = outputs.generation_id
+       WHERE generations.session_id = ?`,
+    `SELECT storage_path FROM studio_session_files WHERE session_id = ?`,
+  ]
+
+  for (const sql of mediaQueries) {
+    try {
+      const rows = database.prepare(sql).all(sessionId) as Array<{
+        storage_path: string | null
+      }>
+
+      for (const row of rows) {
+        if (row.storage_path) {
+          storagePaths.add(row.storage_path)
+        }
+      }
+    } catch {
+      // Media tables may not exist yet; ignore and continue.
+    }
+  }
+
+  const result = database
     .prepare(
       `
         DELETE FROM studio_sessions
@@ -2192,6 +2356,27 @@ export function deleteStudioSession(sessionId: string) {
       `
     )
     .run(sessionId)
+
+  if (result.changes > 0) {
+    for (const storagePath of storagePaths) {
+      try {
+        removeStudioFile(storagePath)
+      } catch {
+        // Best-effort cleanup; a missing or unreadable file must not fail.
+      }
+    }
+
+    for (const directory of [
+      join("attachments", safeFileName(sessionId)),
+      join("generated", safeFileName(sessionId)),
+    ]) {
+      try {
+        removeStudioDirectory(directory)
+      } catch {
+        // Best-effort cleanup; ignore removal errors.
+      }
+    }
+  }
 
   return result.changes > 0
 }
@@ -2580,6 +2765,59 @@ export function updateStudioMessageSnapshot({
         `
       )
       .run(updatedAt, current.sessionId)
+
+    // When a retry finalizes to an empty error, the newly created version has
+    // already hidden the previous answer (active_version = 0 for the group).
+    // Fall back to the most recent complete version so a working answer is not
+    // replaced by a blank failure.
+    if (
+      nextStatus === "error" &&
+      current.role === "assistant" &&
+      current.versionGroupId &&
+      nextContent.trim().length === 0
+    ) {
+      const fallback = database
+        .prepare(
+          `
+            SELECT id
+            FROM studio_messages
+            WHERE session_id = ?
+              AND role = 'assistant'
+              AND version_group_id = ?
+              AND id != ?
+              AND status = 'complete'
+            ORDER BY version_index DESC
+            LIMIT 1
+          `
+        )
+        .get(current.sessionId, current.versionGroupId, messageId) as
+        | { id: string }
+        | undefined
+
+      if (fallback) {
+        database
+          .prepare(
+            `
+              UPDATE studio_messages
+              SET active_version = 0
+              WHERE session_id = ?
+                AND role = 'assistant'
+                AND version_group_id = ?
+            `
+          )
+          .run(current.sessionId, current.versionGroupId)
+
+        database
+          .prepare(
+            `
+              UPDATE studio_messages
+              SET active_version = 1
+              WHERE id = ?
+            `
+          )
+          .run(fallback.id)
+      }
+    }
   })
 
   updateTransaction()
@@ -3152,7 +3390,7 @@ export function listStudioSavedGenericFiles(): StudioGenericLibraryFile[] {
 }
 
 export function getStudioOAuthTokens(): StudioOAuthTokens | null {
-  const row = readStudioSetting(STUDIO_OAUTH_SETTING)
+  const row = readSecretSetting(STUDIO_OAUTH_SETTING)
 
   if (!row?.value) {
     return null
@@ -3198,7 +3436,7 @@ export function getStudioOAuthStatus(): StudioOAuthStatus {
 export function saveStudioOAuthTokens(
   input: Omit<StudioOAuthTokens, "updatedAt">
 ) {
-  const updatedAt = writeStudioSetting(
+  const updatedAt = writeSecretSetting(
     STUDIO_OAUTH_SETTING,
     JSON.stringify({
       accessToken: input.accessToken,
@@ -3222,7 +3460,7 @@ export function clearStudioOAuthTokens() {
 }
 
 export function getCodeBoxGithubTokens(): CodeBoxGithubTokens | null {
-  const row = readStudioSetting(CODEBOX_GITHUB_SETTING)
+  const row = readSecretSetting(CODEBOX_GITHUB_SETTING)
 
   if (!row?.value) {
     return null
@@ -3276,7 +3514,7 @@ export function saveCodeBoxGithubTokens({
   name?: string | null
   email?: string | null
 }) {
-  const updatedAt = writeStudioSetting(
+  const updatedAt = writeSecretSetting(
     CODEBOX_GITHUB_SETTING,
     JSON.stringify({
       accessToken,
@@ -3300,7 +3538,7 @@ export function clearCodeBoxGithubTokens() {
 }
 
 export function getStudioModelverseApiKey(): StudioModelverseApiKey | null {
-  const row = readStudioSetting(STUDIO_MODELVERSE_API_KEY_SETTING)
+  const row = readSecretSetting(STUDIO_MODELVERSE_API_KEY_SETTING)
 
   if (!row?.value) {
     return null
@@ -3339,7 +3577,7 @@ export function getStudioModelverseApiKey(): StudioModelverseApiKey | null {
 export function saveStudioModelverseApiKey(
   input: Omit<StudioModelverseApiKey, "updatedAt">
 ) {
-  const updatedAt = writeStudioSetting(
+  const updatedAt = writeSecretSetting(
     STUDIO_MODELVERSE_API_KEY_SETTING,
     JSON.stringify({
       id: input.id,

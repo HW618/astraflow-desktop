@@ -1,7 +1,7 @@
 import Database from "better-sqlite3"
 import { randomUUID } from "node:crypto"
-import { mkdirSync } from "node:fs"
-import { dirname, join } from "node:path"
+
+import { getStudioDatabase } from "@/lib/studio-db"
 
 import type {
   StudioAudioGeneration,
@@ -87,34 +87,21 @@ type UpdateAudioGenerationInput = {
   completedAt?: string | null
 }
 
-let audioDb: Database.Database | undefined
-
-function getDatabasePath() {
-  return (
-    process.env.ASTRAFLOW_SQLITE_PATH?.trim() ??
-    join(process.cwd(), ".data", "astraflow.sqlite")
-  )
-}
+let audioSchemaReady = false
 
 function nowIso() {
   return new Date().toISOString()
 }
 
 function getAudioDb() {
-  if (audioDb) {
-    return audioDb
+  const database = getStudioDatabase()
+
+  if (!audioSchemaReady) {
+    initializeAudioSchema(database)
+    audioSchemaReady = true
   }
 
-  const dbPath = getDatabasePath()
-  mkdirSync(dirname(dbPath), { recursive: true })
-  audioDb = new Database(dbPath)
-  audioDb.pragma("journal_mode = WAL")
-  audioDb.pragma("synchronous = NORMAL")
-  audioDb.pragma("busy_timeout = 5000")
-  audioDb.pragma("foreign_keys = ON")
-  initializeAudioSchema(audioDb)
-
-  return audioDb
+  return database
 }
 
 function initializeAudioSchema(database: Database.Database) {

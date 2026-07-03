@@ -2,14 +2,13 @@ import {
   AUDIO_OPENAPI_FIELDS,
   AUDIO_OPENAPI_MODELS,
 } from "@/lib/generated/audio-openapi-fields"
+import { MODELVERSE_BASE_URL } from "@/lib/modelverse-config"
 import type {
   StudioAudioModelOption,
   StudioAudioModelOperation,
   StudioAudioOpenapiModelEntry,
   StudioAudioParameterField,
 } from "@/lib/studio-audio-types"
-
-const MODELVERSE_BASE_URL = "https://api.modelverse.cn"
 
 const AUDIO_MODEL_DISPLAY_NAMES: Record<string, string> = {
   "IndexTeam/IndexTTS-2": "IndexTTS 2",

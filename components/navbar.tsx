@@ -235,7 +235,7 @@ function AppInfoButton() {
               : t.appUpdateStatus
   const statusTone =
     hasUpdate
-      ? "text-emerald-600"
+      ? "text-emerald-600 dark:text-emerald-400"
       : error || update?.message
         ? "text-destructive"
         : "text-muted-foreground"
@@ -251,7 +251,7 @@ function AppInfoButton() {
           className={cn(
             "ml-1",
             hasUpdate
-              ? "bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/15 hover:text-emerald-800"
+              ? "bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/15 hover:text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300 dark:hover:bg-emerald-500/25 dark:hover:text-emerald-200"
               : "text-muted-foreground hover:text-foreground"
           )}
         >
@@ -460,7 +460,7 @@ function Navbar() {
           <AppInfoButton />
         </div>
 
-        <nav className="flex items-center gap-1 sm:gap-2">
+        <nav className="flex min-w-0 items-center gap-1 overflow-x-auto sm:gap-2 [&>*]:shrink-0">
           <Button variant="ghost" size="sm" asChild>
             <Link href="/explore">{t.explore}</Link>
           </Button>

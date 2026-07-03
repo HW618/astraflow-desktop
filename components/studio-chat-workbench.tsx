@@ -465,8 +465,8 @@ function getMessageProgressScore(message: StudioMessage) {
   return (
     message.content.length +
     message.reasoningContent.length +
-    JSON.stringify(message.activities).length +
-    JSON.stringify(message.parts).length
+    message.activities.length +
+    message.parts.length
   )
 }
 
@@ -474,10 +474,12 @@ function mergeReloadedMessages(
   currentMessages: StudioMessage[],
   nextMessages: StudioMessage[]
 ) {
+  const currentById = new Map(
+    currentMessages.map((message) => [message.id, message])
+  )
+
   return nextMessages.map((nextMessage) => {
-    const currentMessage = currentMessages.find(
-      (message) => message.id === nextMessage.id
-    )
+    const currentMessage = currentById.get(nextMessage.id)
 
     if (
       currentMessage?.status === "streaming" &&
@@ -595,6 +597,7 @@ function StudioChatWorkbench({
   const [chatErrors, setChatErrors] = React.useState<Record<string, boolean>>(
     {}
   )
+  const [liveStreamConnected, setLiveStreamConnected] = React.useState(false)
   const sessionIdRef = React.useRef(sessionId)
 
   const visibleMessages = sessionId ? messages : []
@@ -694,7 +697,11 @@ function StudioChatWorkbench({
   }, [reloadMessages, sessionId])
 
   React.useEffect(() => {
-    if (!sessionId || (!hasStreamingMessage && !isStarting)) {
+    if (
+      !sessionId ||
+      (!hasStreamingMessage && !isStarting) ||
+      liveStreamConnected
+    ) {
       return
     }
 
@@ -733,6 +740,7 @@ function StudioChatWorkbench({
   }, [
     hasStreamingMessage,
     isStarting,
+    liveStreamConnected,
     onSessionsChange,
     reloadMessages,
     sessionId,
@@ -763,6 +771,12 @@ function StudioChatWorkbench({
       setLoadFailed(false)
     }
 
+    const handleOpen = () => {
+      if (!closed) {
+        setLiveStreamConnected(true)
+      }
+    }
+
     const handleSnapshot = (event: Event) => {
       const snapshot = parseLiveSnapshot(event as MessageEvent<string>)
 
@@ -784,22 +798,32 @@ function StudioChatWorkbench({
         .catch(() => setLoadFailed(true))
     }
 
+    const handleError = () => {
+      setLiveStreamConnected(false)
+      close()
+    }
+
     const close = () => {
       if (closed) {
         return
       }
 
       closed = true
+      source.removeEventListener("open", handleOpen)
       source.removeEventListener("snapshot", handleSnapshot)
       source.removeEventListener("done", handleDone)
       source.close()
     }
 
+    source.addEventListener("open", handleOpen)
     source.addEventListener("snapshot", handleSnapshot)
     source.addEventListener("done", handleDone)
-    source.onerror = close
+    source.onerror = handleError
 
-    return close
+    return () => {
+      setLiveStreamConnected(false)
+      close()
+    }
   }, [
     hasStreamingMessage,
     isStarting,
@@ -1439,7 +1463,7 @@ function ChatComposer({
   )
 }
 
-function ChatMessageBubble({
+const ChatMessageBubble = React.memo(function ChatMessageBubble({
   message,
   onRetry,
 }: {
@@ -1481,7 +1505,7 @@ function ChatMessageBubble({
   }
 
   return <AssistantMessage message={message} onRetry={onRetry} />
-}
+})
 
 const markdownClassName =
   "prose-sm max-w-none leading-7 text-foreground dark:prose-invert prose-headings:font-heading prose-headings:text-foreground prose-h1:text-xl prose-h2:mt-4 prose-h2:text-lg prose-h3:mt-3 prose-h3:text-base prose-p:my-2 prose-a:text-primary prose-code:rounded-sm prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:font-mono prose-pre:my-3 prose-table:my-3 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2"
@@ -2488,7 +2512,7 @@ function AssistantActivity({ activity }: { activity: StudioMessageActivity }) {
   )
 }
 
-function AssistantContentParts({
+const AssistantContentParts = React.memo(function AssistantContentParts({
   content,
   activities,
   parts,
@@ -2555,7 +2579,7 @@ function AssistantContentParts({
       })}
     </div>
   )
-}
+})
 
 function getStoredChatModelLabel(model: string | null) {
   if (!model) {
@@ -2681,7 +2705,7 @@ function MessageVersionsDialog({
   )
 }
 
-function AssistantMessage({
+const AssistantMessage = React.memo(function AssistantMessage({
   message,
   onRetry,
 }: {
@@ -2819,6 +2843,6 @@ function AssistantMessage({
       </div>
     </Message>
   )
-}
+})
 
 export { StudioChatWorkbench }

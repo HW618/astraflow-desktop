@@ -20,6 +20,19 @@ import type {
   StudioAudioParameterField,
 } from "@/lib/studio-audio-types"
 import { getStudioSession } from "@/lib/studio-db"
+import {
+  appendFormDataValue,
+  getAsyncTaskId,
+  getAsyncTaskStatus,
+  getFieldKey,
+  getParamValue,
+  isTaskFailure,
+  isTaskSuccess,
+  parseDataUrl,
+  readNumber,
+  setPayloadValue,
+  sleep,
+} from "@/lib/studio-generation-shared"
 import { writeDataUrlToStudioMediaFile } from "@/lib/studio-media-storage"
 
 export const runtime = "nodejs"
@@ -80,34 +93,6 @@ const submitSchema = z.object({
 
 type SubmitInput = z.infer<typeof submitSchema>
 type SubmitAttachment = z.infer<typeof attachmentSchema>
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-function parseDataUrl(value: string) {
-  const match = value.match(/^data:([^;]+);base64,(.+)$/)
-
-  if (!match) {
-    return null
-  }
-
-  return {
-    mimeType: match[1],
-    base64: match[2],
-  }
-}
-
-function getFieldKey(field: StudioAudioParameterField) {
-  return field.payloadPath.join(".") || field.name
-}
-
-function getParamValue(
-  params: Record<string, unknown>,
-  field: StudioAudioParameterField
-) {
-  return params[getFieldKey(field)] ?? params[field.name]
-}
 
 function getDefaultFieldValue(field: StudioAudioParameterField) {
   if (field.defaultValue !== undefined) {
@@ -187,26 +172,6 @@ function coerceFieldValue(
   }
 
   return value
-}
-
-function setPayloadValue(
-  payload: Record<string, unknown>,
-  path: string[],
-  value: unknown
-) {
-  let target: Record<string, unknown> = payload
-
-  for (const segment of path.slice(0, -1)) {
-    const current = target[segment]
-
-    if (!current || typeof current !== "object" || Array.isArray(current)) {
-      target[segment] = {}
-    }
-
-    target = target[segment] as Record<string, unknown>
-  }
-
-  target[path[path.length - 1]] = value
 }
 
 function buildJsonPayload({
@@ -289,24 +254,6 @@ function attachmentToBlob(attachment: SubmitAttachment) {
       attachment.name?.trim() ||
       `reference.${parsed.mimeType.split("/")[1] ?? "mp3"}`,
   }
-}
-
-function appendFormDataValue(formData: FormData, key: string, value: unknown) {
-  if (value === undefined || value === null || value === "") {
-    return
-  }
-
-  if (typeof value === "string") {
-    formData.append(key, value)
-    return
-  }
-
-  if (typeof value === "number" || typeof value === "boolean") {
-    formData.append(key, String(value))
-    return
-  }
-
-  formData.append(key, JSON.stringify(value))
 }
 
 function buildFormData({
@@ -594,48 +541,6 @@ async function readProviderResponse(response: Response) {
   return { ok: response.ok, status: response.status, body: parsed }
 }
 
-function getAsyncTaskId(payload: unknown) {
-  if (!payload || typeof payload !== "object") {
-    return null
-  }
-
-  const output = (payload as { output?: Record<string, unknown> }).output
-  const taskId = output?.task_id
-
-  if (typeof taskId === "string" && taskId) {
-    return taskId
-  }
-
-  if (typeof taskId === "number" && Number.isFinite(taskId)) {
-    return String(taskId)
-  }
-
-  return null
-}
-
-function getAsyncTaskStatus(payload: unknown) {
-  if (!payload || typeof payload !== "object") {
-    return null
-  }
-
-  const output = (payload as { output?: Record<string, unknown> }).output
-  const status = output?.task_status
-
-  return typeof status === "string" ? status : null
-}
-
-function isTaskSuccess(status: string | null) {
-  return ["success", "succeeded", "complete", "completed"].includes(
-    status?.toLowerCase() ?? ""
-  )
-}
-
-function isTaskFailure(status: string | null) {
-  return ["failure", "failed", "error", "cancelled", "canceled"].includes(
-    status?.toLowerCase() ?? ""
-  )
-}
-
 async function pollAsyncTask({
   statusUrl,
   taskId,
@@ -678,21 +583,6 @@ async function pollAsyncTask({
     status: 504,
     body: { error: { message: "Async audio task timed out." } },
   }
-}
-
-function readNumber(value: unknown) {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value
-  }
-
-  if (typeof value === "string") {
-    const parsed = Number(value)
-    if (Number.isFinite(parsed)) {
-      return parsed
-    }
-  }
-
-  return null
 }
 
 function isHexAudio(value: string) {

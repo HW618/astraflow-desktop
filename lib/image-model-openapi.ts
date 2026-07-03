@@ -1,3 +1,4 @@
+import { MODELVERSE_BASE_URL } from "@/lib/modelverse-config"
 import type {
   StudioImageAdapter,
   StudioImageDisabledReason,
@@ -21,7 +22,6 @@ export type ImageModelRegistryEntry = {
   disabledReason?: StudioImageDisabledReason
 }
 
-const MODELVERSE_BASE_URL = "https://api.modelverse.cn"
 
 const IMAGE_MODEL_DISPLAY_NAMES: Record<string, string> = {
   "doubao-seedream-4.5": "Doubao Seeadream 4.5",

@@ -12,6 +12,14 @@ import {
 import { loadImageModelOperationFields } from "@/lib/image-openapi"
 import { getStoredModelverseApiKey } from "@/lib/modelverse-openai"
 import {
+  coerceFieldValue,
+  getAsyncTaskId,
+  getAsyncTaskStatus,
+  getProviderErrorMessage,
+  mergeOutputMetadata,
+  sleep,
+} from "@/lib/studio-generation-shared"
+import {
   downloadUrlToStudioMediaFile,
   writeDataUrlToStudioMediaFile,
 } from "@/lib/studio-media-storage"
@@ -73,10 +81,6 @@ type NormalizedOutput = {
 
 const ASYNC_TASK_MAX_POLLS = 45
 const ASYNC_TASK_POLL_INTERVAL_MS = 2_000
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
 
 function dataUrlFromBase64(value: string, fallbackMime: string) {
   if (value.startsWith("data:")) {
@@ -167,36 +171,6 @@ async function attachmentToBlob(
 
 function fieldByName(fields: StudioImageParameterField[], name: string) {
   return fields.find((field) => field.name === name)
-}
-
-function coerceFieldValue(
-  field: StudioImageParameterField,
-  value: unknown
-): unknown {
-  if (value === undefined || value === null || value === "") {
-    return undefined
-  }
-
-  if (field.kind === "boolean") {
-    if (typeof value === "boolean") {
-      return value
-    }
-    if (typeof value === "string") {
-      if (value === "true") return true
-      if (value === "false") return false
-    }
-    return undefined
-  }
-
-  if (field.kind === "number" || field.kind === "slider") {
-    const parsed = typeof value === "number" ? value : Number(value)
-    if (!Number.isFinite(parsed)) {
-      return undefined
-    }
-    return parsed
-  }
-
-  return value
 }
 
 function buildOpenaiPayload(
@@ -527,60 +501,6 @@ function extractOutputs(adapter: string, payload: unknown): NormalizedOutput[] {
   return extractOpenaiOutputs(payload)
 }
 
-function getProviderErrorMessage(payload: unknown, fallback: string) {
-  if (!payload || typeof payload !== "object") {
-    return fallback
-  }
-
-  const error = (payload as { error?: { message?: unknown } }).error
-  if (typeof error?.message === "string" && error.message) {
-    return error.message
-  }
-
-  const statusPayload =
-    "status" in payload ? (payload as { status?: unknown }).status : payload
-
-  if (statusPayload && typeof statusPayload === "object") {
-    const output = (statusPayload as { output?: Record<string, unknown> })
-      .output
-    if (typeof output?.error_message === "string" && output.error_message) {
-      return output.error_message
-    }
-  }
-
-  return fallback
-}
-
-function getAsyncTaskId(payload: unknown) {
-  if (!payload || typeof payload !== "object") {
-    return null
-  }
-
-  const output = (payload as { output?: Record<string, unknown> }).output
-  const taskId = output?.task_id
-
-  if (typeof taskId === "string" && taskId) {
-    return taskId
-  }
-
-  if (typeof taskId === "number" && Number.isFinite(taskId)) {
-    return String(taskId)
-  }
-
-  return null
-}
-
-function getAsyncTaskStatus(payload: unknown) {
-  if (!payload || typeof payload !== "object") {
-    return null
-  }
-
-  const output = (payload as { output?: Record<string, unknown> }).output
-  const status = output?.task_status
-
-  return typeof status === "string" ? status : null
-}
-
 async function pollAsyncTask({
   submitUrl,
   taskId,
@@ -703,27 +623,6 @@ function getOpenapiOperation(
 
 function getImageOutputContentUrl(outputId: string) {
   return `/api/studio/image-outputs/${encodeURIComponent(outputId)}/content`
-}
-
-function mergeOutputMetadata(
-  metadata: unknown,
-  extra: Record<string, unknown>
-) {
-  if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
-    return {
-      ...metadata,
-      ...extra,
-    }
-  }
-
-  if (metadata === undefined || metadata === null) {
-    return extra
-  }
-
-  return {
-    sourceMetadata: metadata,
-    ...extra,
-  }
 }
 
 async function prepareAutoSavedOutput({

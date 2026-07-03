@@ -1067,6 +1067,10 @@ function OutputList({
 }) {
   const { locale } = useI18n()
   const copy = getAudioCopy(locale)
+  const orderedGenerations = React.useMemo(
+    () => generations.toReversed(),
+    [generations]
+  )
 
   if (generations.length === 0) {
     return (
@@ -1079,7 +1083,7 @@ function OutputList({
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-3">
-        {generations.toReversed().map((generation) => (
+        {orderedGenerations.map((generation) => (
           <GenerationCard
             key={generation.id}
             generation={generation}

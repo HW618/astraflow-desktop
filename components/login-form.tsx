@@ -212,7 +212,7 @@ function LoginForm() {
     finalizeStartedRef.current = true
     setPhase("syncing")
     setError("")
-    setMessage("Synchronizing Modelverse access...")
+    setMessage(t.loginSyncingModelverse)
 
     try {
       const apiKeys = await fetchModelverseApiKeys()
@@ -227,9 +227,9 @@ function LoginForm() {
     }
 
     setPhase("done")
-    setMessage("Login complete. Redirecting to Models...")
+    setMessage(t.loginComplete)
     window.location.replace("/explore")
-  }, [])
+  }, [t])
 
   const reloadStatus = React.useCallback(
     async (
@@ -246,7 +246,7 @@ function LoginForm() {
       setFlow(next.flow)
 
       if (next.flow?.status === "error") {
-        throw new Error(next.flow.message || "UCloud login failed.")
+        throw new Error(next.flow.message || t.loginFailed)
       }
 
       if (next.auth.configured && finalize) {
@@ -264,7 +264,7 @@ function LoginForm() {
 
       return next
     },
-    [finalizeLogin]
+    [finalizeLogin, t]
   )
 
   React.useEffect(() => {
@@ -279,11 +279,11 @@ function LoginForm() {
         setError(
           nextError instanceof Error
             ? nextError.message
-            : "Failed to load login status."
+            : t.loginStatusLoadFailed
         )
       })
     })
-  }, [reloadStatus])
+  }, [reloadStatus, t])
 
   React.useEffect(() => {
     if (!flow || flow.status !== "pending") {
@@ -301,14 +301,14 @@ function LoginForm() {
                 message:
                   nextError instanceof Error
                     ? nextError.message
-                    : "UCloud login failed.",
+                    : t.loginFailed,
               }
             : current
         )
         setError(
           nextError instanceof Error
             ? nextError.message
-            : "UCloud login failed."
+            : t.loginFailed
         )
       })
     }, 1200)
@@ -316,7 +316,7 @@ function LoginForm() {
     return () => {
       window.clearInterval(timer)
     }
-  }, [flow, reloadStatus])
+  }, [flow, reloadStatus, t])
 
   async function handleLogin() {
     try {
@@ -329,14 +329,14 @@ function LoginForm() {
         return
       }
 
-      setMessage("Opening the UCloud authorization page...")
+      setMessage(t.loginOpeningUCloud)
 
       const popup = openOAuthPopupShell()
       const nextFlow = await startOAuthFlow()
 
       setFlow(nextFlow)
       setPhase("waiting")
-      setMessage("Finish the UCloud login in your browser.")
+      setMessage(t.loginFinishInBrowser)
 
       navigateOAuthPopup(popup, nextFlow.authorizationUrl)
     } catch (nextError) {
@@ -344,7 +344,7 @@ function LoginForm() {
       setError(
         nextError instanceof Error
           ? nextError.message
-          : "Failed to start UCloud login."
+          : t.loginStartFailed
       )
     }
   }
@@ -353,7 +353,7 @@ function LoginForm() {
     try {
       setCallbackSubmitting(true)
       setError("")
-      setMessage("Completing UCloud login...")
+      setMessage(t.loginCompleting)
 
       const next = await completeOAuthFlow(callbackUrl)
 
@@ -368,7 +368,7 @@ function LoginForm() {
       setError(
         nextError instanceof Error
           ? nextError.message
-          : "Failed to complete UCloud login."
+          : t.loginCompleteFailed
       )
     } finally {
       setCallbackSubmitting(false)
@@ -385,7 +385,7 @@ function LoginForm() {
 
   return (
     <div className="flex flex-col gap-6">
-      <Card className="overflow-hidden border-border/70 bg-card/92 shadow-2xl shadow-black/6 supports-backdrop-filter:backdrop-blur-xl">
+      <Card className="overflow-hidden border-border/70 bg-card/92 shadow-2xl shadow-black/6 dark:shadow-black/40 supports-backdrop-filter:backdrop-blur-xl">
         <CardHeader className="pb-3 text-center">
           <div className="flex justify-center">
             <AstraFlowLogo className="h-10" fetchPriority="high" />
@@ -418,10 +418,10 @@ function LoginForm() {
 
           <div className="flex flex-col gap-2 text-sm text-muted-foreground">
             {auth.email ? (
-              <p className="text-foreground">Signed in as {auth.email}</p>
+              <p className="text-foreground">{t.loginSignedInAs(auth.email)}</p>
             ) : null}
-            {expiryText ? <p>Session expires {expiryText}</p> : null}
-            {flow ? <p>OAuth callback: {flow.redirectUri}</p> : null}
+            {expiryText ? <p>{t.loginSessionExpires(expiryText)}</p> : null}
+            {flow ? <p>{t.loginOAuthCallback(flow.redirectUri)}</p> : null}
             {message ? <p>{message}</p> : null}
             {error ? <p className="text-destructive">{error}</p> : null}
           </div>
@@ -435,7 +435,7 @@ function LoginForm() {
                   rel="noreferrer"
                 >
                   <RiExternalLinkLine data-icon="inline-start" />
-                  <span>Open UCloud login again</span>
+                  <span>{t.loginOpenUCloudAgain}</span>
                 </a>
               </Button>
 
@@ -444,7 +444,7 @@ function LoginForm() {
                   <Input
                     value={callbackUrl}
                     onChange={(event) => setCallbackUrl(event.target.value)}
-                    placeholder="Paste the localhost callback URL"
+                    placeholder={t.loginCallbackPlaceholder}
                     disabled={callbackSubmitting}
                   />
                   <Button
@@ -462,7 +462,7 @@ function LoginForm() {
                     ) : (
                       <RiArrowRightLine data-icon="inline-start" />
                     )}
-                    <span>Complete with callback URL</span>
+                    <span>{t.loginCompleteWithCallback}</span>
                   </Button>
                 </div>
               ) : null}

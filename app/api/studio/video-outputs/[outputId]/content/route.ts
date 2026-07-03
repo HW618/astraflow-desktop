@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 
+import { getAppAuthState } from "@/lib/app-auth"
 import { getStudioVideoOutput } from "@/lib/studio-video-db"
 import { createStoredFileResponse } from "@/lib/studio-file-response"
 import { bufferToArrayBuffer, parseDataUrl } from "@/lib/studio-file-storage"
@@ -21,6 +22,15 @@ function getVideoExtension(mimeType: string) {
 }
 
 export async function GET(request: Request, context: RouteContext) {
+  const auth = await getAppAuthState()
+
+  if (!auth.authenticated) {
+    return NextResponse.json(
+      { ok: false, error: "Login is required." },
+      { status: 401 }
+    )
+  }
+
   const { outputId } = await context.params
   const output = getStudioVideoOutput(outputId)
 

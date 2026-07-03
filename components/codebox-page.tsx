@@ -707,7 +707,7 @@ function CodeBoxPage() {
             </Alert>
           ) : null}
 
-          <div className="grid min-h-0 flex-1 gap-4 overflow-hidden xl:grid-cols-[minmax(260px,0.55fr)_minmax(640px,1.75fr)]">
+          <div className="grid min-h-0 flex-1 gap-4 overflow-hidden xl:grid-cols-[minmax(260px,0.55fr)_minmax(0,1.75fr)]">
             <div className="flex min-h-0 flex-col gap-4 overflow-hidden">
               <Panel
                 title="GitHub"
@@ -763,7 +763,7 @@ function CodeBoxPage() {
                   {t.codeboxNewSandboxDescription}
                 </p>
                 <form
-                  className="grid gap-3 lg:grid-cols-[minmax(180px,0.65fr)_minmax(180px,0.65fr)_minmax(260px,1.2fr)_auto]"
+                  className="grid gap-3 lg:grid-cols-[minmax(0,0.65fr)_minmax(0,0.65fr)_minmax(0,1.2fr)_auto]"
                   onSubmit={createSandbox}
                 >
                   <Select
@@ -893,6 +893,8 @@ function CodeBoxPage() {
                 <div className="flex max-h-full min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1">
                   {isLoading && sandboxes.length === 0 ? (
                     <LoadingBlock />
+                  ) : status && !status.modelverseApiKey.configured ? (
+                    <ApiKeyRequiredBlock />
                   ) : sandboxes.length === 0 ? (
                     <EmptyBlock text={t.codeboxNoSandboxes} />
                   ) : (
@@ -1204,6 +1206,22 @@ function EmptyBlock({ text }: { text: string }) {
   return (
     <div className="flex min-h-32 items-center justify-center rounded-2xl border bg-background px-4 text-center text-sm text-muted-foreground">
       {text}
+    </div>
+  )
+}
+
+function ApiKeyRequiredBlock() {
+  const { t } = useI18n()
+
+  return (
+    <div className="flex min-h-32 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed bg-background px-4 py-6 text-center">
+      <div className="flex size-10 items-center justify-center rounded-2xl bg-secondary text-secondary-foreground">
+        <RiInformationLine className="size-5" aria-hidden />
+      </div>
+      <p className="text-sm font-medium">{t.codeboxApiKeyRequiredTitle}</p>
+      <p className="max-w-xs text-xs text-muted-foreground">
+        {t.codeboxApiKeyRequiredDescription}
+      </p>
     </div>
   )
 }

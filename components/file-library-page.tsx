@@ -7,8 +7,10 @@ import {
   RiFileTextLine,
   RiFolderLine,
   RiMicLine,
+  RiPlayLine,
   RiSearchLine,
   RiSparkling2Line,
+  RiVideoLine,
 } from "@remixicon/react"
 import { toast } from "sonner"
 
@@ -32,6 +34,9 @@ import { cn } from "@/lib/utils"
 type FileLibraryPageProps = {
   files: StudioLibraryFile[]
 }
+
+const PAGE_SIZE = 48
+const SEARCH_DEBOUNCE_MS = 200
 
 function getLocaleTag(locale: string) {
   return locale === "zh" ? "zh-CN" : "en-US"
@@ -125,7 +130,29 @@ function getFileSearchText(file: StudioLibraryFile) {
 function FileLibraryPage({ files }: FileLibraryPageProps) {
   const { locale, t } = useI18n()
   const [query, setQuery] = React.useState("")
-  const normalizedQuery = query.trim().toLowerCase()
+  const [debouncedQuery, setDebouncedQuery] = React.useState("")
+  const [visibleLimit, setVisibleLimit] = React.useState(PAGE_SIZE)
+
+  React.useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setDebouncedQuery(query)
+      setVisibleLimit(PAGE_SIZE)
+    }, SEARCH_DEBOUNCE_MS)
+
+    return () => window.clearTimeout(timeout)
+  }, [query])
+
+  const normalizedQuery = debouncedQuery.trim().toLowerCase()
+
+  const searchTextByFile = React.useMemo(() => {
+    const cache = new Map<string, string>()
+
+    for (const file of files) {
+      cache.set(file.id, getFileSearchText(file))
+    }
+
+    return cache
+  }, [files])
 
   const filteredFiles = React.useMemo(() => {
     if (!normalizedQuery) {
@@ -133,9 +160,19 @@ function FileLibraryPage({ files }: FileLibraryPageProps) {
     }
 
     return files.filter((file) =>
-      getFileSearchText(file).includes(normalizedQuery)
+      (searchTextByFile.get(file.id) ?? "").includes(normalizedQuery)
     )
-  }, [files, normalizedQuery])
+  }, [files, normalizedQuery, searchTextByFile])
+
+  React.useEffect(() => {
+    queueMicrotask(() => setVisibleLimit(PAGE_SIZE))
+  }, [files])
+
+  const visibleFiles = React.useMemo(
+    () => filteredFiles.slice(0, visibleLimit),
+    [filteredFiles, visibleLimit]
+  )
+  const canShowMore = visibleFiles.length < filteredFiles.length
 
   return (
     <main className="flex h-[calc(100vh-4rem)] min-h-0 flex-col bg-background">
@@ -171,11 +208,26 @@ function FileLibraryPage({ files }: FileLibraryPageProps) {
           ) : filteredFiles.length === 0 ? (
             <LibraryEmptyState title={t.fileLibraryNoMatches} />
           ) : (
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-3 lg:grid-cols-[repeat(auto-fill,minmax(220px,1fr))]">
-              {filteredFiles.map((file) => (
-                <LibraryFileCard key={file.id} file={file} locale={locale} />
-              ))}
-            </div>
+            <>
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-3 lg:grid-cols-[repeat(auto-fill,minmax(220px,1fr))]">
+                {visibleFiles.map((file) => (
+                  <LibraryFileCard key={file.id} file={file} locale={locale} />
+                ))}
+              </div>
+              {canShowMore ? (
+                <div className="flex justify-center pt-4">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() =>
+                      setVisibleLimit((limit) => limit + PAGE_SIZE)
+                    }
+                  >
+                    {t.showMore}
+                  </Button>
+                </div>
+              ) : null}
+            </>
           )}
         </div>
       </section>
@@ -357,14 +409,7 @@ function LibraryMediaPreview({ file }: { file: StudioLibraryFile }) {
   }
 
   if (file.kind === "video") {
-    return (
-      <video
-        src={file.src}
-        controls
-        preload="metadata"
-        className="size-full object-contain"
-      />
-    )
+    return <LibraryVideoPreview src={file.src} />
   }
 
   if (file.kind === "file") {
@@ -388,18 +433,72 @@ function LibraryMediaPreview({ file }: { file: StudioLibraryFile }) {
         <div className="flex size-12 items-center justify-center rounded-full bg-background text-muted-foreground shadow-sm">
           <RiMicLine className="size-5" aria-hidden />
         </div>
-        <AudioPlayer className="w-full max-w-full min-w-0 rounded-lg border bg-background px-2 py-2">
-          <AudioPlayerElement src={file.src} preload="metadata" />
-          <AudioPlayerControlBar className="w-full max-w-full min-w-0 [&>[data-slot=button-group]]:w-full [&>[data-slot=button-group]]:min-w-0">
-            <AudioPlayerPlayButton />
-            <AudioPlayerTimeDisplay className="hidden sm:flex" />
-            <AudioPlayerTimeRange className="min-w-0 flex-1 basis-0" />
-            <AudioPlayerDurationDisplay className="hidden sm:flex" />
-            <AudioPlayerMuteButton className="shrink-0" />
-          </AudioPlayerControlBar>
-        </AudioPlayer>
+        <LibraryAudioPreview src={file.src} />
       </div>
     </div>
+  )
+}
+
+function LibraryVideoPreview({ src }: { src: string }) {
+  const [isActive, setIsActive] = React.useState(false)
+
+  if (!isActive) {
+    return (
+      <button
+        type="button"
+        onClick={() => setIsActive(true)}
+        className="group/video relative flex size-full items-center justify-center bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+      >
+        <RiVideoLine
+          className="size-8 text-muted-foreground/70"
+          aria-hidden
+        />
+        <span className="absolute flex size-12 items-center justify-center rounded-full bg-background/85 text-foreground shadow-sm backdrop-blur transition-transform group-hover/video:scale-105">
+          <RiPlayLine className="size-5" aria-hidden />
+        </span>
+      </button>
+    )
+  }
+
+  return (
+    <video
+      src={src}
+      controls
+      autoPlay
+      preload="metadata"
+      className="size-full object-contain"
+    />
+  )
+}
+
+function LibraryAudioPreview({ src }: { src: string }) {
+  const [isActive, setIsActive] = React.useState(false)
+
+  if (!isActive) {
+    return (
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() => setIsActive(true)}
+        className="w-full rounded-lg bg-background"
+      >
+        <RiPlayLine aria-hidden />
+      </Button>
+    )
+  }
+
+  return (
+    <AudioPlayer className="w-full max-w-full min-w-0 rounded-lg border bg-background px-2 py-2">
+      <AudioPlayerElement src={src} preload="metadata" autoPlay />
+      <AudioPlayerControlBar className="w-full max-w-full min-w-0 [&>[data-slot=button-group]]:w-full [&>[data-slot=button-group]]:min-w-0">
+        <AudioPlayerPlayButton />
+        <AudioPlayerTimeDisplay className="hidden sm:flex" />
+        <AudioPlayerTimeRange className="min-w-0 flex-1 basis-0" />
+        <AudioPlayerDurationDisplay className="hidden sm:flex" />
+        <AudioPlayerMuteButton className="shrink-0" />
+      </AudioPlayerControlBar>
+    </AudioPlayer>
   )
 }
 
