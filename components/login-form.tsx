@@ -228,7 +228,7 @@ function LoginForm() {
 
     setPhase("done")
     setMessage(t.loginComplete)
-    window.location.replace("/explore")
+    window.location.replace("/studio")
   }, [t])
 
   const reloadStatus = React.useCallback(

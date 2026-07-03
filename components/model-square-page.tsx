@@ -1910,6 +1910,24 @@ function ModelPriceSummary({
     [priceSections]
   )
   const isTieredPricing = priceSections.length > 1
+  const summaryItems = React.useMemo(
+    () =>
+      inlinePriceSections.flatMap((section) =>
+        section.rates.map((rate) => ({
+          key: `${section.key}:${rate.key}`,
+          label:
+            isTieredPricing && section.labels.length > 0
+              ? section.labels.join(" ")
+              : rate.label,
+          value: rate.value,
+        }))
+      ),
+    [inlinePriceSections, isTieredPricing]
+  )
+  const summaryText = React.useMemo(
+    () => summaryItems.map((item) => `${item.label} ${item.value}`).join(" · "),
+    [summaryItems]
+  )
   const isLoading =
     pricesLoading && priceGroups === null && cachedPriceGroup === null
 
@@ -1931,20 +1949,20 @@ function ModelPriceSummary({
     <div className={cn("flex min-w-0 items-center gap-2 text-sm", className)}>
       <span className="shrink-0 text-muted-foreground">{t.pricing}</span>
       {priceSections.length > 0 ? (
-        <div className="flex max-w-full min-w-0 items-center gap-1">
-          <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 overflow-hidden">
-            {inlinePriceSections.map((section) =>
-              section.rates.map((rate) => (
-                <span key={rate.key} className="min-w-0 font-medium">
-                  <span className="text-muted-foreground">
-                    {isTieredPricing && section.labels.length > 0
-                      ? section.labels.join(" ")
-                      : rate.label}
-                  </span>{" "}
-                  {rate.value}
-                </span>
-              ))
-            )}
+        <div className="flex min-w-0 flex-1 items-center gap-1">
+          <div
+            className="min-w-0 flex-1 overflow-hidden font-medium text-ellipsis whitespace-nowrap"
+            title={summaryText}
+          >
+            {summaryItems.map((item, index) => (
+              <React.Fragment key={item.key}>
+                {index > 0 ? (
+                  <span className="px-2 text-muted-foreground/40">·</span>
+                ) : null}
+                <span className="text-muted-foreground">{item.label}</span>{" "}
+                <span>{item.value}</span>
+              </React.Fragment>
+            ))}
           </div>
           <Popover>
             <PopoverTrigger asChild>

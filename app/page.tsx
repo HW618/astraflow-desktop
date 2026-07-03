@@ -8,5 +8,5 @@ export default async function Page() {
 
   const auth = await getAppAuthState()
 
-  redirect(auth.authenticated ? "/explore" : "/login")
+  redirect(auth.authenticated ? "/studio" : "/login")
 }

@@ -46,6 +46,10 @@ dmg:
 win:
   icon: public/icon/icon.svg
   requestedExecutionLevel: asInvoker
+  signtoolOptions:
+    signingHashAlgorithms:
+      - sha256
+    rfc3161TimeStampServer: "http://timestamp.acs.microsoft.com"
   target:
     - target: nsis
       arch:

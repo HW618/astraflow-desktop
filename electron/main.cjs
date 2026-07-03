@@ -15,10 +15,12 @@ const {
   rmSync,
   writeFileSync,
 } = require("node:fs")
+const { execFile } = require("node:child_process")
 const { randomBytes } = require("node:crypto")
 const { get } = require("node:http")
 const { createServer } = require("node:net")
-const { join, resolve } = require("node:path")
+const { join, normalize, resolve } = require("node:path")
+const { parseDn } = require("builder-util-runtime")
 
 const APP_NAME = "AstraFlow"
 const LOOPBACK_HOST = "127.0.0.1"
@@ -27,6 +29,10 @@ const SMOKE_TIMEOUT_MS = 30_000
 const CODEBOX_GITHUB_OAUTH_CLIENT_ID = "Ov23li4imZRAMlx9enez"
 const PENDING_UPDATE_INSTALLERS_FILE = "pending-update-installers.json"
 const SECRET_KEY_FILE = "studio-secret.key"
+const WINDOWS_SIGNATURE_CHAIN_ERROR_PATTERN =
+  /certificate chain|trusted root|0x800b010a|cert_e_chaining|证书链|受信任的根/i
+const WINDOWS_SIGNATURE_RECOVERABLE_STATUSES = new Set([1, 4])
+const WINDOWS_SIGNER_THUMBPRINTS_ENV = "ASTRAFLOW_WINDOWS_SIGNER_THUMBPRINTS"
 
 const isSmokeRun = process.env.ASTRAFLOW_ELECTRON_SMOKE === "1"
 let mainWindow = null
@@ -393,6 +399,256 @@ function createMainWindow(url, { show = true } = {}) {
   return window
 }
 
+function preparePowerShellExec(command, timeout = 20_000) {
+  return [
+    'set "PSModulePath=" & chcp 65001 >NUL & powershell.exe',
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-InputFormat",
+      "None",
+      "-Command",
+      command,
+    ],
+    { shell: true, timeout, maxBuffer: 1024 * 1024 * 4 },
+  ]
+}
+
+function escapePowerShellSingleQuoted(value) {
+  return String(value).replace(/'/g, "''")
+}
+
+function readAuthenticodeSignature(filePath) {
+  const escapedPath = escapePowerShellSingleQuoted(filePath)
+  const command = `Get-AuthenticodeSignature -LiteralPath '${escapedPath}' | ConvertTo-Json -Depth 6 -Compress`
+
+  return new Promise((resolveSignature, rejectSignature) => {
+    execFile(...preparePowerShellExec(command), (error, stdout, stderr) => {
+      if (error) {
+        rejectSignature(error)
+        return
+      }
+
+      if (stderr) {
+        rejectSignature(
+          new Error(`Cannot inspect Authenticode signature: ${stderr}`)
+        )
+        return
+      }
+
+      try {
+        const trimmed = stdout.trim()
+
+        if (!trimmed) {
+          throw new Error("Empty Authenticode signature output.")
+        }
+
+        resolveSignature(JSON.parse(trimmed))
+      } catch (parseError) {
+        rejectSignature(parseError)
+      }
+    })
+  })
+}
+
+function normalizeCertificateThumbprint(value) {
+  return String(value ?? "")
+    .replace(/[^a-f0-9]/gi, "")
+    .toUpperCase()
+}
+
+function readSignerCertificate(signature) {
+  return signature && typeof signature === "object"
+    ? (signature.SignerCertificate ?? null)
+    : null
+}
+
+function normalizeComparableWindowsPath(value) {
+  return normalize(value).toLowerCase()
+}
+
+function signaturePathMatches(signature, expectedPath) {
+  if (!signature?.Path) {
+    return true
+  }
+
+  return (
+    normalizeComparableWindowsPath(signature.Path) ===
+    normalizeComparableWindowsPath(expectedPath)
+  )
+}
+
+function parseDistinguishedName(value) {
+  try {
+    return parseDn(String(value ?? ""))
+  } catch {
+    return new Map()
+  }
+}
+
+function publisherMatchesSigner(publisherNames, signerCertificate) {
+  const subject = parseDistinguishedName(signerCertificate?.Subject)
+
+  if (!subject.size) {
+    return false
+  }
+
+  return publisherNames.some((publisherName) => {
+    const publisherDn = parseDistinguishedName(publisherName)
+
+    if (publisherDn.size) {
+      return [...publisherDn.keys()].every(
+        (key) => publisherDn.get(key) === subject.get(key)
+      )
+    }
+
+    return publisherName === subject.get("CN")
+  })
+}
+
+function signatureHasRecoverableChainError(signature, failureMessage = "") {
+  const status = Number(signature?.Status)
+
+  if (!WINDOWS_SIGNATURE_RECOVERABLE_STATUSES.has(status)) {
+    return false
+  }
+
+  return WINDOWS_SIGNATURE_CHAIN_ERROR_PATTERN.test(
+    `${signature?.StatusMessage ?? ""}\n${failureMessage}`
+  )
+}
+
+function collectConfiguredWindowsSignerThumbprints() {
+  return new Set(
+    String(process.env[WINDOWS_SIGNER_THUMBPRINTS_ENV] ?? "")
+      .split(/[\s,;|]+/)
+      .map(normalizeCertificateThumbprint)
+      .filter(Boolean)
+  )
+}
+
+async function collectCurrentWindowsSignerThumbprints() {
+  const thumbprints = collectConfiguredWindowsSignerThumbprints()
+
+  if (!app.isPackaged || !existsSync(process.execPath)) {
+    return thumbprints
+  }
+
+  const currentSignature = await readAuthenticodeSignature(process.execPath)
+  const currentStatus = Number(currentSignature?.Status)
+
+  if (
+    currentStatus !== 0 &&
+    !signatureHasRecoverableChainError(currentSignature)
+  ) {
+    return thumbprints
+  }
+
+  const currentThumbprint = normalizeCertificateThumbprint(
+    readSignerCertificate(currentSignature)?.Thumbprint
+  )
+
+  if (currentThumbprint) {
+    thumbprints.add(currentThumbprint)
+  }
+
+  return thumbprints
+}
+
+async function verifyWindowsUpdateSignatureFallback(
+  publisherNames,
+  updateFilePath,
+  defaultFailure
+) {
+  if (process.platform !== "win32") {
+    return defaultFailure
+  }
+
+  const updateSignature = await readAuthenticodeSignature(updateFilePath)
+
+  if (
+    !signatureHasRecoverableChainError(updateSignature, defaultFailure) ||
+    !signaturePathMatches(updateSignature, updateFilePath)
+  ) {
+    return defaultFailure
+  }
+
+  const updateSigner = readSignerCertificate(updateSignature)
+  const updateThumbprint = normalizeCertificateThumbprint(
+    updateSigner?.Thumbprint
+  )
+
+  if (
+    !updateThumbprint ||
+    !publisherMatchesSigner(publisherNames, updateSigner)
+  ) {
+    return defaultFailure
+  }
+
+  const trustedThumbprints = await collectCurrentWindowsSignerThumbprints()
+
+  if (!trustedThumbprints.has(updateThumbprint)) {
+    return defaultFailure
+  }
+
+  console.warn(
+    "Accepted Windows update signature with matching signer thumbprint after Windows reported an incomplete certificate chain.",
+    { path: updateFilePath, thumbprint: updateThumbprint }
+  )
+
+  return null
+}
+
+function configureWindowsUpdateSignatureVerification(updater) {
+  if (
+    process.platform !== "win32" ||
+    updater.__astraflowSignatureVerifierConfigured
+  ) {
+    return
+  }
+
+  const defaultVerifier = updater.verifyUpdateCodeSignature
+
+  if (typeof defaultVerifier !== "function") {
+    return
+  }
+
+  updater.verifyUpdateCodeSignature = async (
+    publisherNames,
+    updateFilePath
+  ) => {
+    const defaultFailure = await defaultVerifier(publisherNames, updateFilePath)
+
+    if (defaultFailure == null) {
+      return null
+    }
+
+    try {
+      return await verifyWindowsUpdateSignatureFallback(
+        publisherNames,
+        updateFilePath,
+        defaultFailure
+      )
+    } catch (error) {
+      console.warn("Windows update signature fallback failed.", error)
+      return defaultFailure
+    }
+  }
+  updater.__astraflowSignatureVerifierConfigured = true
+}
+
+function normalizeUpdateError(error) {
+  const message = error instanceof Error ? error.message : String(error)
+
+  if (WINDOWS_SIGNATURE_CHAIN_ERROR_PATTERN.test(message)) {
+    return new Error(
+      "Windows could not verify the AstraFlow installer certificate chain. Please install the latest Windows root certificates or use the release page installer for this version."
+    )
+  }
+
+  return error instanceof Error ? error : new Error(message)
+}
+
 function getAutoUpdater() {
   if (autoUpdater) {
     return autoUpdater
@@ -408,6 +664,7 @@ function getAutoUpdater() {
   autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = false
   autoUpdater.allowPrerelease = false
+  configureWindowsUpdateSignatureVerification(autoUpdater)
 
   autoUpdater.on("error", (error) => {
     console.error("Auto update failed.", error)
@@ -453,7 +710,7 @@ function installUpdateNow() {
     }
 
     function onError(error) {
-      settle(error instanceof Error ? error : new Error(String(error)))
+      settle(normalizeUpdateError(error))
     }
 
     function onUpdateNotAvailable() {

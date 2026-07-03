@@ -105,6 +105,26 @@ jobs:
         if: runner.os != 'Linux'
         run: bun run electron:smoke
 
+      - name: Verify Windows code signature
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installers = @(Get-ChildItem -Path "dist/electron" -Filter "*.exe" -File)
+
+          if ($installers.Count -eq 0) {
+            throw "No Windows installers found."
+          }
+
+          foreach ($installer in $installers) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $installer.FullName
+
+            if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
+              $signature | Format-List * | Out-String | Write-Host
+              throw "Invalid Authenticode signature for $($installer.Name): $($signature.StatusMessage)"
+            }
+          }
+
       - name: Smoke test packaged app
         if: runner.os == 'Linux'
         run: xvfb-run -a bun run electron:smoke

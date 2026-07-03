@@ -10,7 +10,7 @@ export default async function LoginPage() {
   const auth = await getAppAuthState()
 
   if (auth.authenticated) {
-    redirect("/explore")
+    redirect("/studio")
   }
 
   return (
