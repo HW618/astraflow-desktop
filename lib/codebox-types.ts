@@ -10,6 +10,9 @@ export type CodeBoxSandboxStatus = "running" | "paused" | "unknown"
 export type CodeBoxSandbox = {
   sandboxId: string
   name: string | null
+  ownerKey: string | null
+  companyId: string | null
+  projectId: string | null
   template: string
   status: CodeBoxSandboxStatus
   volumeId: string | null
@@ -25,6 +28,46 @@ export type CodeBoxSandbox = {
   createdAt: string
   updatedAt: string
   lastUsedAt: string
+}
+
+export type CodeBoxDirectoryEntry = {
+  name: string
+  path: string
+}
+
+export type CodeBoxDirectoryList = {
+  path: string
+  parentPath: string | null
+  directories: CodeBoxDirectoryEntry[]
+}
+
+export type CodeBoxSshAccess = {
+  sandboxId: string
+  user: string
+  hostAlias: string
+  hostName: string
+  workspacePath: string
+  webSocketUrl: string
+  sshConfig: string
+  sshCommand: string
+  vscodeUri: string
+  password: string | null
+}
+
+export type CodeBoxLocalPlatform =
+  | "darwin"
+  | "linux"
+  | "freebsd"
+  | "win32"
+  | "unknown"
+
+export type CodeBoxLocalDependencyStatus = {
+  platform: CodeBoxLocalPlatform
+  websocat: {
+    installed: boolean
+    path: string | null
+    version: string | null
+  }
 }
 
 export type CodeBoxGithubStatus = {

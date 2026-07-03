@@ -24,7 +24,12 @@ import {
   updateCodeBoxSandboxNameRecord,
   upsertCodeBoxSandboxRecord,
 } from "@/lib/studio-db"
-import type { CodeBoxSandbox, CodeBoxSandboxStatus } from "@/lib/codebox-types"
+import type {
+  CodeBoxDirectoryList,
+  CodeBoxSandbox,
+  CodeBoxSandboxStatus,
+  CodeBoxSshAccess,
+} from "@/lib/codebox-types"
 
 const ASTRAFLOW_CODE_SANDBOX_DEFAULT_TEMPLATE = "yeyb5hbs2kweus6ku07l"
 export const ASTRAFLOW_CODE_SANDBOX_TEMPLATE =
@@ -33,8 +38,8 @@ export const ASTRAFLOW_CODE_SANDBOX_TEMPLATE =
   process.env.E2B_CODE_TEMPLATE?.trim() ||
   ASTRAFLOW_CODE_SANDBOX_DEFAULT_TEMPLATE
 export const CODEBOX_CODE_SERVER_PORT = 8080
+export const CODEBOX_SSH_WEBSOCKET_PORT = 8081
 export const CODEBOX_WORKSPACE_PATH = "/root/workspace"
-const CODEBOX_CODE_SERVER_OPEN_PATH = CODEBOX_WORKSPACE_PATH
 export const CODEBOX_INSTALLED_CLI = [
   "Claude Code",
   "Codex",
@@ -56,14 +61,19 @@ const CODEBOX_APP_METADATA = "astraflow-codebox"
 const CODEBOX_MODELVERSE_ANTHROPIC_BASE_URL = MODELVERSE_BASE_URL_V1
 const CODEBOX_OPENCODE_PROVIDER_ID = "modelverse"
 const CODEBOX_OPENCODE_MODEL = "glm-5.2"
+const CODEBOX_SSH_USER = "root"
+const CODEBOX_SSH_PROXY_BUFFER_SIZE = 65_536
 
 type SandboxConnectionOptions = ReturnType<
   typeof getAstraFlowSandboxConnectionOptions
 >
 
+const CODEBOX_UNKNOWN_COMPANY = "unknown-company"
+
 type CodeBoxOwner = {
   ownerKey: string
   ownerEmail: string | null
+  companyId: string
   projectId: string
 }
 
@@ -77,16 +87,24 @@ function requireModelverseApiKey() {
   return apiKey
 }
 
+function buildOwnerKey(companyId: string, projectId: string) {
+  return `${companyId || CODEBOX_UNKNOWN_COMPANY}:${projectId}`
+}
+
 function getCodeBoxOwner(): CodeBoxOwner {
   const apiKey = requireModelverseApiKey()
   const oauth = getStudioOAuthTokens()
   const ownerEmail = oauth?.email?.trim() || null
+  // The Modelverse API key is scoped to a single company account, so the
+  // authenticated email is our stable per-company identity. A sandbox created
+  // under one company + project must never surface under another.
+  const companyId = ownerEmail ?? CODEBOX_UNKNOWN_COMPANY
   const projectId = apiKey.projectId.trim()
-  const ownerKey = `${ownerEmail ?? "unknown-account"}:${projectId}`
 
   return {
-    ownerKey,
+    ownerKey: buildOwnerKey(companyId, projectId),
     ownerEmail,
+    companyId,
     projectId,
   }
 }
@@ -99,8 +117,34 @@ function withCodeBoxOwner<T extends Record<string, unknown>>(
     ...input,
     ownerKey: owner.ownerKey,
     ownerEmail: owner.ownerEmail,
+    companyId: owner.companyId,
     projectId: owner.projectId,
   }
+}
+
+// Reconstruct the owner identity a remote sandbox was created under so that
+// sandboxes from other companies/projects are excluded from the current view.
+// Prefer the metadata written at creation time; fall back to the locally
+// stored record for sandboxes created before owner metadata was tracked.
+function resolveSandboxOwnerKey(
+  info: SandboxInfo,
+  fallbackOwnerKey: string | null
+): string | null {
+  const metadata = info.metadata ?? {}
+  const metadataOwnerKey = metadata.ownerKey?.trim()
+
+  if (metadataOwnerKey) {
+    return metadataOwnerKey
+  }
+
+  const metadataCompanyId = metadata.companyId?.trim()
+  const metadataProjectId = metadata.projectId?.trim()
+
+  if (metadataCompanyId || metadataProjectId) {
+    return buildOwnerKey(metadataCompanyId ?? "", metadataProjectId ?? "")
+  }
+
+  return fallbackOwnerKey
 }
 
 function getConnectionOptions(): SandboxConnectionOptions {
@@ -130,14 +174,64 @@ function getCodeServerHost(
   return `${CODEBOX_CODE_SERVER_PORT}-${sandboxId}.${sandboxDomain}`
 }
 
-function getCodeServerUrl(host: string) {
+function getCodeServerUrl(host: string, workspacePath = CODEBOX_WORKSPACE_PATH) {
   const scheme = host.includes("localhost") ? "http" : "https"
 
-  return `${scheme}://${host}/?folder=${encodeURIComponent(CODEBOX_CODE_SERVER_OPEN_PATH)}`
+  return `${scheme}://${host}/?folder=${encodeURIComponent(workspacePath)}`
+}
+
+function getWebSocketUrl(host: string) {
+  const scheme =
+    host.includes("localhost") || host.startsWith("127.0.0.1") ? "ws" : "wss"
+
+  return `${scheme}://${host}`
+}
+
+function getCodeBoxSshHostAlias(sandboxId: string) {
+  return `astraflow-codebox-${sandboxId.replace(/[^a-zA-Z0-9-]/g, "-")}`
+}
+
+function encodeVscodePath(path: string) {
+  return path.split("/").map(encodeURIComponent).join("/")
+}
+
+function getVscodeRemoteSshUri(hostAlias: string, workspacePath: string) {
+  return `vscode://vscode-remote/ssh-remote+${encodeURIComponent(
+    hostAlias
+  )}${encodeVscodePath(workspacePath)}`
 }
 
 function shellQuote(value: string) {
   return `'${value.replaceAll("'", "'\\''")}'`
+}
+
+function normalizeCodeBoxWorkspacePath(value: string | null | undefined) {
+  const trimmed = value?.trim() || CODEBOX_WORKSPACE_PATH
+
+  if (!trimmed.startsWith("/") || trimmed.includes("\0")) {
+    throw new Error("Workspace directory must be an absolute path.")
+  }
+
+  const parts: string[] = []
+
+  for (const part of trimmed.split("/")) {
+    if (!part || part === ".") {
+      continue
+    }
+
+    if (part === "..") {
+      if (!parts.length) {
+        throw new Error("Workspace directory cannot escape root.")
+      }
+
+      parts.pop()
+      continue
+    }
+
+    parts.push(part)
+  }
+
+  return `/${parts.join("/")}` || "/"
 }
 
 function getInjectedEnvironment() {
@@ -201,6 +295,9 @@ function mergeSandboxRecord(
   return {
     sandboxId: info.sandboxId,
     name: existing?.name ?? info.metadata.name ?? info.name ?? null,
+    ownerKey: owner.ownerKey,
+    companyId: owner.companyId,
+    projectId: owner.projectId,
     template: info.templateId,
     status: normalizeSandboxStatus(info.state),
     volumeId: existing?.volumeId ?? null,
@@ -560,8 +657,15 @@ export async function listCodeBoxSandboxes({
       sandbox,
     ])
   )
+  // E2B scopes Sandbox.list to the whole account (shared across companies and
+  // projects), so keep only the sandboxes created under the current owner.
+  const ownedRemote = remote.filter(
+    (info) =>
+      resolveSandboxOwnerKey(info, localById.get(info.sandboxId)?.ownerKey ?? null) ===
+      owner.ownerKey
+  )
 
-  for (const info of remote) {
+  for (const info of ownedRemote) {
     const merged = mergeSandboxRecord(info, owner)
     upsertCodeBoxSandboxRecord(
       withCodeBoxOwner(owner, {
@@ -598,9 +702,215 @@ export async function listCodeBoxSandboxes({
   })
 
   return [
-    ...remote.map((info) => mergeSandboxRecord(info, owner)),
+    ...ownedRemote.map((info) => mergeSandboxRecord(info, owner)),
     ...(state === "all" ? staleLocalSandboxes : []),
   ].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+}
+
+export async function listCodeBoxSandboxDirectories({
+  path,
+  sandboxId,
+}: {
+  path?: string | null
+  sandboxId: string
+}): Promise<CodeBoxDirectoryList> {
+  const owner = getCodeBoxOwner()
+  const existing = getCodeBoxSandboxRecord(sandboxId, owner.ownerKey)
+
+  if (!existing) {
+    throw new Error("Sandbox was not found.")
+  }
+
+  const normalizedPath = normalizeCodeBoxWorkspacePath(path)
+  const sandbox = await Sandbox.connect(sandboxId, {
+    ...getConnectionOptions(),
+    timeoutMs: CODEBOX_AUTO_PAUSE_TIMEOUT_MS,
+  })
+  const script = [
+    `target=${shellQuote(normalizedPath)}`,
+    "node -e " +
+      shellQuote(
+        [
+          "const fs = require('fs');",
+          "const path = require('path').posix;",
+          "const target = process.argv[1];",
+          "const stat = fs.statSync(target);",
+          "if (!stat.isDirectory()) {",
+          "  process.stderr.write('Not a directory');",
+          "  process.exit(66);",
+          "}",
+          "const directories = fs.readdirSync(target, { withFileTypes: true })",
+          "  .filter((entry) => entry.isDirectory())",
+          "  .map((entry) => ({ name: entry.name, path: path.join(target, entry.name) }))",
+          "  .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));",
+          "console.log(JSON.stringify({",
+          "  path: target,",
+          "  parentPath: target === '/' ? null : path.dirname(target),",
+          "  directories,",
+          "}));",
+        ].join("\n")
+      ) +
+      ' "$target"',
+  ].join("\n")
+  const result = await runChecked(
+    sandbox,
+    `bash -lc ${shellQuote(script)}`,
+    "list workspace directories",
+    20_000
+  )
+
+  touchCodeBoxSandboxRecord(sandboxId, "running", owner.ownerKey)
+
+  try {
+    const parsed = JSON.parse(result.stdout) as CodeBoxDirectoryList
+
+    return {
+      path: parsed.path,
+      parentPath: parsed.parentPath,
+      directories: Array.isArray(parsed.directories)
+        ? parsed.directories.map((directory) => ({
+            name: directory.name,
+            path: directory.path,
+          }))
+        : [],
+    }
+  } catch {
+    throw new Error("Failed to read workspace directory list.")
+  }
+}
+
+async function ensureCodeBoxSshProxy(sandbox: Sandbox, password: string) {
+  const script = [
+    "set -euo pipefail",
+    "export DEBIAN_FRONTEND=noninteractive",
+    "if [ ! -x /usr/sbin/sshd ] || ! command -v curl >/dev/null 2>&1; then",
+    "  apt-get update",
+    "  apt-get install -y openssh-server curl ca-certificates",
+    "fi",
+    "if [ ! -x /usr/local/bin/websocat ]; then",
+    "  curl -fsSL -o /usr/local/bin/websocat https://github.com/vi/websocat/releases/latest/download/websocat.x86_64-unknown-linux-musl",
+    "  chmod a+x /usr/local/bin/websocat",
+    "fi",
+    "mkdir -p /run/sshd /etc/ssh/sshd_config.d",
+    "cat > /etc/ssh/sshd_config.d/astraflow-codebox.conf <<'EOF'",
+    "PermitRootLogin yes",
+    "PasswordAuthentication yes",
+    "KbdInteractiveAuthentication yes",
+    "PubkeyAuthentication yes",
+    "UsePAM yes",
+    "EOF",
+    `printf '%s:%s\\n' ${shellQuote(CODEBOX_SSH_USER)} ${shellQuote(
+      password
+    )} | chpasswd`,
+    "ssh-keygen -A >/dev/null 2>&1 || true",
+    "/usr/sbin/sshd -t",
+    "if pgrep -x sshd >/dev/null 2>&1; then",
+    "  pkill -HUP -x sshd >/dev/null 2>&1 || true",
+    "else",
+    "  /usr/sbin/sshd",
+    "fi",
+    `if ! pgrep -f '[w]ebsocat .*ws-l:0.0.0.0:${CODEBOX_SSH_WEBSOCKET_PORT}' >/dev/null 2>&1; then`,
+    `  nohup /usr/local/bin/websocat -b --exit-on-eof ws-l:0.0.0.0:${CODEBOX_SSH_WEBSOCKET_PORT} tcp:127.0.0.1:22 >/tmp/astraflow-ssh-websocat.log 2>&1 &`,
+    "fi",
+    `for port in 22 ${CODEBOX_SSH_WEBSOCKET_PORT}; do`,
+    "  ready=0",
+    "  for _ in $(seq 1 30); do",
+    '    if timeout 1 bash -c ":</dev/tcp/127.0.0.1/$port" >/dev/null 2>&1; then',
+    "      ready=1",
+    "      break",
+    "    fi",
+    "    sleep 0.5",
+    "  done",
+    '  if [ "$ready" != "1" ]; then',
+    '    echo "port $port did not become ready" >&2',
+    "    exit 1",
+    "  fi",
+    "done",
+  ].join("\n")
+
+  await runChecked(
+    sandbox,
+    `bash -lc ${shellQuote(script)}`,
+    "prepare SSH access",
+    180_000
+  )
+}
+
+export async function prepareCodeBoxSshAccess({
+  sandboxId,
+  workspacePath,
+}: {
+  sandboxId: string
+  workspacePath?: string | null
+}): Promise<CodeBoxSshAccess> {
+  const owner = getCodeBoxOwner()
+  const existing = getCodeBoxSandboxRecord(sandboxId, owner.ownerKey)
+
+  if (!existing) {
+    throw new Error("Sandbox was not found.")
+  }
+
+  const normalizedWorkspacePath = normalizeCodeBoxWorkspacePath(
+    workspacePath || existing.workspacePath
+  )
+  const password = existing.password || randomBytes(12).toString("hex")
+  const sandbox = await Sandbox.connect(sandboxId, {
+    ...getConnectionOptions(),
+    timeoutMs: CODEBOX_AUTO_PAUSE_TIMEOUT_MS,
+  })
+
+  await ensureCodeBoxSshProxy(sandbox, password)
+
+  const webSocketUrl = getWebSocketUrl(
+    sandbox.getHost(CODEBOX_SSH_WEBSOCKET_PORT)
+  )
+  const hostAlias = getCodeBoxSshHostAlias(sandboxId)
+  const proxyCommand = `websocat --binary -B ${CODEBOX_SSH_PROXY_BUFFER_SIZE} - ${webSocketUrl}`
+  const sshConfig = [
+    `Host ${hostAlias}`,
+    `  HostName ${sandboxId}`,
+    `  User ${CODEBOX_SSH_USER}`,
+    `  ProxyCommand ${proxyCommand}`,
+    "  ServerAliveInterval 30",
+    "  ServerAliveCountMax 3",
+    "  StrictHostKeyChecking accept-new",
+    "",
+  ].join("\n")
+
+  upsertCodeBoxSandboxRecord(
+    withCodeBoxOwner(owner, {
+      sandboxId,
+      name: existing.name,
+      volumeId: existing.volumeId,
+      volumeName: existing.volumeName,
+      sandboxDomain: getSandboxDomain(),
+      template: existing.template,
+      status: "running",
+      codeServerUrl: existing.codeServerUrl,
+      codeServerHost: existing.codeServerHost,
+      codeServerPort: existing.codeServerPort,
+      password,
+      workspacePath: existing.workspacePath || CODEBOX_WORKSPACE_PATH,
+      repoUrl: existing.repoUrl,
+      startedAt: existing.startedAt,
+      endAt: existing.endAt,
+    })
+  )
+
+  return {
+    sandboxId,
+    user: CODEBOX_SSH_USER,
+    hostAlias,
+    hostName: sandboxId,
+    workspacePath: normalizedWorkspacePath,
+    webSocketUrl,
+    sshConfig,
+    sshCommand: `ssh -o ${shellQuote(
+      `ProxyCommand=${proxyCommand}`
+    )} ${CODEBOX_SSH_USER}@${sandboxId}`,
+    vscodeUri: getVscodeRemoteSshUri(hostAlias, normalizedWorkspacePath),
+    password,
+  }
 }
 
 export async function createCodeBoxSandbox({
@@ -616,6 +926,11 @@ export async function createCodeBoxSandbox({
   const metadata: Record<string, string> = {
     app: CODEBOX_APP_METADATA,
     codeServerPort: String(CODEBOX_CODE_SERVER_PORT),
+    // Tag the sandbox with its owner identity so the shared-account
+    // Sandbox.list can be scoped back to this company + project on read.
+    ownerKey: owner.ownerKey,
+    companyId: owner.companyId,
+    projectId: owner.projectId,
   }
   const normalizedRepoUrl = repoUrl?.trim()
   const normalizedName = name?.trim()

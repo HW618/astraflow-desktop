@@ -161,15 +161,13 @@ function createEmptyMcpForm(): McpManualFormState {
 }
 
 function getSkillGridClass(size: SkillCardSize, spacious = false) {
-  if (spacious) {
-    return size === "large"
-      ? "grid grid-cols-1 gap-4 xl:grid-cols-2"
-      : "grid grid-cols-1 gap-3 xl:grid-cols-2"
+  const gap = size === "large" || spacious ? "gap-4" : "gap-3"
+
+  if (size === "large") {
+    return `grid grid-cols-1 ${gap} md:grid-cols-2 2xl:grid-cols-3`
   }
 
-  return size === "large"
-    ? "grid grid-cols-1 gap-4 xl:grid-cols-2"
-    : "grid grid-cols-1 gap-3 xl:grid-cols-2"
+  return `grid grid-cols-1 ${gap} sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4`
 }
 
 function getLocaleTag(locale: string) {
@@ -696,7 +694,39 @@ async function importSkillCandidatePaths(sourcePaths: string[]) {
   return payload.data
 }
 
-async function importSkillFolderFiles(fileList: FileList) {
+async function parseSkillFolderFiles(fileList: FileList) {
+  const formData = new FormData()
+
+  formData.append("mode", "parse")
+
+  for (const file of Array.from(fileList)) {
+    const relativePath =
+      (file as File & { webkitRelativePath?: string }).webkitRelativePath ||
+      file.name
+
+    formData.append("files", file)
+    formData.append("paths", relativePath)
+  }
+
+  const response = await fetch("/api/skills/import", {
+    method: "POST",
+    body: formData,
+  })
+  throwIfUnauthorized(response)
+
+  const payload = (await response.json()) as SkillImportCandidatesApiResponse
+
+  if (!response.ok || !payload.ok) {
+    throw new Error((!payload.ok && payload.message) || "Request failed")
+  }
+
+  return payload.data
+}
+
+async function importSkillFolderFiles(
+  fileList: FileList,
+  selectedPaths?: string[]
+) {
   const formData = new FormData()
 
   for (const file of Array.from(fileList)) {
@@ -706,6 +736,10 @@ async function importSkillFolderFiles(fileList: FileList) {
 
     formData.append("files", file)
     formData.append("paths", relativePath)
+  }
+
+  for (const selectedPath of selectedPaths ?? []) {
+    formData.append("selectedPaths", selectedPath)
   }
 
   const response = await fetch("/api/skills/import", {
@@ -1905,14 +1939,44 @@ function SkillDetailDialog({
   )
 }
 
-function SkillImportItem({ item }: { item: SkillImportCandidate }) {
+function SkillImportItem({
+  item,
+  selected,
+  onToggle,
+}: {
+  item: SkillImportCandidate
+  selected: boolean
+  onToggle: (sourcePath: string) => void
+}) {
   return (
-    <div className="rounded-2xl border bg-background px-3 py-2">
+    <button
+      type="button"
+      onClick={() => onToggle(item.sourcePath)}
+      aria-pressed={selected}
+      className={cn(
+        "flex w-full flex-col rounded-2xl border bg-background px-3 py-2 text-left transition-colors",
+        selected
+          ? "border-primary ring-1 ring-primary"
+          : "hover:border-muted-foreground/40"
+      )}
+    >
       <div className="flex min-w-0 items-center justify-between gap-3">
-        <div className="min-w-0">
-          <div className="truncate text-sm font-medium">{item.name}</div>
-          <div className="truncate text-xs text-muted-foreground">
-            {item.slug}
+        <div className="flex min-w-0 items-center gap-2">
+          <span
+            className={cn(
+              "flex size-4 shrink-0 items-center justify-center rounded-[6px] border",
+              selected
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-muted-foreground/40"
+            )}
+          >
+            {selected ? <RiCheckLine className="size-3" aria-hidden /> : null}
+          </span>
+          <div className="min-w-0">
+            <div className="truncate text-sm font-medium">{item.name}</div>
+            <div className="truncate text-xs text-muted-foreground">
+              {item.slug}
+            </div>
           </div>
         </div>
         <Badge variant="secondary" className="shrink-0">
@@ -1925,27 +1989,38 @@ function SkillImportItem({ item }: { item: SkillImportCandidate }) {
       <p className="mt-2 truncate text-[11px] text-muted-foreground">
         {item.sourcePath}
       </p>
-    </div>
+    </button>
   )
 }
 
 function SkillImportDialog({
   busy,
   data,
-  onImportAll,
+  onImportSelected,
   onOpenChange,
+  onToggleAll,
+  onToggleCandidate,
   open,
+  selected,
 }: {
   busy: boolean
   data: SkillImportScanData | null
-  onImportAll: () => void
+  onImportSelected: () => void
   onOpenChange: (open: boolean) => void
+  onToggleAll: () => void
+  onToggleCandidate: (sourcePath: string) => void
   open: boolean
+  selected: Set<string>
 }) {
   const { t } = useI18n()
   const candidates = data?.candidates ?? []
   const duplicates = data?.duplicates ?? []
   const invalid = data?.invalid ?? []
+  const selectedCount = candidates.filter((candidate) =>
+    selected.has(candidate.sourcePath)
+  ).length
+  const allSelected =
+    candidates.length > 0 && selectedCount >= candidates.length
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1960,12 +2035,36 @@ function SkillImportDialog({
             <section className="flex flex-col gap-2">
               <div className="flex items-center justify-between gap-3 text-sm font-medium">
                 <span>{t.skillImportCandidates}</span>
-                <Badge variant="secondary">{candidates.length}</Badge>
+                <div className="flex items-center gap-2">
+                  {candidates.length > 0 ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      onClick={onToggleAll}
+                    >
+                      {allSelected
+                        ? t.skillImportDeselectAll
+                        : t.skillImportSelectAll}
+                    </Button>
+                  ) : null}
+                  <Badge variant="secondary">
+                    {candidates.length > 0
+                      ? `${selectedCount}/${candidates.length}`
+                      : candidates.length}
+                  </Badge>
+                </div>
               </div>
               {candidates.length > 0 ? (
                 <div className="grid gap-2 sm:grid-cols-2">
                   {candidates.map((item) => (
-                    <SkillImportItem key={item.sourcePath} item={item} />
+                    <SkillImportItem
+                      key={item.sourcePath}
+                      item={item}
+                      selected={selected.has(item.sourcePath)}
+                      onToggle={onToggleCandidate}
+                    />
                   ))}
                 </div>
               ) : (
@@ -2038,11 +2137,13 @@ function SkillImportDialog({
           </Button>
           <Button
             type="button"
-            disabled={busy || candidates.length === 0}
-            onClick={onImportAll}
+            disabled={busy || selectedCount === 0}
+            onClick={onImportSelected}
           >
             <RiDownloadLine aria-hidden />
-            {busy ? t.skillImporting : t.skillImportAll}
+            {busy
+              ? t.skillImporting
+              : t.skillImportSelected(selectedCount)}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -2102,6 +2203,14 @@ function SkillsMarketPage({
   const [skillImportOpen, setSkillImportOpen] = React.useState(false)
   const [skillImportData, setSkillImportData] =
     React.useState<SkillImportScanData | null>(null)
+  const [skillImportSource, setSkillImportSource] = React.useState<
+    "local" | "upload"
+  >("local")
+  const [skillImportFiles, setSkillImportFiles] =
+    React.useState<FileList | null>(null)
+  const [skillImportSelected, setSkillImportSelected] = React.useState<
+    Set<string>
+  >(() => new Set())
   const [skillImportScanning, setSkillImportScanning] = React.useState(false)
   const [skillImporting, setSkillImporting] = React.useState(false)
   const directoryInputRef = React.useRef<HTMLInputElement | null>(null)
@@ -2532,7 +2641,12 @@ function SkillsMarketPage({
 
     try {
       const data = await fetchSkillImportCandidates()
+      setSkillImportSource("local")
+      setSkillImportFiles(null)
       setSkillImportData(data)
+      setSkillImportSelected(
+        new Set(data.candidates.map((candidate) => candidate.sourcePath))
+      )
       setSkillImportOpen(true)
     } catch (scanError) {
       if (redirectToLoginIfNeeded(scanError)) {
@@ -2545,12 +2659,42 @@ function SkillsMarketPage({
     }
   }, [redirectToLoginIfNeeded, t.requestFailed])
 
-  const handleImportScannedSkills = React.useCallback(async () => {
-    const sourcePaths = skillImportData?.candidates.map(
-      (candidate) => candidate.sourcePath
-    )
+  const handleToggleImportCandidate = React.useCallback(
+    (sourcePath: string) => {
+      setSkillImportSelected((current) => {
+        const next = new Set(current)
 
-    if (!sourcePaths?.length) {
+        if (next.has(sourcePath)) {
+          next.delete(sourcePath)
+        } else {
+          next.add(sourcePath)
+        }
+
+        return next
+      })
+    },
+    []
+  )
+
+  const handleToggleAllImportCandidates = React.useCallback(() => {
+    setSkillImportSelected((current) => {
+      const candidates = skillImportData?.candidates ?? []
+
+      if (current.size >= candidates.length && candidates.length > 0) {
+        return new Set()
+      }
+
+      return new Set(candidates.map((candidate) => candidate.sourcePath))
+    })
+  }, [skillImportData])
+
+  const handleImportSelectedSkills = React.useCallback(async () => {
+    const candidates = skillImportData?.candidates ?? []
+    const selectedPaths = candidates
+      .map((candidate) => candidate.sourcePath)
+      .filter((sourcePath) => skillImportSelected.has(sourcePath))
+
+    if (!selectedPaths.length) {
       return
     }
 
@@ -2558,24 +2702,53 @@ function SkillsMarketPage({
     setError("")
 
     try {
-      const result = await importSkillCandidatePaths(sourcePaths)
+      const result =
+        skillImportSource === "upload"
+          ? skillImportFiles
+            ? await importSkillFolderFiles(skillImportFiles, selectedPaths)
+            : null
+          : await importSkillCandidatePaths(selectedPaths)
+
+      if (!result) {
+        return
+      }
+
       applySkillImportResult(result)
-      setSkillImportOpen(false)
+
+      const importedPaths = new Set(selectedPaths)
+
       setSkillImportData((current) =>
         current
           ? {
               ...current,
-              candidates: [],
+              candidates: current.candidates.filter(
+                (candidate) => !importedPaths.has(candidate.sourcePath)
+              ),
               duplicates: [
                 ...current.duplicates,
-                ...current.candidates.map((candidate) => ({
-                  ...candidate,
-                  alreadyInstalled: true,
-                })),
+                ...current.candidates
+                  .filter((candidate) => importedPaths.has(candidate.sourcePath))
+                  .map((candidate) => ({
+                    ...candidate,
+                    alreadyInstalled: true,
+                  })),
               ],
             }
           : current
       )
+      setSkillImportSelected((current) => {
+        const next = new Set(current)
+
+        for (const sourcePath of importedPaths) {
+          next.delete(sourcePath)
+        }
+
+        return next
+      })
+
+      if (selectedPaths.length >= candidates.length) {
+        setSkillImportOpen(false)
+      }
     } catch (importError) {
       if (redirectToLoginIfNeeded(importError)) {
         return
@@ -2591,6 +2764,9 @@ function SkillsMarketPage({
     applySkillImportResult,
     redirectToLoginIfNeeded,
     skillImportData,
+    skillImportFiles,
+    skillImportSelected,
+    skillImportSource,
     t.requestFailed,
   ])
 
@@ -2608,12 +2784,18 @@ function SkillsMarketPage({
         return
       }
 
-      setSkillImporting(true)
+      setSkillImportScanning(true)
       setError("")
 
       try {
-        const result = await importSkillFolderFiles(files)
-        applySkillImportResult(result)
+        const data = await parseSkillFolderFiles(files)
+        setSkillImportSource("upload")
+        setSkillImportFiles(files)
+        setSkillImportData(data)
+        setSkillImportSelected(
+          new Set(data.candidates.map((candidate) => candidate.sourcePath))
+        )
+        setSkillImportOpen(true)
       } catch (importError) {
         if (redirectToLoginIfNeeded(importError)) {
           return
@@ -2623,10 +2805,10 @@ function SkillsMarketPage({
           importError instanceof Error ? importError.message : t.requestFailed
         )
       } finally {
-        setSkillImporting(false)
+        setSkillImportScanning(false)
       }
     },
-    [applySkillImportResult, redirectToLoginIfNeeded, t.requestFailed]
+    [redirectToLoginIfNeeded, t.requestFailed]
   )
 
   const handleInstallSkill = React.useCallback(
@@ -3493,7 +3675,10 @@ function SkillsMarketPage({
         onOpenChange={setSkillImportOpen}
         data={skillImportData}
         busy={skillImporting}
-        onImportAll={handleImportScannedSkills}
+        selected={skillImportSelected}
+        onToggleCandidate={handleToggleImportCandidate}
+        onToggleAll={handleToggleAllImportCandidates}
+        onImportSelected={handleImportSelectedSkills}
       />
       <SkillDetailDialog
         open={detailOpen}

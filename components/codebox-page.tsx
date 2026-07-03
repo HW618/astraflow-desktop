@@ -3,12 +3,14 @@
 import * as React from "react"
 import {
   RiArrowRightUpLine,
+  RiArrowUpLine,
   RiCheckLine,
   RiCloseLine,
   RiCodeBoxLine,
   RiDeleteBin6Line,
   RiEditLine,
   RiFileCopyLine,
+  RiFolderLine,
   RiGithubLine,
   RiInformationLine,
   RiLoader4Line,
@@ -42,8 +44,11 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import type {
+  CodeBoxDirectoryList,
   CodeBoxGithubStatus,
+  CodeBoxLocalDependencyStatus,
   CodeBoxSandbox,
+  CodeBoxSshAccess,
   CodeBoxStatus,
 } from "@/lib/codebox-types"
 import { UCLOUD_PROJECT_CHANGED_EVENT } from "@/lib/project-selection"
@@ -105,6 +110,24 @@ type ConfirmAction =
       kind: "sandbox"
       sandbox: CodeBoxSandbox
     }
+
+const DEFAULT_CODEBOX_WORKSPACE_PATH = "/root/workspace"
+
+function VSCodeIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      className={cn("shrink-0 text-[#007acc]", className)}
+      fill="none"
+    >
+      <path
+        fill="currentColor"
+        d="M18.2 3.2 9.35 10.05 4.6 6.45 2.25 7.85 6.95 12l-4.7 4.15 2.35 1.4 4.75-3.6 8.85 6.85c1.05.8 2.55.05 2.55-1.25V4.45c0-1.3-1.5-2.05-2.55-1.25Zm-.45 4.3v9L11.95 12l5.8-4.5Z"
+      />
+    </svg>
+  )
+}
 
 async function apiRequest<T>(
   url: string,
@@ -169,6 +192,56 @@ function getRepoName(repoUrl: string) {
   } catch {
     return repoUrl.replace(/\.git$/i, "")
   }
+}
+
+function normalizeWorkspaceDirectoryPath(path: string) {
+  const trimmed = path.trim()
+
+  if (!trimmed) {
+    throw new Error("Workspace directory is required.")
+  }
+
+  if (!trimmed.startsWith("/")) {
+    throw new Error("Workspace directory must be an absolute path.")
+  }
+
+  if (trimmed.includes("\0")) {
+    throw new Error("Workspace directory contains an invalid character.")
+  }
+
+  const parts: string[] = []
+
+  for (const part of trimmed.split("/")) {
+    if (!part || part === ".") {
+      continue
+    }
+
+    if (part === "..") {
+      if (parts.length === 0) {
+        throw new Error("Workspace directory cannot escape root.")
+      }
+
+      parts.pop()
+      continue
+    }
+
+    parts.push(part)
+  }
+
+  return `/${parts.join("/")}` || "/"
+}
+
+function createWorkspaceUrl(sandbox: CodeBoxSandbox, workspacePath: string) {
+  const baseUrl = sandbox.codeServerUrl
+
+  if (!baseUrl) {
+    throw new Error("CodeBox URL is unavailable.")
+  }
+
+  const url = new URL(baseUrl)
+  url.searchParams.set("folder", workspacePath)
+
+  return url.toString()
 }
 
 function getSandboxStatusLabel(
@@ -286,6 +359,23 @@ function CodeBoxPage() {
   const [editingSandbox, setEditingSandbox] =
     React.useState<CodeBoxSandbox | null>(null)
   const [editingSandboxName, setEditingSandboxName] = React.useState("")
+  const [workspaceSandbox, setWorkspaceSandbox] =
+    React.useState<CodeBoxSandbox | null>(null)
+  const [workspacePath, setWorkspacePath] = React.useState(
+    DEFAULT_CODEBOX_WORKSPACE_PATH
+  )
+  const [sshSandbox, setSshSandbox] = React.useState<CodeBoxSandbox | null>(
+    null
+  )
+  const [sshAccess, setSshAccess] = React.useState<CodeBoxSshAccess | null>(
+    null
+  )
+  const [localDependencies, setLocalDependencies] =
+    React.useState<CodeBoxLocalDependencyStatus | null>(null)
+  const [sshError, setSshError] = React.useState<string | null>(null)
+  const [isSshPreparing, setIsSshPreparing] = React.useState(false)
+  const [isSshDependencyChecking, setIsSshDependencyChecking] =
+    React.useState(false)
 
   const showNotice = React.useCallback((message: string) => {
     toast.success(message)
@@ -570,6 +660,108 @@ function CodeBoxPage() {
   function openRenameSandbox(sandbox: CodeBoxSandbox) {
     setEditingSandbox(sandbox)
     setEditingSandboxName(sandbox.name ?? "")
+  }
+
+  function openWorkspaceDialog(sandbox: CodeBoxSandbox) {
+    setWorkspaceSandbox(sandbox)
+    setWorkspacePath(
+      sandbox.workspacePath ||
+        status?.workspacePath ||
+        DEFAULT_CODEBOX_WORKSPACE_PATH
+    )
+  }
+
+  function openSandboxWorkspace(path: string) {
+    const sandbox = workspaceSandbox
+
+    if (!sandbox) {
+      return
+    }
+
+    try {
+      const url = createWorkspaceUrl(sandbox, path)
+      const opened = window.open(url, "_blank", "noopener,noreferrer")
+
+      if (opened) {
+        opened.opener = null
+      }
+
+      setWorkspaceSandbox(null)
+      setWorkspacePath(DEFAULT_CODEBOX_WORKSPACE_PATH)
+    } catch {
+      setError(t.codeboxOpenFailed)
+    }
+  }
+
+  async function prepareSandboxVSCode(sandbox: CodeBoxSandbox) {
+    setSshSandbox(sandbox)
+    setSshAccess(null)
+    setLocalDependencies(null)
+    setSshError(null)
+    setIsSshDependencyChecking(true)
+
+    try {
+      const dependencies = await apiRequest<CodeBoxLocalDependencyStatus>(
+        "/api/codebox/local-dependencies",
+        undefined,
+        t.codeboxSshDependencyCheckFailed
+      )
+
+      setLocalDependencies(dependencies)
+
+      if (!dependencies.websocat.installed) {
+        return
+      }
+    } catch (dependencyError) {
+      setSshError(
+        dependencyError instanceof Error
+          ? dependencyError.message
+          : t.codeboxSshDependencyCheckFailed
+      )
+      return
+    } finally {
+      setIsSshDependencyChecking(false)
+    }
+
+    setIsSshPreparing(true)
+    try {
+      const access = await apiRequest<CodeBoxSshAccess>(
+        `/api/codebox/sandboxes/${encodeURIComponent(sandbox.sandboxId)}/ssh`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            workspacePath:
+              sandbox.workspacePath ||
+              status?.workspacePath ||
+              DEFAULT_CODEBOX_WORKSPACE_PATH,
+          }),
+        },
+        t.codeboxSshPrepareFailed
+      )
+
+      setSshAccess(access)
+      showNotice(t.codeboxSshReady)
+    } catch (sshPrepareError) {
+      setSshError(
+        sshPrepareError instanceof Error
+          ? sshPrepareError.message
+          : t.codeboxSshPrepareFailed
+      )
+    } finally {
+      setIsSshPreparing(false)
+    }
+  }
+
+  function openVSCode(access: CodeBoxSshAccess) {
+    const opened = window.open(
+      access.vscodeUri,
+      "_blank",
+      "noopener,noreferrer"
+    )
+
+    if (opened) {
+      opened.opener = null
+    }
   }
 
   async function saveSandboxName() {
@@ -903,9 +1095,15 @@ function CodeBoxPage() {
                         key={sandbox.sandboxId}
                         sandbox={sandbox}
                         busyAction={busyAction}
+                        sshBusy={
+                          (isSshPreparing || isSshDependencyChecking) &&
+                          sshSandbox?.sandboxId === sandbox.sandboxId
+                        }
                         onCopy={copyText}
                         onAction={handleSandboxAction}
                         onRename={openRenameSandbox}
+                        onOpenWorkspace={openWorkspaceDialog}
+                        onOpenVSCode={(item) => void prepareSandboxVSCode(item)}
                       />
                     ))
                   )}
@@ -950,6 +1148,45 @@ function CodeBoxPage() {
           }
         }}
         onSave={() => void saveSandboxName()}
+      />
+      <WorkspaceDirectoryDialog
+        key={workspaceSandbox?.sandboxId ?? "workspace-directory-dialog"}
+        sandbox={workspaceSandbox}
+        value={workspacePath}
+        defaultPath={status?.workspacePath || DEFAULT_CODEBOX_WORKSPACE_PATH}
+        onValueChange={setWorkspacePath}
+        onOpenChange={(open) => {
+          if (!open) {
+            setWorkspaceSandbox(null)
+            setWorkspacePath(DEFAULT_CODEBOX_WORKSPACE_PATH)
+          }
+        }}
+        onOpen={openSandboxWorkspace}
+      />
+      <OpenVSCodeDialog
+        sandbox={sshSandbox}
+        access={sshAccess}
+        localDependencies={localDependencies}
+        busy={isSshPreparing}
+        checkingDependencies={isSshDependencyChecking}
+        error={sshError}
+        onCopy={copyText}
+        onRetry={() => {
+          if (sshSandbox) {
+            void prepareSandboxVSCode(sshSandbox)
+          }
+        }}
+        onOpenVSCode={openVSCode}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSshSandbox(null)
+            setSshAccess(null)
+            setLocalDependencies(null)
+            setSshError(null)
+            setIsSshPreparing(false)
+            setIsSshDependencyChecking(false)
+          }
+        }}
       />
     </main>
   )
@@ -1010,18 +1247,24 @@ function Panel({
 function SandboxItem({
   sandbox,
   busyAction,
+  sshBusy,
   onCopy,
   onAction,
   onRename,
+  onOpenWorkspace,
+  onOpenVSCode,
 }: {
   sandbox: CodeBoxSandbox
   busyAction: string | null
+  sshBusy: boolean
   onCopy: (value: string | null | undefined) => Promise<boolean>
   onAction: (
     sandbox: CodeBoxSandbox,
     action: "pause" | "resume" | "kill"
   ) => Promise<void>
   onRename: (sandbox: CodeBoxSandbox) => void
+  onOpenWorkspace: (sandbox: CodeBoxSandbox) => void
+  onOpenVSCode: (sandbox: CodeBoxSandbox) => void
 }) {
   const { t } = useI18n()
   const statusLabel = getSandboxStatusLabel(sandbox.status, t)
@@ -1067,11 +1310,30 @@ function SandboxItem({
 
         <div className="flex flex-wrap gap-1">
           {(isRunning || isPaused) && sandbox.codeServerUrl ? (
-            <Button asChild size="sm">
-              <a href={sandbox.codeServerUrl} target="_blank" rel="noreferrer">
-                {t.codeboxOpen}
-                <RiArrowRightUpLine />
-              </a>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => onOpenWorkspace(sandbox)}
+            >
+              {t.codeboxOpen}
+              <RiArrowRightUpLine />
+            </Button>
+          ) : null}
+          {isRunning || isPaused ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => onOpenVSCode(sandbox)}
+              disabled={sshBusy}
+              aria-label={t.codeboxOpenVSCodeAria}
+            >
+              {sshBusy ? (
+                <RiLoader4Line className="animate-spin" />
+              ) : (
+                <VSCodeIcon className="size-4" />
+              )}
+              {t.codeboxOpenVSCode}
             </Button>
           ) : null}
           {isRunning ? (
@@ -1455,6 +1717,675 @@ function RenameSandboxDialog({
             <Button type="submit" disabled={busy}>
               {busy ? <RiLoader4Line className="animate-spin" /> : <RiCheckLine />}
               {t.studioSave}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+type WebsocatInstallOption = {
+  key: string
+  label: string
+  value: string
+  note: string
+}
+
+type WebsocatInstallTabKey =
+  | "linux"
+  | "darwin"
+  | "freebsd"
+  | "source"
+  | "prebuilt"
+
+type WebsocatInstallGroup = {
+  key: WebsocatInstallTabKey
+  label: string
+  options: WebsocatInstallOption[]
+}
+
+function getDefaultWebsocatInstallTab(
+  platform: CodeBoxLocalDependencyStatus["platform"] | undefined
+): WebsocatInstallTabKey {
+  if (platform === "darwin" || platform === "freebsd" || platform === "linux") {
+    return platform
+  }
+
+  return "prebuilt"
+}
+
+function getWebsocatInstallGroups(
+  t: ReturnType<typeof useI18n>["t"]
+): WebsocatInstallGroup[] {
+  return [
+    {
+      key: "linux",
+      label: t.codeboxSshInstallDebian,
+      options: [
+        {
+          key: "debian",
+          label: t.codeboxSshInstallDebian,
+          value: [
+            "sudo curl -fsSL -o /usr/local/bin/websocat https://github.com/vi/websocat/releases/latest/download/websocat.x86_64-unknown-linux-musl",
+            "sudo chmod a+x /usr/local/bin/websocat",
+          ].join("\n"),
+          note: t.codeboxSshInstallDebianNote,
+        },
+      ],
+    },
+    {
+      key: "darwin",
+      label: "macOS",
+      options: [
+        {
+          key: "homebrew",
+          label: t.codeboxSshInstallMacHomebrew,
+          value: "brew install websocat",
+          note: t.codeboxSshInstallMacHomebrewNote,
+        },
+        {
+          key: "macports",
+          label: t.codeboxSshInstallMacPorts,
+          value: "sudo port install websocat",
+          note: t.codeboxSshInstallMacPortsNote,
+        },
+      ],
+    },
+    {
+      key: "freebsd",
+      label: t.codeboxSshInstallFreebsd,
+      options: [
+        {
+          key: "freebsd",
+          label: t.codeboxSshInstallFreebsd,
+          value: "pkg install websocat",
+          note: t.codeboxSshInstallFreebsdNote,
+        },
+      ],
+    },
+    {
+      key: "source",
+      label: t.codeboxSshInstallSource,
+      options: [
+        {
+          key: "source",
+          label: t.codeboxSshInstallSource,
+          value: "cargo install websocat",
+          note: t.codeboxSshInstallSourceNote,
+        },
+      ],
+    },
+    {
+      key: "prebuilt",
+      label: t.codeboxSshInstallPrebuilt,
+      options: [
+        {
+          key: "prebuilt",
+          label: t.codeboxSshInstallPrebuilt,
+          value: "https://github.com/vi/websocat/releases/latest",
+          note: t.codeboxSshInstallPrebuiltNote,
+        },
+      ],
+    },
+  ]
+}
+
+function OpenVSCodeDialog({
+  sandbox,
+  access,
+  localDependencies,
+  busy,
+  checkingDependencies,
+  error,
+  onCopy,
+  onRetry,
+  onOpenVSCode,
+  onOpenChange,
+}: {
+  sandbox: CodeBoxSandbox | null
+  access: CodeBoxSshAccess | null
+  localDependencies: CodeBoxLocalDependencyStatus | null
+  busy: boolean
+  checkingDependencies: boolean
+  error: string | null
+  onCopy: (value: string | null | undefined) => Promise<boolean>
+  onRetry: () => void
+  onOpenVSCode: (access: CodeBoxSshAccess) => void
+  onOpenChange: (open: boolean) => void
+}) {
+  const { t } = useI18n()
+  const [copiedKey, setCopiedKey] = React.useState<string | null>(null)
+  const [installTab, setInstallTab] =
+    React.useState<WebsocatInstallTabKey | null>(null)
+  const sandboxLabel =
+    sandbox?.name ||
+    (sandbox?.repoUrl ? getRepoName(sandbox.repoUrl) : sandbox?.sandboxId) ||
+    ""
+  const isWebsocatMissing = Boolean(
+    localDependencies && !localDependencies.websocat.installed
+  )
+  const installGroups = React.useMemo(() => getWebsocatInstallGroups(t), [t])
+  const defaultInstallTab = getDefaultWebsocatInstallTab(
+    localDependencies?.platform
+  )
+  const activeInstallTab = installTab ?? defaultInstallTab
+  const activeInstallGroup = installGroups.find(
+    (group) => group.key === activeInstallTab
+  )
+  const activeInstallOptions = activeInstallGroup?.options ?? []
+  const orderedInstallGroups = React.useMemo(
+    () =>
+      [...installGroups].sort((a, b) => {
+        if (a.key === defaultInstallTab && b.key !== defaultInstallTab) {
+          return -1
+        }
+
+        if (a.key !== defaultInstallTab && b.key === defaultInstallTab) {
+          return 1
+        }
+
+        return 0
+      }),
+    [defaultInstallTab, installGroups]
+  )
+
+  React.useEffect(() => {
+    if (!copiedKey) {
+      return
+    }
+
+    const timeout = window.setTimeout(() => setCopiedKey(null), 1200)
+
+    return () => window.clearTimeout(timeout)
+  }, [copiedKey])
+
+  async function copyValue(key: string, value: string | null | undefined) {
+    setCopiedKey((await onCopy(value)) ? key : null)
+  }
+
+  return (
+    <Dialog open={Boolean(sandbox)} onOpenChange={onOpenChange}>
+      <DialogContent
+        className="grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-3xl max-w-none gap-5 sm:max-w-none"
+        style={{
+          width: "min(1280px, calc(100vw - 2rem))",
+          maxHeight: "calc(100vh - 2rem)",
+        }}
+      >
+        <DialogHeader>
+          <div className="mb-1 flex size-10 items-center justify-center rounded-2xl bg-secondary text-secondary-foreground">
+            <VSCodeIcon className="size-5" />
+          </div>
+          <DialogTitle>{t.codeboxSshPrepareTitle}</DialogTitle>
+          <DialogDescription>
+            {sandboxLabel
+              ? t.codeboxSshPrepareDescription(sandboxLabel)
+              : t.codeboxSshPrepareDescriptionFallback}
+          </DialogDescription>
+        </DialogHeader>
+
+        {checkingDependencies || busy ? (
+          <div className="flex min-h-40 items-center justify-center gap-2 rounded-2xl border bg-background text-sm text-muted-foreground">
+            <RiLoader4Line className="size-4 animate-spin" aria-hidden />
+            {checkingDependencies
+              ? t.codeboxSshCheckingDependencies
+              : t.codeboxSshPreparing}
+          </div>
+        ) : error ? (
+          <Alert variant="destructive">
+            <RiInformationLine />
+            <AlertTitle>{t.codeboxAttentionTitle}</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        ) : isWebsocatMissing ? (
+          <div className="grid min-h-0 gap-4 overflow-y-auto pr-1">
+            <Alert>
+              <RiInformationLine />
+              <AlertTitle>{t.codeboxSshWebsocatMissingTitle}</AlertTitle>
+              <AlertDescription>
+                {t.codeboxSshWebsocatMissingDescription}
+              </AlertDescription>
+            </Alert>
+
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <Badge variant="outline">
+                {t.codeboxSshDetectedPlatform(
+                  localDependencies?.platform ?? "unknown"
+                )}
+              </Badge>
+              <span>{t.codeboxSshInstallOptionsTitle}</span>
+            </div>
+
+            <div className="flex min-w-0 gap-1 overflow-x-auto rounded-2xl border bg-muted/50 p-1">
+              {orderedInstallGroups.map((group) => (
+                <Button
+                  key={group.key}
+                  type="button"
+                  variant={activeInstallTab === group.key ? "secondary" : "ghost"}
+                  size="sm"
+                  className="shrink-0"
+                  onClick={() => setInstallTab(group.key)}
+                >
+                  {group.label}
+                  {group.key === defaultInstallTab ? (
+                    <span className="ml-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300">
+                      {t.codeboxSshRecommended}
+                    </span>
+                  ) : null}
+                </Button>
+              ))}
+            </div>
+
+            <div className="grid gap-3">
+              {activeInstallOptions.map((option) => (
+                <div
+                  key={option.key}
+                  className="rounded-2xl border bg-background p-3"
+                >
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold">{option.label}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {option.note}
+                      </p>
+                    </div>
+                    {activeInstallTab === defaultInstallTab ? (
+                      <Badge
+                        variant="outline"
+                        className="border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                      >
+                        {t.codeboxSshRecommended}
+                      </Badge>
+                    ) : null}
+                  </div>
+                  <SshSnippet
+                    label={t.codeboxSshInstallCommand}
+                    value={option.value}
+                    copied={copiedKey === option.key}
+                    copyLabel={t.codeboxSshCopyInstallCommand}
+                    onCopy={() => void copyValue(option.key, option.value)}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : access ? (
+          <div className="grid min-h-0 gap-4 overflow-y-auto pr-1">
+            <div className="rounded-2xl border bg-muted/40 p-3">
+              <div className="flex min-w-0 items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold">
+                    {access.hostAlias}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {localDependencies?.websocat.installed
+                      ? t.codeboxSshWebsocatDetected(
+                          localDependencies.websocat.version ||
+                            localDependencies.websocat.path ||
+                            "websocat"
+                        )
+                      : t.codeboxSshInstallWebsocat}
+                  </p>
+                </div>
+                <Badge variant="secondary">SSH</Badge>
+              </div>
+            </div>
+
+            <CopyLine
+              label={t.codeboxPassword}
+              value={access.password ?? "-"}
+              onCopy={() => onCopy(access.password)}
+            />
+
+            <SshSnippet
+              label={t.codeboxSshConfig}
+              value={access.sshConfig}
+              copied={copiedKey === "config"}
+              copyLabel={t.codeboxSshCopyConfig}
+              onCopy={() => void copyValue("config", access.sshConfig)}
+            />
+
+            <SshSnippet
+              label={t.codeboxSshCommand}
+              value={access.sshCommand}
+              copied={copiedKey === "command"}
+              copyLabel={t.codeboxSshCopyCommand}
+              onCopy={() => void copyValue("command", access.sshCommand)}
+            />
+          </div>
+        ) : null}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            {t.codeboxCancel}
+          </Button>
+          {error || isWebsocatMissing ? (
+            <Button onClick={onRetry}>
+              <RiRefreshLine />
+              {isWebsocatMissing ? t.codeboxSshCheckAgain : t.codeboxSshRetry}
+            </Button>
+          ) : (
+            <Button
+              onClick={() => {
+                if (access) {
+                  onOpenVSCode(access)
+                }
+              }}
+              disabled={!access || busy || checkingDependencies}
+            >
+              {t.codeboxSshOpenVSCode}
+              <RiArrowRightUpLine />
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function SshSnippet({
+  label,
+  value,
+  copied,
+  copyLabel,
+  onCopy,
+}: {
+  label: string
+  value: string
+  copied: boolean
+  copyLabel: string
+  onCopy: () => void
+}) {
+  const { t } = useI18n()
+
+  return (
+    <div className="rounded-2xl border bg-background">
+      <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
+        <p className="text-xs font-medium text-muted-foreground">{label}</p>
+        <Button type="button" variant="ghost" size="sm" onClick={onCopy}>
+          {copied ? <RiCheckLine /> : <RiFileCopyLine />}
+          {copied ? t.copied : copyLabel}
+        </Button>
+      </div>
+      <pre className="max-h-44 overflow-auto whitespace-pre-wrap break-all p-3 font-mono text-xs leading-relaxed text-muted-foreground">
+        {value}
+      </pre>
+    </div>
+  )
+}
+
+function WorkspaceDirectoryDialog({
+  sandbox,
+  value,
+  defaultPath,
+  onValueChange,
+  onOpenChange,
+  onOpen,
+}: {
+  sandbox: CodeBoxSandbox | null
+  value: string
+  defaultPath: string
+  onValueChange: (value: string) => void
+  onOpenChange: (open: boolean) => void
+  onOpen: (path: string) => void
+}) {
+  const { t } = useI18n()
+  const [error, setError] = React.useState<string | null>(null)
+  const [directoryData, setDirectoryData] =
+    React.useState<CodeBoxDirectoryList | null>(null)
+  const [directoryError, setDirectoryError] = React.useState<string | null>(
+    null
+  )
+  const [isDirectoryLoading, setIsDirectoryLoading] = React.useState(false)
+  const quickPaths = React.useMemo(
+    () =>
+      Array.from(
+        new Set(
+          [
+            sandbox?.workspacePath,
+            defaultPath,
+            DEFAULT_CODEBOX_WORKSPACE_PATH,
+            "/root",
+            "/tmp",
+          ].filter((path): path is string => Boolean(path?.trim()))
+        )
+      ),
+    [defaultPath, sandbox?.workspacePath]
+  )
+
+  const loadDirectory = React.useCallback(
+    async (nextPath: string) => {
+      if (!sandbox) {
+        return
+      }
+
+      let normalizedPath: string
+
+      try {
+        normalizedPath = normalizeWorkspaceDirectoryPath(nextPath)
+      } catch {
+        setError(t.codeboxWorkspaceDirectoryInvalid)
+        return
+      }
+
+      setIsDirectoryLoading(true)
+      setDirectoryError(null)
+      setError(null)
+
+      try {
+        const data = await apiRequest<CodeBoxDirectoryList>(
+          `/api/codebox/sandboxes/${encodeURIComponent(
+            sandbox.sandboxId
+          )}/directories?path=${encodeURIComponent(normalizedPath)}`,
+          undefined,
+          t.codeboxWorkspaceDirectoryLoadFailed
+        )
+
+        setDirectoryData(data)
+        onValueChange(data.path)
+      } catch (loadError) {
+        setDirectoryError(
+          loadError instanceof Error
+            ? loadError.message
+            : t.codeboxWorkspaceDirectoryLoadFailed
+        )
+      } finally {
+        setIsDirectoryLoading(false)
+      }
+    },
+    [onValueChange, sandbox, t]
+  )
+
+  React.useEffect(() => {
+    if (!sandbox) {
+      return
+    }
+
+    queueMicrotask(() => {
+      void loadDirectory(
+        sandbox.workspacePath || defaultPath || DEFAULT_CODEBOX_WORKSPACE_PATH
+      )
+    })
+  }, [defaultPath, loadDirectory, sandbox])
+
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const trimmed = value.trim()
+
+    if (!trimmed) {
+      setError(t.codeboxWorkspaceDirectoryRequired)
+      return
+    }
+
+    if (!trimmed.startsWith("/")) {
+      setError(t.codeboxWorkspaceDirectoryAbsolute)
+      return
+    }
+
+    try {
+      const normalized = normalizeWorkspaceDirectoryPath(trimmed)
+
+      setError(null)
+      onValueChange(normalized)
+      onOpen(normalized)
+    } catch {
+      setError(t.codeboxWorkspaceDirectoryInvalid)
+    }
+  }
+
+  const currentDirectoryPath = directoryData?.path ?? value.trim()
+  const parentDirectoryPath = directoryData?.parentPath ?? null
+
+  return (
+    <Dialog open={Boolean(sandbox)} onOpenChange={onOpenChange}>
+      <DialogContent className="gap-5 rounded-3xl">
+        <DialogHeader>
+          <div className="mb-1 flex size-10 items-center justify-center rounded-2xl bg-secondary text-secondary-foreground">
+            <RiTerminalBoxLine className="size-5" aria-hidden />
+          </div>
+          <DialogTitle>{t.codeboxWorkspaceDirectoryTitle}</DialogTitle>
+          <DialogDescription>
+            {t.codeboxWorkspaceDirectoryDescription}
+          </DialogDescription>
+        </DialogHeader>
+
+        <form className="flex flex-col gap-5" onSubmit={handleSubmit}>
+          <div className="flex flex-col gap-2">
+            <label
+              className="text-sm font-medium"
+              htmlFor="codebox-workspace-directory"
+            >
+              {t.codeboxWorkspaceDirectoryLabel}
+            </label>
+            <Input
+              id="codebox-workspace-directory"
+              value={value}
+              onChange={(event) => {
+                onValueChange(event.target.value)
+                setError(null)
+              }}
+              placeholder={DEFAULT_CODEBOX_WORKSPACE_PATH}
+              autoComplete="off"
+              autoFocus
+              aria-invalid={Boolean(error)}
+            />
+            {error ? (
+              <p className="text-xs text-destructive">{error}</p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                {t.codeboxWorkspaceDirectoryHint}
+              </p>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-medium text-muted-foreground">
+                {t.codeboxWorkspaceDirectoryCurrent}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {parentDirectoryPath ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void loadDirectory(parentDirectoryPath)}
+                    disabled={isDirectoryLoading}
+                  >
+                    <RiArrowUpLine />
+                    {t.codeboxWorkspaceDirectoryParent}
+                  </Button>
+                ) : null}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void loadDirectory(value)}
+                  disabled={isDirectoryLoading}
+                >
+                  {isDirectoryLoading ? (
+                    <RiLoader4Line className="animate-spin" />
+                  ) : (
+                    <RiRefreshLine />
+                  )}
+                  {t.codeboxWorkspaceDirectoryLoad}
+                </Button>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border bg-background">
+              <div className="flex min-w-0 items-center gap-2 border-b px-3 py-2 text-xs text-muted-foreground">
+                <RiFolderLine className="shrink-0" aria-hidden />
+                <span className="truncate">
+                  {currentDirectoryPath || DEFAULT_CODEBOX_WORKSPACE_PATH}
+                </span>
+              </div>
+              <div className="flex max-h-52 min-h-28 flex-col overflow-y-auto p-1">
+                {isDirectoryLoading ? (
+                  <div className="flex flex-1 items-center justify-center gap-2 px-3 py-8 text-sm text-muted-foreground">
+                    <RiLoader4Line className="animate-spin" aria-hidden />
+                    {t.codeboxWorkspaceDirectoryLoading}
+                  </div>
+                ) : directoryError ? (
+                  <div className="flex flex-1 items-center justify-center px-3 py-8 text-center text-sm text-destructive">
+                    {directoryError}
+                  </div>
+                ) : directoryData && directoryData.directories.length === 0 ? (
+                  <div className="flex flex-1 items-center justify-center px-3 py-8 text-center text-sm text-muted-foreground">
+                    {t.codeboxWorkspaceDirectoryEmpty}
+                  </div>
+                ) : (
+                  directoryData?.directories.map((directory) => (
+                    <Button
+                      key={directory.path}
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-auto justify-start px-3 py-2"
+                      onClick={() => void loadDirectory(directory.path)}
+                    >
+                      <RiFolderLine className="shrink-0" aria-hidden />
+                      <span className="min-w-0 truncate">
+                        {directory.name}
+                      </span>
+                    </Button>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <p className="text-xs font-medium text-muted-foreground">
+              {t.codeboxWorkspaceDirectoryQuickPick}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {quickPaths.map((path) => (
+                <Button
+                  key={path}
+                  type="button"
+                  variant={value.trim() === path ? "secondary" : "outline"}
+                  size="sm"
+                  onClick={() => void loadDirectory(path)}
+                >
+                  {path}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+            >
+              {t.codeboxCancel}
+            </Button>
+            <Button type="submit">
+              {t.codeboxOpenWorkspace}
+              <RiArrowRightUpLine />
             </Button>
           </DialogFooter>
         </form>

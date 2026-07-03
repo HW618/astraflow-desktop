@@ -11,6 +11,9 @@ permissions:
 
 env:
   NEXT_TELEMETRY_DISABLED: "1"
+  US3_BUCKET: astraflow-desktop
+  US3_ENDPOINT: cn-sh2.ufileos.com
+  US3_PUBLIC_BASE_URL: https://astraflow-desktop.cn-sh2.ufileos.com
 
 jobs:
   validate:
@@ -136,6 +139,79 @@ jobs:
 
       - name: Stage release assets
         run: node scripts/stage-electron-release-assets.mjs dist/release dist/publish
+        env:
+          ASTRAFLOW_RELEASE_BASE_URL: ${{ env.US3_PUBLIC_BASE_URL }}
+
+      - name: Install US3 CLI
+        run: |
+          curl -fsSL https://us3-release.cn-bj.ufileos.com/us3cli/us3cli-linux64 -o us3cli
+          sudo install -m 0755 us3cli /usr/local/bin/us3cli
+          us3cli --help >/dev/null 2>&1
+
+      - name: Configure US3 CLI
+        run: |
+          : "${US3_ACCESS_KEY:?Missing US3_ACCESS_KEY secret}"
+          : "${US3_SECRET_KEY:?Missing US3_SECRET_KEY secret}"
+          us3cli config astraflow-release \
+            --accesskey "$US3_ACCESS_KEY" \
+            --secretkey "$US3_SECRET_KEY" \
+            --endpoint "$US3_ENDPOINT" \
+            --language EN \
+            --ssl
+        env:
+          US3_ACCESS_KEY: ${{ secrets.US3_ACCESS_KEY || secrets.US3_PUBLIC_KEY }}
+          US3_SECRET_KEY: ${{ secrets.US3_SECRET_KEY || secrets.US3_PRIVATE_KEY }}
+
+      - name: Publish US3 release assets
+        shell: bash
+        run: |
+          upload_file() {
+            local file="$1"
+            local key="${file#dist/publish/}"
+            us3cli cp "$file" "us3://${US3_BUCKET}/${key}" --config astraflow-release
+          }
+
+          while IFS= read -r -d '' file; do
+            case "$(basename "$file")" in
+              latest*.yml|latest.json) continue ;;
+            esac
+
+            upload_file "$file"
+          done < <(find dist/publish -type f -print0)
+
+          for file in dist/publish/latest*.yml dist/publish/latest.json; do
+            [ -f "$file" ] || continue
+            upload_file "$file"
+          done
+
+      - name: Verify US3 update manifest
+        run: |
+          for attempt in 1 2 3 4 5; do
+            node - <<'NODE' && exit 0
+            const response = await fetch(`${process.env.US3_PUBLIC_BASE_URL}/latest.json`, {
+              cache: "no-store",
+            })
+
+            if (!response.ok) {
+              throw new Error(`latest.json returned HTTP ${response.status}`)
+            }
+
+            const manifest = await response.json()
+            const expectedVersion = process.env.TAG_NAME.replace(/^v/i, "")
+
+            if (manifest.version !== expectedVersion) {
+              throw new Error(
+                `latest.json version ${manifest.version} did not match ${expectedVersion}`
+              )
+            }
+          NODE
+
+            sleep $((attempt * 2))
+          done
+
+          exit 1
+        env:
+          TAG_NAME: ${{ github.ref_name }}
 
       - name: Publish GitHub release assets
         env:

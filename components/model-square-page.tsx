@@ -165,6 +165,11 @@ type CachedModelPrice = {
   data: ModelPriceGroup | null
 }
 
+type CachedPriceTable = {
+  expiresAt: number
+  data: ModelPriceGroup[]
+}
+
 type PriceDisplayRate = {
   key: string
   label: string
@@ -181,6 +186,8 @@ type PriceDisplaySection = {
 const PAGE_SIZE = 24
 const MODEL_PRICE_CACHE_PREFIX = "astraflow:model-square-price"
 const MODEL_PRICE_CACHE_TTL = 1000 * 60 * 30
+const PRICE_TABLE_CACHE_PREFIX = "astraflow:model-square-price-table"
+const PRICE_TABLE_CACHE_TTL = 1000 * 60 * 10
 const PRICE_SUMMARY_TIER_COUNT = 2
 
 const outputTypeOptions = [
@@ -970,6 +977,47 @@ function writeCachedModelPrice(cacheKey: string, data: ModelPriceGroup | null) {
   }
 }
 
+function getPriceTableCacheKey(projectId: string | undefined, locale: string) {
+  const scopedProjectId = projectId ?? readSelectedUCloudProjectId()
+
+  return `${PRICE_TABLE_CACHE_PREFIX}:${locale}:${scopedProjectId}`
+}
+
+function readCachedPriceTable(cacheKey: string) {
+  try {
+    const rawCache = window.localStorage.getItem(cacheKey)
+
+    if (!rawCache) {
+      return undefined
+    }
+
+    const parsed = JSON.parse(rawCache) as Partial<CachedPriceTable>
+
+    if (!parsed.expiresAt || parsed.expiresAt <= Date.now()) {
+      window.localStorage.removeItem(cacheKey)
+      return undefined
+    }
+
+    return Array.isArray(parsed.data) ? parsed.data : undefined
+  } catch {
+    window.localStorage.removeItem(cacheKey)
+    return undefined
+  }
+}
+
+function writeCachedPriceTable(cacheKey: string, data: ModelPriceGroup[]) {
+  const cache: CachedPriceTable = {
+    expiresAt: Date.now() + PRICE_TABLE_CACHE_TTL,
+    data,
+  }
+
+  try {
+    window.localStorage.setItem(cacheKey, JSON.stringify(cache))
+  } catch {
+    // Storage failures should not block model browsing.
+  }
+}
+
 function findPriceGroup(model: SquareModel, groups?: ModelPriceGroup[]) {
   const modelName = normalizeModelName(model.Name)
   const modelId = normalizeModelName(model.Id)
@@ -1179,8 +1227,19 @@ function ModelSquarePage({ projectId }: { projectId?: string }) {
 
   React.useEffect(() => {
     const controller = new AbortController()
+    const cacheKey = getPriceTableCacheKey(projectId, locale)
+    const forceRefresh = refreshNonce > 0
 
     async function loadPrices() {
+      if (!forceRefresh) {
+        const cached = readCachedPriceTable(cacheKey)
+
+        if (cached) {
+          setPriceGroups(cached)
+          return
+        }
+      }
+
       setPricesLoading(true)
 
       try {
@@ -1206,6 +1265,10 @@ function ModelSquarePage({ projectId }: { projectId?: string }) {
             : []
 
         setPriceGroups(nextGroups)
+
+        if (response.ok && result.ok) {
+          writeCachedPriceTable(cacheKey, nextGroups)
+        }
       } catch {
         if (controller.signal.aborted) {
           return

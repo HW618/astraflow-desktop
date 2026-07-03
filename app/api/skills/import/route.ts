@@ -10,12 +10,14 @@ import type {
   InstalledSkill,
   InvalidSkillImportCandidate,
   SkillImportCandidate,
+  SkillMeta,
 } from "@/lib/skill-market"
 import {
   type ArchiveFile,
   installLocalStudioSkillDirectory,
-  installUploadedStudioSkillFiles,
+  installUploadedStudioSkillGroups,
   isAllowedLocalSkillImportPath,
+  parseUploadedSkillCandidates,
   readLocalSkillImportCandidate,
   removeInstalledSkillFiles,
 } from "@/lib/studio-skills"
@@ -41,11 +43,15 @@ function toErrorResponse(error: unknown) {
   )
 }
 
-function saveInstallResult(
-  installResult: ReturnType<
-    typeof installLocalStudioSkillDirectory | typeof installUploadedStudioSkillFiles
-  >
-) {
+function saveInstallResult(installResult: {
+  slug: string
+  version: string
+  skill: SkillMeta
+  skillMd: string
+  installPath: string
+  installedFileCount: number
+  installedSizeBytes: number
+}) {
   const previous = getStudioInstalledSkill(installResult.slug)
   const installed = upsertStudioInstalledSkill({
     slug: installResult.slug,
@@ -103,6 +109,43 @@ async function readUploadedSkillFiles(formData: FormData) {
   return files
 }
 
+async function handleUploadedFolder(formData: FormData) {
+  const mode = String(formData.get("mode") ?? "install")
+  const uploadFiles = await readUploadedSkillFiles(formData)
+  const installedSlugs = new Set(
+    listStudioInstalledSkills().map((skill) => skill.slug)
+  )
+
+  if (mode === "parse") {
+    return NextResponse.json({
+      ok: true,
+      data: parseUploadedSkillCandidates({
+        files: uploadFiles,
+        installedSlugs,
+      }),
+    })
+  }
+
+  const selectedRaw = formData.getAll("selectedPaths").map((value) =>
+    String(value)
+  )
+  const selectedPaths = selectedRaw.length > 0 ? selectedRaw : undefined
+
+  const result = installUploadedStudioSkillGroups({
+    files: uploadFiles,
+    selectedPaths,
+    installedSlugs,
+  })
+  const imported = result.imported.map((installResult) =>
+    saveInstallResult(installResult)
+  )
+
+  return NextResponse.json({
+    ok: true,
+    data: { imported, skipped: result.skipped, failed: result.failed },
+  })
+}
+
 export async function POST(request: Request) {
   const credentials = await getUCloudCredentials()
 
@@ -120,17 +163,7 @@ export async function POST(request: Request) {
     const failed: InvalidSkillImportCandidate[] = []
 
     if (contentType.includes("multipart/form-data")) {
-      const uploadFiles = await readUploadedSkillFiles(await request.formData())
-      const installed = saveInstallResult(
-        installUploadedStudioSkillFiles({ files: uploadFiles })
-      )
-
-      imported.push(installed)
-
-      return NextResponse.json({
-        ok: true,
-        data: { imported, skipped, failed },
-      })
+      return await handleUploadedFolder(await request.formData())
     }
 
     const body = importPathsSchema.parse(await request.json())

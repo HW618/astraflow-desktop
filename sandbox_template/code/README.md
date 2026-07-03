@@ -5,6 +5,7 @@ Builds the `astraflow-code` template from the CodeHatch code-server image.
 The template includes:
 
 - code-server on port `8080`
+- OpenSSH server and websocat for VS Code Remote SSH over port `8081`
 - persistent volume mount target `/workspace`
 - Node.js 22, npm, git, gh, jq, tmux, docker.io
 - Starship prompt initialized for bash

@@ -916,35 +916,187 @@ export function installLocalStudioSkillDirectory({
   }
 }
 
-export function installUploadedStudioSkillFiles({
+function buildUploadedSkillGroups(files: ArchiveFile[]) {
+  const normalized = files.map((file) => ({
+    path: normalizeArchivePath(file.path),
+    bytes: file.bytes,
+  }))
+  const skillDirs = new Set<string>()
+
+  for (const file of normalized) {
+    const parts = file.path.split("/")
+
+    if (parts[parts.length - 1] === SKILL_MD_FILE_NAME) {
+      skillDirs.add(parts.slice(0, -1).join("/"))
+    }
+  }
+
+  const sortedDirs = Array.from(skillDirs).sort((a, b) => b.length - a.length)
+  const groups = new Map<string, ArchiveFile[]>()
+
+  for (const file of normalized) {
+    const owner = sortedDirs.find(
+      (dir) => dir === "" || file.path.startsWith(`${dir}/`)
+    )
+
+    if (owner === undefined) {
+      continue
+    }
+
+    const relativePath = owner === "" ? file.path : file.path.slice(owner.length + 1)
+    const groupFiles = groups.get(owner) ?? []
+
+    groupFiles.push({ path: relativePath, bytes: file.bytes })
+    groups.set(owner, groupFiles)
+  }
+
+  return groups
+}
+
+function makeUploadedGroupId(dir: string) {
+  return dir === "" ? "." : dir
+}
+
+export function parseUploadedSkillCandidates({
   files,
+  installedSlugs = new Set<string>(),
 }: {
   files: ArchiveFile[]
-}): InstallLocalSkillFilesResult {
-  const summary = buildLocalSkillFiles({
-    fallbackSlug: "skill",
-    files,
-  })
-  const installPath = createInstallPath(summary.skill)
+  installedSlugs?: Set<string>
+}): SkillImportScanData {
+  const groups = buildUploadedSkillGroups(files)
+  const candidates: SkillImportCandidate[] = []
+  const duplicates: SkillImportCandidate[] = []
+  const invalid: InvalidSkillImportCandidate[] = []
+  const seenSlugs = new Map<string, string>()
 
-  writeFilesToInstallPath({
-    files: summary.files,
-    installPath,
-    skillMd: summary.skillMd,
-  })
-
-  const installedSkillMd = readInstalledSkillMd(installPath) || summary.skillMd
-  const counts = countInstalledFiles(installPath)
-
-  return {
-    installPath,
-    installedFileCount: counts.installedFileCount,
-    installedSizeBytes: counts.installedSizeBytes,
-    skill: summary.skill,
-    skillMd: installedSkillMd,
-    slug: summary.slug,
-    version: summary.version,
+  if (groups.size === 0) {
+    invalid.push({
+      sourcePath: ".",
+      sourceRoot: "",
+      message: "Invalid skill folder: missing SKILL.md.",
+    })
   }
+
+  for (const [dir, groupFiles] of groups) {
+    const groupId = makeUploadedGroupId(dir)
+
+    try {
+      const summary = buildLocalSkillFiles({
+        fallbackSlug: safeSkillSegment(basename(dir) || "skill", "skill"),
+        files: groupFiles,
+      })
+      const duplicateOf = seenSlugs.get(summary.slug)
+      const alreadyInstalled = installedSlugs.has(summary.slug)
+
+      if (duplicateOf || alreadyInstalled) {
+        seenSlugs.set(summary.slug, duplicateOf ?? summary.slug)
+        duplicates.push(
+          createImportCandidate({
+            alreadyInstalled,
+            duplicateOf,
+            sourcePath: groupId,
+            sourceRoot: "",
+            summary,
+          })
+        )
+        continue
+      }
+
+      seenSlugs.set(summary.slug, summary.slug)
+      candidates.push(
+        createImportCandidate({
+          alreadyInstalled: false,
+          sourcePath: groupId,
+          sourceRoot: "",
+          summary,
+        })
+      )
+    } catch (error) {
+      invalid.push({
+        sourcePath: groupId,
+        sourceRoot: "",
+        message: error instanceof Error ? error.message : "Invalid skill folder.",
+      })
+    }
+  }
+
+  return { roots: [], candidates, duplicates, invalid }
+}
+
+export function installUploadedStudioSkillGroups({
+  files,
+  selectedPaths,
+  installedSlugs = new Set<string>(),
+}: {
+  files: ArchiveFile[]
+  selectedPaths?: string[]
+  installedSlugs?: Set<string>
+}) {
+  const groups = buildUploadedSkillGroups(files)
+  const selected = selectedPaths ? new Set(selectedPaths) : null
+  const imported: InstallLocalSkillFilesResult[] = []
+  const skipped: SkillImportCandidate[] = []
+  const failed: InvalidSkillImportCandidate[] = []
+  const installedSlugSet = new Set(installedSlugs)
+
+  for (const [dir, groupFiles] of groups) {
+    const groupId = makeUploadedGroupId(dir)
+
+    if (selected && !selected.has(groupId)) {
+      continue
+    }
+
+    try {
+      const summary = buildLocalSkillFiles({
+        fallbackSlug: safeSkillSegment(basename(dir) || "skill", "skill"),
+        files: groupFiles,
+      })
+
+      if (installedSlugSet.has(summary.slug)) {
+        skipped.push(
+          createImportCandidate({
+            alreadyInstalled: true,
+            sourcePath: groupId,
+            sourceRoot: "",
+            summary,
+          })
+        )
+        continue
+      }
+
+      const installPath = createInstallPath(summary.skill)
+
+      writeFilesToInstallPath({
+        files: summary.files,
+        installPath,
+        skillMd: summary.skillMd,
+      })
+
+      const installedSkillMd = readInstalledSkillMd(installPath) || summary.skillMd
+      const counts = countInstalledFiles(installPath)
+
+      installedSlugSet.add(summary.slug)
+      imported.push({
+        installPath,
+        installedFileCount: counts.installedFileCount,
+        installedSizeBytes: counts.installedSizeBytes,
+        skill: summary.skill,
+        skillMd: installedSkillMd,
+        slug: summary.slug,
+        version: summary.version,
+      })
+    } catch (error) {
+      failed.push({
+        sourcePath: groupId,
+        sourceRoot: "",
+        message:
+          error instanceof Error ? error.message : "Failed to import skill.",
+      })
+    }
+  }
+
+  return { imported, skipped, failed }
 }
 
 export function removeInstalledSkillFiles(installPath: string) {

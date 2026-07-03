@@ -327,7 +327,12 @@ function shouldOpenExternal(url) {
 
   try {
     const parsed = new URL(url)
-    return parsed.protocol === "http:" || parsed.protocol === "https:"
+    return (
+      parsed.protocol === "http:" ||
+      parsed.protocol === "https:" ||
+      parsed.protocol === "vscode:" ||
+      parsed.protocol === "vscode-insiders:"
+    )
   } catch {
     return false
   }

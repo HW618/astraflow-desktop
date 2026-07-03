@@ -47,6 +47,7 @@ type GetUFSquareModelPricesResponse = {
 }
 
 const PRICE_PAGE_SIZE = 50
+const PRICE_PAGE_CONCURRENCY = 6
 
 function readString(value: string | null) {
   return typeof value === "string" ? value.trim() : ""
@@ -83,6 +84,23 @@ function normalizeListData(data: GetUFSquareModelPricesResponse["Models"]) {
   return []
 }
 
+async function fetchInBatches<T>(
+  items: T[],
+  concurrency: number,
+  handler: (item: T) => Promise<GetUFSquareModelPricesResponse>
+) {
+  const results: GetUFSquareModelPricesResponse[] = []
+
+  for (let index = 0; index < items.length; index += concurrency) {
+    const batch = items.slice(index, index + concurrency)
+    const batchResults = await Promise.all(batch.map(handler))
+
+    results.push(...batchResults)
+  }
+
+  return results
+}
+
 async function fetchAllPriceGroups({
   credentials,
   projectId,
@@ -101,27 +119,36 @@ async function fetchAllPriceGroups({
       params: {
         Action: "GetUFSquareModelPrices",
         ...(projectId ? { ProjectId: projectId } : {}),
-        Keyword: keyword,
+        ...(keyword ? { Keyword: keyword } : {}),
         Offset: offset,
         Limit: PRICE_PAGE_SIZE,
       },
     })
 
   const firstPage = await fetchPage(0)
-  const priceGroups = normalizeListData(firstPage.Models)
-  const totalCount = normalizeTotalCount(
-    firstPage.TotalCount,
-    priceGroups.length
-  )
+  const firstGroups = normalizeListData(firstPage.Models)
+  const totalCount = normalizeTotalCount(firstPage.TotalCount, firstGroups.length)
+
+  const remainingOffsets: number[] = []
 
   for (
     let offset = PRICE_PAGE_SIZE;
     offset < totalCount;
     offset += PRICE_PAGE_SIZE
   ) {
-    const page = await fetchPage(offset)
-    priceGroups.push(...normalizeListData(page.Models))
+    remainingOffsets.push(offset)
   }
+
+  const remainingPages = await fetchInBatches(
+    remainingOffsets,
+    PRICE_PAGE_CONCURRENCY,
+    fetchPage
+  )
+
+  const priceGroups = [
+    ...firstGroups,
+    ...remainingPages.flatMap((page) => normalizeListData(page.Models)),
+  ]
 
   return { priceGroups, totalCount, requestId: firstPage.RequestId }
 }
@@ -173,13 +200,6 @@ export async function GET(request: Request) {
         credentials.projectId,
     })
     const keyword = readString(searchParams.get("keyword"))
-
-    if (!keyword) {
-      return NextResponse.json(
-        { ok: false, message: "Keyword is required." },
-        { status: 400 }
-      )
-    }
 
     const data = await fetchAllPriceGroups({
       credentials,

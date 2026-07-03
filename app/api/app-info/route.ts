@@ -9,15 +9,22 @@ type PackageJson = {
   version?: string
 }
 
-type GitHubRelease = {
+type ReleaseManifest = {
+  version?: string
+  tagName?: string
   tag_name?: string
   name?: string
+  releaseName?: string
+  releaseDate?: string
+  releaseUrl?: string
+  publishedAt?: string
   html_url?: string
   published_at?: string
 }
 
-const RELEASE_API_URL =
-  "https://api.github.com/repos/mfzzf/astraflow-desktop/releases/latest"
+const RELEASE_MANIFEST_URL =
+  process.env.ASTRAFLOW_UPDATE_MANIFEST_URL ??
+  "https://astraflow-desktop.cn-sh2.ufileos.com/latest.json"
 const FALLBACK_VERSION = "0.0.0"
 
 async function readCurrentVersion() {
@@ -76,9 +83,9 @@ async function checkLatestRelease(currentVersion: string) {
   const checkedAt = new Date().toISOString()
 
   try {
-    const response = await fetch(RELEASE_API_URL, {
+    const response = await fetch(RELEASE_MANIFEST_URL, {
       headers: {
-        Accept: "application/vnd.github+json",
+        Accept: "application/json",
         "User-Agent": "AstraFlow Desktop",
       },
       cache: "no-store",
@@ -86,11 +93,13 @@ async function checkLatestRelease(currentVersion: string) {
     })
 
     if (!response.ok) {
-      throw new Error(`GitHub returned HTTP ${response.status}.`)
+      throw new Error(`Update manifest returned HTTP ${response.status}.`)
     }
 
-    const release = (await response.json()) as GitHubRelease
-    const latestVersion = normalizeVersion(release.tag_name)
+    const release = (await response.json()) as ReleaseManifest
+    const latestVersion = normalizeVersion(
+      release.version ?? release.tagName ?? release.tag_name
+    )
 
     if (!latestVersion) {
       throw new Error("Latest release version is unavailable.")
@@ -99,9 +108,13 @@ async function checkLatestRelease(currentVersion: string) {
     return {
       checkedAt,
       latestVersion,
-      releaseDate: release.published_at ?? null,
-      releaseName: release.name ?? null,
-      releaseUrl: release.html_url ?? null,
+      releaseDate:
+        release.releaseDate ??
+        release.publishedAt ??
+        release.published_at ??
+        null,
+      releaseName: release.releaseName ?? release.name ?? null,
+      releaseUrl: release.releaseUrl ?? release.html_url ?? null,
       updateAvailable: compareVersions(latestVersion, currentVersion) > 0,
       message: null,
     }

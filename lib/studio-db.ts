@@ -203,6 +203,7 @@ type DbCodeBoxSandboxRow = {
   name: string | null
   owner_key: string | null
   owner_email: string | null
+  company_id: string | null
   project_id: string | null
   volume_id: string | null
   volume_name: string | null
@@ -356,6 +357,7 @@ type UpsertCodeBoxSandboxInput = {
   name?: string | null
   ownerKey?: string | null
   ownerEmail?: string | null
+  companyId?: string | null
   projectId?: string | null
   volumeId?: string | null
   volumeName?: string | null
@@ -487,6 +489,10 @@ function ensureCodeBoxSandboxOwnerColumns(database = getDb()) {
 
   if (!columns.some((column) => column.name === "project_id")) {
     database.exec(`ALTER TABLE codebox_sandboxes ADD COLUMN project_id TEXT`)
+  }
+
+  if (!columns.some((column) => column.name === "company_id")) {
+    database.exec(`ALTER TABLE codebox_sandboxes ADD COLUMN company_id TEXT`)
   }
 
   database.exec(`
@@ -669,6 +675,7 @@ function initializeSchema(database: Database.Database) {
       name TEXT,
       owner_key TEXT,
       owner_email TEXT,
+      company_id TEXT,
       project_id TEXT,
       volume_id TEXT,
       volume_name TEXT,
@@ -965,6 +972,9 @@ function mapCodeBoxSandbox(row: DbCodeBoxSandboxRow): CodeBoxSandbox {
   return {
     sandboxId: row.sandbox_id,
     name: row.name,
+    ownerKey: row.owner_key,
+    companyId: row.company_id,
+    projectId: row.project_id,
     template: row.template,
     status: row.status,
     volumeId: row.volume_id,
@@ -3008,7 +3018,7 @@ export function listCodeBoxSandboxRecords(ownerKey?: string | null) {
     ? (getDb()
         .prepare(
           `
-            SELECT sandbox_id, owner_key, owner_email, project_id, volume_id,
+            SELECT sandbox_id, owner_key, owner_email, company_id, project_id, volume_id,
                    name, volume_name, sandbox_domain, template, status,
                    code_server_url, code_server_host, code_server_port,
                    password, workspace_path, repo_url, started_at, end_at,
@@ -3022,7 +3032,7 @@ export function listCodeBoxSandboxRecords(ownerKey?: string | null) {
     : (getDb()
         .prepare(
           `
-            SELECT sandbox_id, owner_key, owner_email, project_id, volume_id,
+            SELECT sandbox_id, owner_key, owner_email, company_id, project_id, volume_id,
                    name, volume_name, sandbox_domain, template, status,
                    code_server_url, code_server_host, code_server_port,
                    password, workspace_path, repo_url, started_at, end_at,
@@ -3046,7 +3056,7 @@ export function getCodeBoxSandboxRecord(
     ? (getDb()
         .prepare(
           `
-            SELECT sandbox_id, owner_key, owner_email, project_id, volume_id,
+            SELECT sandbox_id, owner_key, owner_email, company_id, project_id, volume_id,
                    name, volume_name, sandbox_domain, template, status,
                    code_server_url, code_server_host, code_server_port,
                    password, workspace_path, repo_url, started_at, end_at,
@@ -3059,7 +3069,7 @@ export function getCodeBoxSandboxRecord(
     : (getDb()
         .prepare(
           `
-            SELECT sandbox_id, owner_key, owner_email, project_id, volume_id,
+            SELECT sandbox_id, owner_key, owner_email, company_id, project_id, volume_id,
                    name, volume_name, sandbox_domain, template, status,
                    code_server_url, code_server_host, code_server_port,
                    password, workspace_path, repo_url, started_at, end_at,
@@ -3078,6 +3088,7 @@ export function upsertCodeBoxSandboxRecord({
   name = null,
   ownerKey = null,
   ownerEmail = null,
+  companyId = null,
   projectId = null,
   volumeId = null,
   volumeName = null,
@@ -3101,12 +3112,12 @@ export function upsertCodeBoxSandboxRecord({
     .prepare(
       `
         INSERT INTO codebox_sandboxes
-          (sandbox_id, name, owner_key, owner_email, project_id, volume_id,
+          (sandbox_id, name, owner_key, owner_email, company_id, project_id, volume_id,
            volume_name, sandbox_domain, template, status, code_server_url,
            code_server_host, code_server_port, password, workspace_path,
            repo_url, started_at, end_at, created_at, updated_at, last_used_at)
         VALUES
-          (@sandboxId, @name, @ownerKey, @ownerEmail, @projectId, @volumeId,
+          (@sandboxId, @name, @ownerKey, @ownerEmail, @companyId, @projectId, @volumeId,
            @volumeName, @sandboxDomain, @template, @status, @codeServerUrl,
            @codeServerHost, @codeServerPort, @password, @workspacePath,
            @repoUrl, @startedAt, @endAt, @createdAt, @updatedAt, @lastUsedAt)
@@ -3114,6 +3125,7 @@ export function upsertCodeBoxSandboxRecord({
           name = excluded.name,
           owner_key = excluded.owner_key,
           owner_email = excluded.owner_email,
+          company_id = excluded.company_id,
           project_id = excluded.project_id,
           volume_id = excluded.volume_id,
           volume_name = excluded.volume_name,
@@ -3137,6 +3149,7 @@ export function upsertCodeBoxSandboxRecord({
       name,
       ownerKey,
       ownerEmail,
+      companyId,
       projectId,
       volumeId,
       volumeName,

@@ -71,7 +71,5 @@ linux:
 
 artifactName: ${productName}-${version}-${os}-${arch}.${ext}
 publish:
-  provider: github
-  owner: mfzzf
-  repo: astraflow-desktop
-  releaseType: release
+  provider: generic
+  url: https://astraflow-desktop.cn-sh2.ufileos.com

@@ -45,8 +45,14 @@ template = (
     .run_cmd(
         "apt-get update && "
         "apt-get install -y --no-install-recommends "
-        "ca-certificates curl docker.io git gnupg jq tmux && "
+        "ca-certificates curl docker.io git gnupg jq openssh-server tmux && "
         "rm -rf /var/lib/apt/lists/*"
+    )
+    .run_cmd(
+        "curl -fsSL -o /usr/local/bin/websocat "
+        "https://github.com/vi/websocat/releases/latest/download/websocat.x86_64-unknown-linux-musl && "
+        "chmod a+x /usr/local/bin/websocat && "
+        "websocat --version"
     )
     .run_cmd(
         "mkdir -p -m 755 /etc/apt/keyrings && "

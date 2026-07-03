@@ -11,6 +11,12 @@ import { basename, join } from "node:path"
 
 const sourceDir = process.argv[2] ?? join("dist", "release")
 const targetDir = process.argv[3] ?? join("dist", "publish")
+const publicBaseUrl =
+  process.env.ASTRAFLOW_RELEASE_BASE_URL ??
+  "https://astraflow-desktop.cn-sh2.ufileos.com"
+const releasePageUrl =
+  process.env.ASTRAFLOW_RELEASE_PAGE_URL ??
+  "https://github.com/mfzzf/astraflow-desktop/releases/tag/{tag}"
 
 function walkFiles(dir) {
   const files = []
@@ -124,7 +130,9 @@ function parseUpdateInfo(file) {
 
 function formatUpdateInfo({ files, releaseDate, version }) {
   const fallbackFile =
-    files.find((file) => file.url.endsWith(".zip") && !file.url.includes("arm64")) ??
+    files.find(
+      (file) => file.url.endsWith(".zip") && !file.url.includes("arm64")
+    ) ??
     files.find((file) => file.url.endsWith(".zip")) ??
     files.find((file) => !file.url.includes("arm64")) ??
     files[0]
@@ -148,12 +156,97 @@ function formatUpdateInfo({ files, releaseDate, version }) {
   return lines.join("\n")
 }
 
+function normalizeBaseUrl(value) {
+  return value.replace(/\/+$/, "")
+}
+
+function normalizeVersion(value) {
+  return value.trim().replace(/^v/i, "")
+}
+
+function versionTag(version) {
+  return `v${normalizeVersion(version)}`
+}
+
 function latestReleaseDate(updateInfos) {
   return updateInfos
     .map((info) => info.releaseDate)
     .sort(
       (left, right) => new Date(right).getTime() - new Date(left).getTime()
     )[0]
+}
+
+function detectPlatform(file) {
+  const name = basename(file.file)
+
+  if (name === "latest-mac.yml") {
+    return "mac"
+  }
+
+  if (name === "latest-linux.yml") {
+    return "linux"
+  }
+
+  if (name === "latest.yml") {
+    return "windows"
+  }
+
+  return "unknown"
+}
+
+function writeReleaseManifest() {
+  const updateFiles = walkFiles(targetDir)
+    .filter((file) => /^latest(?:-.+)?\.yml$/.test(basename(file)))
+    .sort((left, right) => basename(left).localeCompare(basename(right)))
+
+  if (updateFiles.length === 0) {
+    throw new Error("Missing Electron update metadata.")
+  }
+
+  const updateInfos = updateFiles.map(parseUpdateInfo)
+  const versions = new Set(
+    updateInfos.map((info) => normalizeVersion(info.version))
+  )
+
+  if (versions.size !== 1) {
+    throw new Error(
+      `Cannot create release manifest with different versions: ${[
+        ...versions,
+      ].join(", ")}`
+    )
+  }
+
+  const version = [...versions][0]
+  const tagName = versionTag(version)
+  const baseUrl = normalizeBaseUrl(publicBaseUrl)
+  const files = updateInfos
+    .flatMap((info) =>
+      info.files.map((file) => ({
+        name: file.url,
+        platform: detectPlatform(info),
+        sha512: file.sha512,
+        size: file.size,
+        url: `${baseUrl}/${encodeURI(file.url)}`,
+      }))
+    )
+    .sort((left, right) => left.name.localeCompare(right.name))
+
+  writeFileSync(
+    join(targetDir, "latest.json"),
+    `${JSON.stringify(
+      {
+        name: "AstraFlow",
+        version,
+        tagName,
+        releaseName: `AstraFlow ${tagName}`,
+        releaseDate: latestReleaseDate(updateInfos),
+        releaseUrl: releasePageUrl.replace("{tag}", tagName),
+        files,
+      },
+      null,
+      2
+    )}\n`
+  )
 }
 
 rmSync(targetDir, { recursive: true, force: true })
@@ -199,5 +292,7 @@ if (macUpdateFiles.length === 1) {
     })
   )
 }
+
+writeReleaseManifest()
 
 console.log(`Staged ${walkFiles(targetDir).length} Electron release assets.`)
