@@ -49,8 +49,10 @@ export type CodeBoxSshAccess = {
   workspacePath: string
   webSocketUrl: string
   sshConfig: string
+  sshConfigPath: string | null
   sshCommand: string
   vscodeUri: string
+  remoteReady: boolean
   password: string | null
 }
 

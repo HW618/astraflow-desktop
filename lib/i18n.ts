@@ -163,10 +163,20 @@ const en = {
   codeboxSshPreparing: "Preparing SSH access",
   codeboxSshPrepareFailed: "Failed to prepare SSH access.",
   codeboxSshReady: "SSH access is ready.",
+  codeboxSshRemotePreparing:
+    "Preparing the sandbox SSH service. You can copy the manual command while this finishes.",
+  codeboxSshRemoteReady: "Sandbox SSH service is ready.",
   codeboxSshInstallWebsocat:
-    "Install websocat locally, add this host to ~/.ssh/config, then open VS Code.",
+    "Install websocat locally, authorize writing this host to ~/.ssh/config, then open VS Code.",
   codeboxSshWebsocatDetected: (value: string) =>
-    `websocat detected: ${value}. Add this host to ~/.ssh/config, then open VS Code.`,
+    `websocat detected: ${value}. Authorize writing this host to ~/.ssh/config, then open VS Code.`,
+  codeboxSshConfigInstalled: (path: string) =>
+    `SSH config written to ${path}. Open VS Code when prompted for this host.`,
+  codeboxSshConfigNeedsAuthorization:
+    "One-click VS Code requires an SSH config host. The app will only write ~/.ssh/config after you authorize it here.",
+  codeboxSshWriteConfig: "Authorize SSH config write",
+  codeboxSshWritingConfig: "Writing SSH config",
+  codeboxSshConfigWriteFailed: "Failed to write SSH config.",
   codeboxSshWebsocatMissingTitle: "websocat is not installed",
   codeboxSshWebsocatMissingDescription:
     "Remote SSH uses websocat as the local SSH ProxyCommand. Install it on this machine, then check again.",
@@ -759,7 +769,7 @@ const zh: Dictionary = {
   codeboxNewSandboxDescription:
     "选择 API Key 和可选仓库后启动 code-server 沙箱。",
   codeboxUsesHomeWorkspace: (path?: string | null) =>
-    `使用 ${path || "~/workspace"}，不挂载存储卷`,
+    `使用 ${path || "~/workspace"} 作为工作目录`,
   codeboxMountsVolume: (name: string) => `将 ${name} 挂载到 /workspace`,
   codeboxSelectOrCreateVolume: "选择或创建存储卷",
   codeboxLoadingApiKeys: "正在加载 API Key",
@@ -799,10 +809,20 @@ const zh: Dictionary = {
   codeboxSshPreparing: "正在准备 SSH 访问",
   codeboxSshPrepareFailed: "准备 SSH 访问失败。",
   codeboxSshReady: "SSH 访问已就绪。",
+  codeboxSshRemotePreparing:
+    "正在准备沙箱 SSH 服务。等待期间可以先复制手动命令使用。",
+  codeboxSshRemoteReady: "沙箱 SSH 服务已就绪。",
   codeboxSshInstallWebsocat:
-    "先在本机安装 websocat，将这个 Host 写入 ~/.ssh/config，然后打开 VS Code。",
+    "先在本机安装 websocat，授权写入 ~/.ssh/config 后再打开 VS Code。",
   codeboxSshWebsocatDetected: (value: string) =>
-    `已检测到 websocat：${value}。将这个 Host 写入 ~/.ssh/config 后即可打开 VS Code。`,
+    `已检测到 websocat：${value}。授权写入 ~/.ssh/config 后即可打开 VS Code。`,
+  codeboxSshConfigInstalled: (path: string) =>
+    `SSH 配置已写入 ${path}。现在可以打开 VS Code 连接这个 Host。`,
+  codeboxSshConfigNeedsAuthorization:
+    "一键打开 VS Code 需要一个 SSH config Host。本应用只会在你点击授权后写入 ~/.ssh/config。",
+  codeboxSshWriteConfig: "授权写入 SSH 配置",
+  codeboxSshWritingConfig: "正在写入 SSH 配置",
+  codeboxSshConfigWriteFailed: "写入 SSH 配置失败。",
   codeboxSshWebsocatMissingTitle: "未安装 websocat",
   codeboxSshWebsocatMissingDescription:
     "Remote SSH 需要本机通过 websocat 作为 SSH ProxyCommand。请先在本机安装，然后重新检测。",

@@ -374,8 +374,10 @@ function CodeBoxPage() {
     React.useState<CodeBoxLocalDependencyStatus | null>(null)
   const [sshError, setSshError] = React.useState<string | null>(null)
   const [isSshPreparing, setIsSshPreparing] = React.useState(false)
+  const [isSshConfigWriting, setIsSshConfigWriting] = React.useState(false)
   const [isSshDependencyChecking, setIsSshDependencyChecking] =
     React.useState(false)
+  const activeSshSandboxIdRef = React.useRef<string | null>(null)
 
   const showNotice = React.useCallback((message: string) => {
     toast.success(message)
@@ -693,11 +695,40 @@ function CodeBoxPage() {
     }
   }
 
+  function getSandboxWorkspacePath(sandbox: CodeBoxSandbox) {
+    return (
+      sandbox.workspacePath || status?.workspacePath || DEFAULT_CODEBOX_WORKSPACE_PATH
+    )
+  }
+
+  async function requestSandboxSshAccess(
+    sandbox: CodeBoxSandbox,
+    options: {
+      prepareRemote?: boolean
+      writeConfig?: boolean
+    } = {}
+  ) {
+    return apiRequest<CodeBoxSshAccess>(
+      `/api/codebox/sandboxes/${encodeURIComponent(sandbox.sandboxId)}/ssh`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          prepareRemote: options.prepareRemote ?? false,
+          writeConfig: options.writeConfig ?? false,
+          workspacePath: getSandboxWorkspacePath(sandbox),
+        }),
+      },
+      t.codeboxSshPrepareFailed
+    )
+  }
+
   async function prepareSandboxVSCode(sandbox: CodeBoxSandbox) {
+    activeSshSandboxIdRef.current = sandbox.sandboxId
     setSshSandbox(sandbox)
     setSshAccess(null)
     setLocalDependencies(null)
     setSshError(null)
+    setIsSshConfigWriting(false)
     setIsSshDependencyChecking(true)
 
     try {
@@ -707,48 +738,116 @@ function CodeBoxPage() {
         t.codeboxSshDependencyCheckFailed
       )
 
+      if (activeSshSandboxIdRef.current !== sandbox.sandboxId) {
+        return
+      }
+
       setLocalDependencies(dependencies)
 
       if (!dependencies.websocat.installed) {
         return
       }
     } catch (dependencyError) {
-      setSshError(
-        dependencyError instanceof Error
-          ? dependencyError.message
-          : t.codeboxSshDependencyCheckFailed
-      )
+      if (activeSshSandboxIdRef.current === sandbox.sandboxId) {
+        setSshError(
+          dependencyError instanceof Error
+            ? dependencyError.message
+            : t.codeboxSshDependencyCheckFailed
+        )
+      }
       return
     } finally {
-      setIsSshDependencyChecking(false)
+      if (activeSshSandboxIdRef.current === sandbox.sandboxId) {
+        setIsSshDependencyChecking(false)
+      }
     }
 
     setIsSshPreparing(true)
     try {
-      const access = await apiRequest<CodeBoxSshAccess>(
-        `/api/codebox/sandboxes/${encodeURIComponent(sandbox.sandboxId)}/ssh`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            workspacePath:
-              sandbox.workspacePath ||
-              status?.workspacePath ||
-              DEFAULT_CODEBOX_WORKSPACE_PATH,
-          }),
-        },
-        t.codeboxSshPrepareFailed
-      )
+      const access = await requestSandboxSshAccess(sandbox)
+
+      if (activeSshSandboxIdRef.current !== sandbox.sandboxId) {
+        return
+      }
 
       setSshAccess(access)
+
+      const preparedAccess = await requestSandboxSshAccess(sandbox, {
+        prepareRemote: true,
+      })
+
+      if (activeSshSandboxIdRef.current !== sandbox.sandboxId) {
+        return
+      }
+
+      setSshAccess((current) =>
+        current?.sandboxId === preparedAccess.sandboxId
+          ? {
+              ...preparedAccess,
+              sshConfigPath:
+                current.sshConfigPath ?? preparedAccess.sshConfigPath,
+            }
+          : current
+      )
       showNotice(t.codeboxSshReady)
     } catch (sshPrepareError) {
-      setSshError(
-        sshPrepareError instanceof Error
-          ? sshPrepareError.message
-          : t.codeboxSshPrepareFailed
-      )
+      if (activeSshSandboxIdRef.current === sandbox.sandboxId) {
+        setSshError(
+          sshPrepareError instanceof Error
+            ? sshPrepareError.message
+            : t.codeboxSshPrepareFailed
+        )
+      }
     } finally {
-      setIsSshPreparing(false)
+      if (activeSshSandboxIdRef.current === sandbox.sandboxId) {
+        setIsSshPreparing(false)
+      }
+    }
+  }
+
+  async function writeSandboxSshConfig() {
+    const sandbox = sshSandbox
+
+    if (!sandbox) {
+      return
+    }
+
+    setIsSshConfigWriting(true)
+    setSshError(null)
+
+    try {
+      const access = await requestSandboxSshAccess(sandbox, {
+        writeConfig: true,
+      })
+
+      if (activeSshSandboxIdRef.current !== sandbox.sandboxId) {
+        return
+      }
+
+      setSshAccess((current) =>
+        current?.sandboxId === access.sandboxId
+          ? {
+              ...access,
+              remoteReady: current.remoteReady || access.remoteReady,
+            }
+          : access
+      )
+
+      if (access.sshConfigPath) {
+        showNotice(t.codeboxSshConfigInstalled(access.sshConfigPath))
+      }
+    } catch (writeError) {
+      if (activeSshSandboxIdRef.current === sandbox.sandboxId) {
+        setSshError(
+          writeError instanceof Error
+            ? writeError.message
+            : t.codeboxSshConfigWriteFailed
+        )
+      }
+    } finally {
+      if (activeSshSandboxIdRef.current === sandbox.sandboxId) {
+        setIsSshConfigWriting(false)
+      }
     }
   }
 
@@ -1168,6 +1267,7 @@ function CodeBoxPage() {
         access={sshAccess}
         localDependencies={localDependencies}
         busy={isSshPreparing}
+        configWriting={isSshConfigWriting}
         checkingDependencies={isSshDependencyChecking}
         error={sshError}
         onCopy={copyText}
@@ -1176,14 +1276,17 @@ function CodeBoxPage() {
             void prepareSandboxVSCode(sshSandbox)
           }
         }}
+        onWriteConfig={() => void writeSandboxSshConfig()}
         onOpenVSCode={openVSCode}
         onOpenChange={(open) => {
           if (!open) {
+            activeSshSandboxIdRef.current = null
             setSshSandbox(null)
             setSshAccess(null)
             setLocalDependencies(null)
             setSshError(null)
             setIsSshPreparing(false)
+            setIsSshConfigWriting(false)
             setIsSshDependencyChecking(false)
           }
         }}
@@ -1836,10 +1939,12 @@ function OpenVSCodeDialog({
   access,
   localDependencies,
   busy,
+  configWriting,
   checkingDependencies,
   error,
   onCopy,
   onRetry,
+  onWriteConfig,
   onOpenVSCode,
   onOpenChange,
 }: {
@@ -1847,10 +1952,12 @@ function OpenVSCodeDialog({
   access: CodeBoxSshAccess | null
   localDependencies: CodeBoxLocalDependencyStatus | null
   busy: boolean
+  configWriting: boolean
   checkingDependencies: boolean
   error: string | null
   onCopy: (value: string | null | undefined) => Promise<boolean>
   onRetry: () => void
+  onWriteConfig: () => void
   onOpenVSCode: (access: CodeBoxSshAccess) => void
   onOpenChange: (open: boolean) => void
 }) {
@@ -1874,6 +1981,9 @@ function OpenVSCodeDialog({
     (group) => group.key === activeInstallTab
   )
   const activeInstallOptions = activeInstallGroup?.options ?? []
+  const canOpenVSCode = Boolean(
+    access?.sshConfigPath && access.remoteReady && !busy && !configWriting
+  )
   const orderedInstallGroups = React.useMemo(
     () =>
       [...installGroups].sort((a, b) => {
@@ -1925,14 +2035,14 @@ function OpenVSCodeDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {checkingDependencies || busy ? (
+        {checkingDependencies || (busy && !access) ? (
           <div className="flex min-h-40 items-center justify-center gap-2 rounded-2xl border bg-background text-sm text-muted-foreground">
             <RiLoader4Line className="size-4 animate-spin" aria-hidden />
             {checkingDependencies
               ? t.codeboxSshCheckingDependencies
               : t.codeboxSshPreparing}
           </div>
-        ) : error ? (
+        ) : error && !access ? (
           <Alert variant="destructive">
             <RiInformationLine />
             <AlertTitle>{t.codeboxAttentionTitle}</AlertTitle>
@@ -2013,24 +2123,55 @@ function OpenVSCodeDialog({
         ) : access ? (
           <div className="grid min-h-0 gap-4 overflow-y-auto pr-1">
             <div className="rounded-2xl border bg-muted/40 p-3">
-              <div className="flex min-w-0 items-center justify-between gap-3">
+              <div className="flex min-w-0 items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold">
                     {access.hostAlias}
                   </p>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    {localDependencies?.websocat.installed
-                      ? t.codeboxSshWebsocatDetected(
-                          localDependencies.websocat.version ||
-                            localDependencies.websocat.path ||
-                            "websocat"
-                        )
-                      : t.codeboxSshInstallWebsocat}
+                    {access.sshConfigPath
+                      ? t.codeboxSshConfigInstalled(access.sshConfigPath)
+                      : t.codeboxSshConfigNeedsAuthorization}
+                  </p>
+                  <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+                    {busy && !access.remoteReady ? (
+                      <RiLoader4Line className="size-3.5 animate-spin" />
+                    ) : null}
+                    {access.remoteReady
+                      ? t.codeboxSshRemoteReady
+                      : t.codeboxSshRemotePreparing}
                   </p>
                 </div>
-                <Badge variant="secondary">SSH</Badge>
+                <div className="flex shrink-0 flex-col items-end gap-2">
+                  <Badge variant="secondary">SSH</Badge>
+                  {!access.sshConfigPath ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={onWriteConfig}
+                      disabled={configWriting}
+                    >
+                      {configWriting ? (
+                        <RiLoader4Line className="animate-spin" />
+                      ) : (
+                        <RiFileCopyLine />
+                      )}
+                      {configWriting
+                        ? t.codeboxSshWritingConfig
+                        : t.codeboxSshWriteConfig}
+                    </Button>
+                  ) : null}
+                </div>
               </div>
             </div>
+
+            {error ? (
+              <Alert variant="destructive">
+                <RiInformationLine />
+                <AlertTitle>{t.codeboxAttentionTitle}</AlertTitle>
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            ) : null}
 
             <CopyLine
               label={t.codeboxPassword}
@@ -2038,13 +2179,15 @@ function OpenVSCodeDialog({
               onCopy={() => onCopy(access.password)}
             />
 
-            <SshSnippet
-              label={t.codeboxSshConfig}
-              value={access.sshConfig}
-              copied={copiedKey === "config"}
-              copyLabel={t.codeboxSshCopyConfig}
-              onCopy={() => void copyValue("config", access.sshConfig)}
-            />
+            {!access.sshConfigPath ? (
+              <SshSnippet
+                label={t.codeboxSshConfig}
+                value={access.sshConfig}
+                copied={copiedKey === "config"}
+                copyLabel={t.codeboxSshCopyConfig}
+                onCopy={() => void copyValue("config", access.sshConfig)}
+              />
+            ) : null}
 
             <SshSnippet
               label={t.codeboxSshCommand}
@@ -2072,7 +2215,7 @@ function OpenVSCodeDialog({
                   onOpenVSCode(access)
                 }
               }}
-              disabled={!access || busy || checkingDependencies}
+              disabled={!canOpenVSCode || checkingDependencies}
             >
               {t.codeboxSshOpenVSCode}
               <RiArrowRightUpLine />

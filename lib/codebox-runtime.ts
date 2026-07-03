@@ -1,4 +1,13 @@
 import { randomBytes } from "node:crypto"
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs"
+import { homedir } from "node:os"
+import { join } from "node:path"
 
 import {
   Sandbox,
@@ -63,6 +72,9 @@ const CODEBOX_OPENCODE_PROVIDER_ID = "modelverse"
 const CODEBOX_OPENCODE_MODEL = "glm-5.2"
 const CODEBOX_SSH_USER = "root"
 const CODEBOX_SSH_PROXY_BUFFER_SIZE = 65_536
+const CODEBOX_SSH_READY_CACHE_MS = 10 * 60 * 1000
+const codeBoxSshProxyReadyUntil = new Map<string, number>()
+const codeBoxSshProxyPreparePromises = new Map<string, Promise<void>>()
 
 type SandboxConnectionOptions = ReturnType<
   typeof getAstraFlowSandboxConnectionOptions
@@ -174,6 +186,21 @@ function getCodeServerHost(
   return `${CODEBOX_CODE_SERVER_PORT}-${sandboxId}.${sandboxDomain}`
 }
 
+function getCodeBoxSshWebSocketHost(
+  sandboxId: string,
+  codeServerHost?: string | null
+) {
+  const expectedCodeServerPrefix = `${CODEBOX_CODE_SERVER_PORT}-${sandboxId}.`
+
+  if (codeServerHost?.startsWith(expectedCodeServerPrefix)) {
+    return `${CODEBOX_SSH_WEBSOCKET_PORT}-${sandboxId}.${codeServerHost.slice(
+      expectedCodeServerPrefix.length
+    )}`
+  }
+
+  return `${CODEBOX_SSH_WEBSOCKET_PORT}-${sandboxId}.${getSandboxDomain()}`
+}
+
 function getCodeServerUrl(host: string, workspacePath = CODEBOX_WORKSPACE_PATH) {
   const scheme = host.includes("localhost") ? "http" : "https"
 
@@ -201,8 +228,94 @@ function getVscodeRemoteSshUri(hostAlias: string, workspacePath: string) {
   )}${encodeVscodePath(workspacePath)}`
 }
 
+function syncLocalSshConfig({
+  hostAlias,
+  sshConfig,
+}: {
+  hostAlias: string
+  sshConfig: string
+}) {
+  const home = homedir()
+
+  if (!home) {
+    return null
+  }
+
+  const sshDirectory = join(home, ".ssh")
+  const sshConfigPath = join(sshDirectory, "config")
+  const startMarker = `# >>> AstraFlow CodeBox ${hostAlias}`
+  const endMarker = `# <<< AstraFlow CodeBox ${hostAlias}`
+  const block = [
+    startMarker,
+    sshConfig.trimEnd(),
+    endMarker,
+    "",
+  ].join("\n")
+
+  mkdirSync(sshDirectory, { recursive: true })
+
+  try {
+    chmodSync(sshDirectory, 0o700)
+  } catch {
+    // Best effort only; Windows and some managed homes may not support chmod.
+  }
+
+  const current = existsSync(sshConfigPath)
+    ? readFileSync(sshConfigPath, "utf8")
+    : ""
+  const markerPattern = new RegExp(
+    `${escapeRegExp(startMarker)}[\\s\\S]*?${escapeRegExp(endMarker)}\\n*`,
+    "g"
+  )
+  const withoutExistingBlock = current.replace(markerPattern, "").trimStart()
+  const nextConfig = `${block}${withoutExistingBlock}`.trimEnd() + "\n"
+
+  writeFileSync(sshConfigPath, nextConfig, "utf8")
+
+  try {
+    chmodSync(sshConfigPath, 0o600)
+  } catch {
+    // Best effort only; OpenSSH will still report its own permission error.
+  }
+
+  return sshConfigPath
+}
+
 function shellQuote(value: string) {
   return `'${value.replaceAll("'", "'\\''")}'`
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+function redactSensitiveOutput(value: string) {
+  return value.replace(/https?:\/\/[^:\s/@]+:[^@\s]+@/g, "https://***:***@")
+}
+
+function getCommandFailureDetail(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return null
+  }
+
+  const result = error as {
+    exitCode?: unknown
+    stdout?: unknown
+    stderr?: unknown
+    error?: unknown
+  }
+  const stdout = typeof result.stdout === "string" ? result.stdout.trim() : ""
+  const stderr = typeof result.stderr === "string" ? result.stderr.trim() : ""
+  const commandError =
+    typeof result.error === "string" ? result.error.trim() : ""
+  const exitCode =
+    typeof result.exitCode === "number" ? result.exitCode : undefined
+  const detail = [stderr, stdout, commandError].filter(Boolean).join("\n")
+
+  return {
+    exitCode,
+    detail: redactSensitiveOutput(detail),
+  }
 }
 
 function normalizeCodeBoxWorkspacePath(value: string | null | undefined) {
@@ -322,16 +435,49 @@ async function runChecked(
   step: string,
   timeoutMs = 60_000
 ) {
-  const result = await sandbox.commands.run(command, {
-    timeoutMs,
-    requestTimeoutMs: Math.max(
-      timeoutMs + 10_000,
-      ASTRAFLOW_SANDBOX_REQUEST_TIMEOUT_MS
-    ),
-  })
+  let result: Awaited<ReturnType<Sandbox["commands"]["run"]>>
+
+  try {
+    result = await sandbox.commands.run(command, {
+      timeoutMs,
+      requestTimeoutMs: Math.max(
+        timeoutMs + 10_000,
+        ASTRAFLOW_SANDBOX_REQUEST_TIMEOUT_MS
+      ),
+    })
+  } catch (error) {
+    const failure = getCommandFailureDetail(error)
+
+    console.error("[CodeBox] command failed", {
+      sandboxId: sandbox.sandboxId,
+      step,
+      exitCode: failure?.exitCode,
+      detail: failure?.detail,
+    })
+
+    if (failure?.detail) {
+      throw new Error(
+        `${step} failed${
+          failure.exitCode === undefined ? "" : ` with exit code ${failure.exitCode}`
+        }: ${failure.detail}`
+      )
+    }
+
+    throw error
+  }
 
   if (result.exitCode !== 0) {
-    const detail = [result.stderr, result.stdout].filter(Boolean).join("\n")
+    const detail = redactSensitiveOutput(
+      [result.stderr, result.stdout].filter(Boolean).join("\n")
+    )
+
+    console.error("[CodeBox] command exited with non-zero status", {
+      sandboxId: sandbox.sandboxId,
+      step,
+      exitCode: result.exitCode,
+      detail,
+    })
+
     throw new Error(`${step} failed: ${detail || "command exited with error"}`)
   }
 
@@ -779,8 +925,50 @@ export async function listCodeBoxSandboxDirectories({
   }
 }
 
+function isCodeBoxSshProxyReadyCached(sandboxId: string) {
+  const readyUntil = codeBoxSshProxyReadyUntil.get(sandboxId) ?? 0
+
+  if (readyUntil > Date.now()) {
+    return true
+  }
+
+  codeBoxSshProxyReadyUntil.delete(sandboxId)
+
+  return false
+}
+
+async function ensureCodeBoxSshProxyCached(
+  sandbox: Sandbox,
+  password: string
+) {
+  if (isCodeBoxSshProxyReadyCached(sandbox.sandboxId)) {
+    return
+  }
+
+  const existing = codeBoxSshProxyPreparePromises.get(sandbox.sandboxId)
+
+  if (existing) {
+    await existing
+    return
+  }
+
+  const promise = ensureCodeBoxSshProxy(sandbox, password)
+    .then(() => {
+      codeBoxSshProxyReadyUntil.set(
+        sandbox.sandboxId,
+        Date.now() + CODEBOX_SSH_READY_CACHE_MS
+      )
+    })
+    .finally(() => {
+      codeBoxSshProxyPreparePromises.delete(sandbox.sandboxId)
+    })
+
+  codeBoxSshProxyPreparePromises.set(sandbox.sandboxId, promise)
+  await promise
+}
+
 async function ensureCodeBoxSshProxy(sandbox: Sandbox, password: string) {
-  const script = [
+  const prepareScript = [
     "set -euo pipefail",
     "export DEBIAN_FRONTEND=noninteractive",
     "if [ ! -x /usr/sbin/sshd ] || ! command -v curl >/dev/null 2>&1; then",
@@ -809,39 +997,93 @@ async function ensureCodeBoxSshProxy(sandbox: Sandbox, password: string) {
     "else",
     "  /usr/sbin/sshd",
     "fi",
-    `if ! pgrep -f '[w]ebsocat .*ws-l:0.0.0.0:${CODEBOX_SSH_WEBSOCKET_PORT}' >/dev/null 2>&1; then`,
-    `  nohup /usr/local/bin/websocat -b --exit-on-eof ws-l:0.0.0.0:${CODEBOX_SSH_WEBSOCKET_PORT} tcp:127.0.0.1:22 >/tmp/astraflow-ssh-websocat.log 2>&1 &`,
-    "fi",
-    `for port in 22 ${CODEBOX_SSH_WEBSOCKET_PORT}; do`,
-    "  ready=0",
-    "  for _ in $(seq 1 30); do",
-    '    if timeout 1 bash -c ":</dev/tcp/127.0.0.1/$port" >/dev/null 2>&1; then',
-    "      ready=1",
-    "      break",
-    "    fi",
-    "    sleep 0.5",
-    "  done",
-    '  if [ "$ready" != "1" ]; then',
-    '    echo "port $port did not become ready" >&2',
-    "    exit 1",
+    "for _ in $(seq 1 30); do",
+    "  if (ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null || true) | awk '{print $4}' | grep -Eq '(^|[:.])22$'; then",
+    "    exit 0",
     "  fi",
+    "  sleep 0.5",
     "done",
+    "echo 'port 22 did not become ready' >&2",
+    "exit 1",
   ].join("\n")
 
   await runChecked(
     sandbox,
-    `bash -lc ${shellQuote(script)}`,
+    `bash -lc ${shellQuote(prepareScript)}`,
     "prepare SSH access",
     180_000
+  )
+
+  const webSocketPort = String(CODEBOX_SSH_WEBSOCKET_PORT)
+  const isProxyReadyScript = [
+    "set -euo pipefail",
+    `port=${shellQuote(webSocketPort)}`,
+    "if (ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null || true) | awk '{print $4}' | grep -Eq \"(^|[:.])${port}$\"; then",
+    "  exit 0",
+    "fi",
+    "exit 1",
+  ].join("\n")
+  const existingProxy = await sandbox.commands
+    .run(`bash -lc ${shellQuote(isProxyReadyScript)}`, {
+      timeoutMs: 5_000,
+      requestTimeoutMs: 15_000,
+    })
+    .then((result) => result.exitCode === 0)
+    .catch(() => false)
+
+  if (!existingProxy) {
+    const startProxyScript = [
+      "set -euo pipefail",
+      `port=${shellQuote(webSocketPort)}`,
+      "pkill -f \"[w]ebsocat .*ws-l:0.0.0.0:${port}\" >/dev/null 2>&1 || true",
+      "rm -f /tmp/astraflow-ssh-websocat.log",
+      "exec /usr/local/bin/websocat -b --exit-on-eof ws-l:0.0.0.0:${port} tcp:127.0.0.1:22 >>/tmp/astraflow-ssh-websocat.log 2>&1",
+    ].join("\n")
+
+    await sandbox.commands.run(`bash -lc ${shellQuote(startProxyScript)}`, {
+      background: true,
+      timeoutMs: 0,
+      requestTimeoutMs: 20_000,
+    })
+  }
+
+  const waitProxyScript = [
+    "set -euo pipefail",
+    `port=${shellQuote(webSocketPort)}`,
+    "for _ in $(seq 1 40); do",
+    "  if (ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null || true) | awk '{print $4}' | grep -Eq \"(^|[:.])${port}$\"; then",
+    "    exit 0",
+    "  fi",
+    "  sleep 0.5",
+    "done",
+    "echo \"port ${port} did not become ready\" >&2",
+    "echo 'websocat processes:' >&2",
+    "pgrep -af '[w]ebsocat' >&2 || true",
+    "echo 'websocat log:' >&2",
+    "tail -n 80 /tmp/astraflow-ssh-websocat.log >&2 || true",
+    "echo 'listening ports:' >&2",
+    "(ss -ltnp 2>/dev/null || netstat -ltnp 2>/dev/null || true) >&2",
+    "exit 1",
+  ].join("\n")
+
+  await runChecked(
+    sandbox,
+    `bash -lc ${shellQuote(waitProxyScript)}`,
+    "prepare SSH access",
+    30_000
   )
 }
 
 export async function prepareCodeBoxSshAccess({
   sandboxId,
   workspacePath,
+  prepareRemote = false,
+  writeConfig = false,
 }: {
   sandboxId: string
   workspacePath?: string | null
+  prepareRemote?: boolean | null
+  writeConfig?: boolean | null
 }): Promise<CodeBoxSshAccess> {
   const owner = getCodeBoxOwner()
   const existing = getCodeBoxSandboxRecord(sandboxId, owner.ownerKey)
@@ -854,16 +1096,24 @@ export async function prepareCodeBoxSshAccess({
     workspacePath || existing.workspacePath
   )
   const password = existing.password || randomBytes(12).toString("hex")
-  const sandbox = await Sandbox.connect(sandboxId, {
-    ...getConnectionOptions(),
-    timeoutMs: CODEBOX_AUTO_PAUSE_TIMEOUT_MS,
-  })
-
-  await ensureCodeBoxSshProxy(sandbox, password)
-
-  const webSocketUrl = getWebSocketUrl(
-    sandbox.getHost(CODEBOX_SSH_WEBSOCKET_PORT)
+  let status: CodeBoxSandboxStatus = existing.status
+  let webSocketUrl = getWebSocketUrl(
+    getCodeBoxSshWebSocketHost(sandboxId, existing.codeServerHost)
   )
+
+  if (prepareRemote && !isCodeBoxSshProxyReadyCached(sandboxId)) {
+    const sandbox = await Sandbox.connect(sandboxId, {
+      ...getConnectionOptions(),
+      timeoutMs: CODEBOX_AUTO_PAUSE_TIMEOUT_MS,
+    })
+
+    await ensureCodeBoxSshProxyCached(sandbox, password)
+
+    status = "running"
+    webSocketUrl = getWebSocketUrl(sandbox.getHost(CODEBOX_SSH_WEBSOCKET_PORT))
+  }
+
+  const remoteReady = isCodeBoxSshProxyReadyCached(sandboxId)
   const hostAlias = getCodeBoxSshHostAlias(sandboxId)
   const proxyCommand = `websocat --binary -B ${CODEBOX_SSH_PROXY_BUFFER_SIZE} - ${webSocketUrl}`
   const sshConfig = [
@@ -876,6 +1126,9 @@ export async function prepareCodeBoxSshAccess({
     "  StrictHostKeyChecking accept-new",
     "",
   ].join("\n")
+  const sshConfigPath = writeConfig
+    ? syncLocalSshConfig({ hostAlias, sshConfig })
+    : null
 
   upsertCodeBoxSandboxRecord(
     withCodeBoxOwner(owner, {
@@ -885,7 +1138,7 @@ export async function prepareCodeBoxSshAccess({
       volumeName: existing.volumeName,
       sandboxDomain: getSandboxDomain(),
       template: existing.template,
-      status: "running",
+      status,
       codeServerUrl: existing.codeServerUrl,
       codeServerHost: existing.codeServerHost,
       codeServerPort: existing.codeServerPort,
@@ -905,10 +1158,12 @@ export async function prepareCodeBoxSshAccess({
     workspacePath: normalizedWorkspacePath,
     webSocketUrl,
     sshConfig,
+    sshConfigPath,
     sshCommand: `ssh -o ${shellQuote(
       `ProxyCommand=${proxyCommand}`
     )} ${CODEBOX_SSH_USER}@${sandboxId}`,
     vscodeUri: getVscodeRemoteSshUri(hostAlias, normalizedWorkspacePath),
+    remoteReady,
     password,
   }
 }
@@ -960,13 +1215,30 @@ export async function createCodeBoxSandbox({
     const envs = await writeRuntimeProfile(sandbox)
 
     if (normalizedRepoUrl) {
+      const cloneScript = [
+        "set -euo pipefail",
+        `repo_url=${shellQuote(normalizedRepoUrl)}`,
+        `workspace=${shellQuote(CODEBOX_WORKSPACE_PATH)}`,
+        'mkdir -p "$workspace"',
+        'if [ -d "$workspace/.git" ]; then',
+        '  echo "workspace already contains a git repository"',
+        "  exit 0",
+        "fi",
+        'tmp_dir=$(mktemp -d /tmp/astraflow-codebox-clone.XXXXXX)',
+        'trap \'rm -rf "$tmp_dir"\' EXIT',
+        'GIT_TERMINAL_PROMPT=0 git clone --depth 1 "$repo_url" "$tmp_dir/repo"',
+        'if [ -n "$(find "$workspace" -mindepth 1 -maxdepth 1 -print -quit)" ]; then',
+        '  echo "workspace is not empty; copying cloned repository into it" >&2',
+        '  cp -a "$tmp_dir/repo/." "$workspace/"',
+        "else",
+        '  rmdir "$workspace"',
+        '  mv "$tmp_dir/repo" "$workspace"',
+        "fi",
+      ].join("\n")
+
       await runChecked(
         sandbox,
-        [
-          `cd ${shellQuote(CODEBOX_WORKSPACE_PATH)}`,
-          "[ -d .git ] || git clone --depth 1 " +
-            `${shellQuote(normalizedRepoUrl)} .`,
-        ].join(" && "),
+        `bash -lc ${shellQuote(cloneScript)}`,
         "clone repository",
         300_000
       )
@@ -1104,11 +1376,13 @@ export async function syncCodeBoxCredentialsToRunningSandboxes() {
 }
 
 export async function killCodeBoxSandbox(sandboxId: string) {
+  const owner = getCodeBoxOwner()
+  const existing = getCodeBoxSandboxRecord(sandboxId, owner.ownerKey)
   const killed = await Sandbox.kill(sandboxId, getConnectionOptions())
 
-  if (killed) {
+  if (killed || existing) {
     deleteCodeBoxSandboxRecord(sandboxId)
   }
 
-  return killed
+  return killed || Boolean(existing)
 }

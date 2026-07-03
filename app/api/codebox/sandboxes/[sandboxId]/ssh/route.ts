@@ -10,6 +10,8 @@ type SandboxRouteContext = {
 }
 
 const sshRequestSchema = z.object({
+  prepareRemote: z.boolean().optional().default(false),
+  writeConfig: z.boolean().optional().default(false),
   workspacePath: z.string().trim().optional(),
 })
 
@@ -31,6 +33,8 @@ export async function POST(request: Request, context: SandboxRouteContext) {
       ok: true,
       data: await prepareCodeBoxSshAccess({
         sandboxId: decodeURIComponent(sandboxId),
+        prepareRemote: parsed.data.prepareRemote,
+        writeConfig: parsed.data.writeConfig,
         workspacePath: parsed.data.workspacePath,
       }),
     })
