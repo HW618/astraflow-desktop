@@ -7,7 +7,7 @@ import {
   type SandboxOpts,
 } from "@e2b/code-interpreter"
 
-const ASTRAFLOW_SANDBOX_DEFAULT_TEMPLATE = "yeyb5hbs2kweus6ku07l"
+const ASTRAFLOW_SANDBOX_DEFAULT_TEMPLATE = "ry2jck30zrnfwtm1fihv"
 
 export const ASTRAFLOW_SANDBOX_TEMPLATE =
   process.env.ASTRAFLOW_SANDBOX_TEMPLATE?.trim() ??
