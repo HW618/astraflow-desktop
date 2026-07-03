@@ -10,24 +10,48 @@ function isLocale(value: string | null): value is Locale {
   return value !== null && (locales as readonly string[]).includes(value)
 }
 
+function readSystemLocale(): Locale {
+  if (typeof window === "undefined") {
+    return defaultLocale
+  }
+
+  const browserLocales = [
+    ...window.navigator.languages,
+    window.navigator.language,
+    Intl.DateTimeFormat().resolvedOptions().locale,
+  ]
+
+  return browserLocales.some((value) =>
+    value.toLowerCase().startsWith("zh")
+  )
+    ? "zh"
+    : "en"
+}
+
 let currentLocale: Locale = defaultLocale
 let initialized = false
 const listeners = new Set<() => void>()
+
+function syncDocumentLocale() {
+  if (typeof document !== "undefined") {
+    document.documentElement.lang = currentLocale
+  }
+}
 
 function readStored(): Locale {
   if (typeof window === "undefined") {
     return defaultLocale
   }
   const stored = window.localStorage.getItem(STORAGE_KEY)
-  return isLocale(stored) ? stored : defaultLocale
+  return isLocale(stored) ? stored : readSystemLocale()
 }
 
 function subscribe(listener: () => void) {
   if (!initialized) {
     initialized = true
     currentLocale = readStored()
-    document.documentElement.lang = currentLocale
   }
+  syncDocumentLocale()
   listeners.add(listener)
   return () => {
     listeners.delete(listener)
@@ -41,7 +65,7 @@ function setLocale(next: Locale) {
   currentLocale = next
   if (typeof window !== "undefined") {
     window.localStorage.setItem(STORAGE_KEY, next)
-    document.documentElement.lang = next
+    syncDocumentLocale()
   }
   listeners.forEach((listener) => listener())
 }
