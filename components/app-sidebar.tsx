@@ -459,6 +459,35 @@ async function deleteLocalProjectRequest(projectId: string) {
   }
 }
 
+async function clearProjectPermissionRulesRequest(projectId: string) {
+  const response = await fetch("/api/studio/local-projects", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id: projectId, action: "clearPermissionRules" }),
+  })
+  throwIfUnauthorized(response)
+
+  if (!response.ok) {
+    throw new Error("Failed to clear permission rules")
+  }
+
+  const payload = (await response.json()) as
+    | {
+        ok: true
+        data: { deleted: number }
+      }
+    | {
+        ok: false
+        error: unknown
+      }
+
+  if (!payload.ok) {
+    throw new Error("Failed to clear permission rules")
+  }
+
+  return payload.data.deleted
+}
+
 async function openLocalProjectRequest(projectId: string) {
   const response = await fetch("/api/studio/local-projects/open-folder", {
     method: "POST",
@@ -506,6 +535,10 @@ function AppSidebar() {
   const [deleteProjectTarget, setDeleteProjectTarget] =
     React.useState<StudioLocalProjectWithGitInfo | null>(null)
   const [deleteProjectSaving, setDeleteProjectSaving] = React.useState(false)
+  const [clearPermissionTarget, setClearPermissionTarget] =
+    React.useState<StudioLocalProjectWithGitInfo | null>(null)
+  const [clearPermissionSaving, setClearPermissionSaving] =
+    React.useState(false)
   const [pathDialogOpen, setPathDialogOpen] = React.useState(false)
   const [pathInputValue, setPathInputValue] = React.useState("")
   const [pathSaving, setPathSaving] = React.useState(false)
@@ -812,6 +845,32 @@ function AppSidebar() {
     }
   }
 
+  async function handleClearPermissionConfirm() {
+    const target = clearPermissionTarget
+
+    if (!target) {
+      return
+    }
+
+    try {
+      setClearPermissionSaving(true)
+      const deleted = await clearProjectPermissionRulesRequest(target.id)
+
+      setClearPermissionTarget(null)
+      toast.success(t.studioPermissionClearSuccess(deleted))
+      await reloadLocalProjects()
+      dispatchStudioLocalProjectsChanged()
+    } catch (error) {
+      if (isLoginRequiredError(error)) {
+        redirectToLogin()
+      } else {
+        toast.error(t.studioPermissionClearFailed)
+      }
+    } finally {
+      setClearPermissionSaving(false)
+    }
+  }
+
   async function handleOpenProject(projectId: string) {
     try {
       await openLocalProjectRequest(projectId)
@@ -976,7 +1035,7 @@ function AppSidebar() {
                           <PopoverContent
                             align="start"
                             side="right"
-                            className="w-48 gap-0.5 p-1"
+                            className="w-64 gap-0.5 p-1"
                           >
                             <button
                               type="button"
@@ -988,6 +1047,20 @@ function AppSidebar() {
                             >
                               <RiExternalLinkLine aria-hidden />
                               {t.studioLocalProjectOpen}
+                            </button>
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 px-2.5 py-2 text-sm hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4"
+                              disabled={project.permissionRuleCount === 0}
+                              onClick={() => {
+                                setMenuProjectId(null)
+                                setClearPermissionTarget(project)
+                              }}
+                            >
+                              <RiCheckLine aria-hidden />
+                              {t.studioPermissionClearAllowedWithCount(
+                                project.permissionRuleCount
+                              )}
                             </button>
                             <button
                               type="button"
@@ -1260,6 +1333,61 @@ function AppSidebar() {
                 <RiDeleteBinLine aria-hidden />
               )}
               <span>{t.studioDelete}</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={clearPermissionTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setClearPermissionTarget(null)
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t.studioPermissionClearTitle}</DialogTitle>
+            <DialogDescription>
+              {clearPermissionTarget
+                ? t.studioPermissionClearConfirm(
+                    clearPermissionTarget.name,
+                    clearPermissionTarget.permissionRuleCount
+                  )
+                : t.studioPermissionClearAllowed}
+            </DialogDescription>
+          </DialogHeader>
+          {clearPermissionTarget ? (
+            <div className="min-w-0 text-sm">
+              <p className="truncate font-medium text-foreground">
+                {clearPermissionTarget.name}
+              </p>
+              <p className="truncate text-muted-foreground">
+                {clearPermissionTarget.path}
+              </p>
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setClearPermissionTarget(null)}
+            >
+              {t.studioCancel}
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void handleClearPermissionConfirm()}
+              disabled={clearPermissionSaving}
+            >
+              {clearPermissionSaving ? (
+                <RiLoader4Line className="animate-spin" aria-hidden />
+              ) : (
+                <RiDeleteBinLine aria-hidden />
+              )}
+              <span>{t.studioPermissionClearAllowed}</span>
             </Button>
           </DialogFooter>
         </DialogContent>

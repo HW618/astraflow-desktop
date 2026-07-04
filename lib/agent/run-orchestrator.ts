@@ -412,6 +412,68 @@ function createSnapshotAccumulator() {
     return true
   }
 
+  function getPermissionPartStatus(
+    event: Extract<AgentEvent, { type: "permission_request" }>
+  ): Extract<StudioMessagePart, { type: "permission" }>["status"] {
+    if (event.status !== "resolved") {
+      return "pending"
+    }
+
+    if (!event.selectedOptionId) {
+      return "cancelled"
+    }
+
+    const selectedOption = event.options?.find(
+      (option) => option.optionId === event.selectedOptionId
+    )
+
+    return selectedOption?.kind.startsWith("allow") ? "approved" : "denied"
+  }
+
+  function upsertPermissionPart(
+    event: Extract<AgentEvent, { type: "permission_request" }>
+  ) {
+    markReasoningDone()
+
+    const existingIndex = snapshot.parts.findIndex(
+      (part) => part.type === "permission" && part.id === event.requestId
+    )
+    const existingPart =
+      existingIndex >= 0 ? snapshot.parts[existingIndex] : null
+    const options =
+      event.options ??
+      (existingPart?.type === "permission" ? existingPart.options : [])
+    const part: StudioMessagePart = {
+      id: event.requestId,
+      type: "permission",
+      toolName:
+        event.toolName ||
+        (existingPart?.type === "permission" ? existingPart.toolName : ""),
+      input:
+        event.input ||
+        (existingPart?.type === "permission" ? existingPart.input : ""),
+      status: getPermissionPartStatus(event),
+      options,
+      selectedOptionId:
+        event.selectedOptionId ??
+        (existingPart?.type === "permission"
+          ? existingPart.selectedOptionId
+          : null),
+    }
+
+    snapshot = {
+      ...snapshot,
+      parts:
+        existingIndex >= 0
+          ? snapshot.parts.map((candidate, index) =>
+              index === existingIndex ? part : candidate
+            )
+          : [...snapshot.parts, part],
+    }
+
+    return true
+  }
+
   function handleEvent(event: AgentEvent) {
     switch (event.type) {
       case "reasoning_delta":
@@ -531,12 +593,7 @@ function createSnapshotAccumulator() {
         })
         return false
       case "permission_request":
-        debugIgnoredAgentEvent("permission_request_ignored", {
-          requestId: event.requestId,
-          toolName: event.toolName,
-          decisionCount: event.decisions.length,
-        })
-        return false
+        return upsertPermissionPart(event)
       case "run_meta":
         debugIgnoredAgentEvent("run_meta_ignored", {
           sessionRef: event.sessionRef,
@@ -569,20 +626,29 @@ function createSnapshotAccumulator() {
       completedActivities.map((activity) => activity.id)
     )
 
-    snapshot = {
-      ...snapshot,
-      activities: completedActivities,
-      parts: snapshot.parts.filter((part) => {
+    const parts = snapshot.parts
+      .map((part) =>
+        part.type === "permission" && part.status === "pending"
+          ? { ...part, status: "cancelled" as const }
+          : part
+      )
+      .filter((part) => {
         if (
           part.type === "text" ||
           part.type === "reasoning" ||
-          part.type === "plan"
+          part.type === "plan" ||
+          part.type === "permission"
         ) {
           return true
         }
 
         return completedActivityIds.has(part.activity.id)
-      }),
+      })
+
+    snapshot = {
+      ...snapshot,
+      activities: completedActivities,
+      parts,
     }
 
     return snapshot
@@ -601,16 +667,22 @@ function createSnapshotAccumulator() {
         : activity
     )
 
-    const parts = snapshot.parts.map((part) =>
-      part.type === "tool"
-        ? {
-            ...part,
-            activity:
-              activities.find((activity) => activity.id === part.activity.id) ??
-              part.activity,
-          }
-        : part
-    )
+    const parts = snapshot.parts.map((part) => {
+      if (part.type === "tool") {
+        return {
+          ...part,
+          activity:
+            activities.find((activity) => activity.id === part.activity.id) ??
+            part.activity,
+        }
+      }
+
+      if (part.type === "permission" && part.status === "pending") {
+        return { ...part, status: "cancelled" as const }
+      }
+
+      return part
+    })
 
     if (
       !snapshot.content.trim() &&
