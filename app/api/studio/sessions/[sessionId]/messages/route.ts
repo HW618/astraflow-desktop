@@ -65,6 +65,17 @@ const messagePartSchema = z.discriminatedUnion("type", [
     type: z.literal("tool"),
     activity: activitySchema,
   }),
+  z.object({
+    type: z.literal("plan"),
+    todos: z
+      .array(
+        z.object({
+          text: z.string().trim().min(1).max(2_000),
+          status: z.enum(["completed", "in_progress", "pending"]),
+        })
+      )
+      .max(120),
+  }),
 ])
 
 const createMessageSchema = z

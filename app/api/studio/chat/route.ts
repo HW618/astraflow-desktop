@@ -20,6 +20,7 @@ const chatRequestSchema = z.object({
   sessionId: z.string().trim().min(1),
   model: z.enum(SUPPORTED_CHAT_MODELS).default(DEFAULT_CHAT_MODEL),
   reasoningEffort: z.enum(SUPPORTED_CHAT_REASONING_EFFORTS).optional(),
+  runtimeId: z.string().trim().min(1).optional(),
   retryMessageId: z.string().trim().min(1).optional(),
 })
 

@@ -32,6 +32,13 @@ export type StudioMessagePart =
       type: "tool"
       activity: StudioMessageActivity
     }
+  | {
+      type: "plan"
+      todos: {
+        text: string
+        status: "completed" | "in_progress" | "pending"
+      }[]
+    }
 
 export type StudioAttachmentKind = "image" | "file"
 

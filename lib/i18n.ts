@@ -442,6 +442,7 @@ const en = {
     }
   },
   studioChatModel: "Model",
+  studioAgentRuntime: "Agent",
   studioReasoningEffort: "Thinking mode",
   studioReasoningNone: "No thinking",
   studioReasoningEnabled: "Thinking",
@@ -1164,6 +1165,7 @@ const zh: Dictionary = {
     }
   },
   studioChatModel: "模型",
+  studioAgentRuntime: "智能体",
   studioReasoningEffort: "思考档位",
   studioReasoningNone: "不思考",
   studioReasoningEnabled: "思考",
