@@ -808,7 +808,7 @@ function StudioChatWorkbench({
     string | null
   >(() => getPendingProjectId())
   const [selectedPermissionMode, setSelectedPermissionMode] =
-    React.useState<StudioPermissionMode>("auto")
+    React.useState<StudioPermissionMode>("ask")
   const [messages, setMessages] = React.useState<StudioMessage[]>([])
   const [pendingAttachments, setPendingAttachments] = React.useState<
     PendingAttachment[]
@@ -919,7 +919,7 @@ function StudioChatWorkbench({
 
     if (!sessionId) {
       setSelectedProjectId(getPendingProjectId())
-      setSelectedPermissionMode("auto")
+      setSelectedPermissionMode("ask")
       return
     }
 
@@ -939,7 +939,7 @@ function StudioChatWorkbench({
       }
 
       setSelectedProjectId(session?.projectId ?? null)
-      setSelectedPermissionMode(session?.permissionMode ?? "auto")
+      setSelectedPermissionMode(session?.permissionMode ?? "ask")
     } catch {
       if (
         sessionProjectRequestIdRef.current !== requestId ||
@@ -949,7 +949,7 @@ function StudioChatWorkbench({
       }
 
       setSelectedProjectId(null)
-      setSelectedPermissionMode("auto")
+      setSelectedPermissionMode("ask")
     }
   }, [sessionId])
 
@@ -1437,7 +1437,7 @@ function StudioChatWorkbench({
 
       if (
         !sessionId &&
-        selectedPermissionMode !== "auto" &&
+        selectedPermissionMode !== "ask" &&
         selectedPermissionMode !== nextPermissionMode
       ) {
         try {
