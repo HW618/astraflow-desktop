@@ -44,7 +44,7 @@ test("Codex runtime shows and persists ACP permission mode", async ({
     "The running dev server has not picked up the permission mode UI yet."
   )
   await expect(permissionModeSelect(page)).toBeVisible()
-  await expect(permissionModeSelect(page)).toContainText(/Auto allow|自动允许/)
+  await expect(permissionModeSelect(page)).toContainText(/Ask first|需要批准/)
 
   const patchResponsePromise = page.waitForResponse(
     (response) =>
@@ -56,17 +56,17 @@ test("Codex runtime shows and persists ACP permission mode", async ({
 
   await permissionModeSelect(page).click()
   await page
-    .getByRole("option", { name: /Ask first|需要批准/ })
+    .getByRole("option", { name: /Auto allow|自动允许/ })
     .click()
 
   const patchResponse = await patchResponsePromise
   expect(patchResponse.status()).toBe(200)
-  await expect(permissionModeSelect(page)).toContainText(/Ask first|需要批准/)
+  await expect(permissionModeSelect(page)).toContainText(/Auto allow|自动允许/)
 
   await reloadSession(page)
   await expect(agentSwitcher(page)).toContainText("Codex")
   await expect(permissionModeSelect(page)).toBeVisible()
-  await expect(permissionModeSelect(page)).toContainText(/Ask first|需要批准/)
+  await expect(permissionModeSelect(page)).toContainText(/Auto allow|自动允许/)
 })
 
 async function listAgentRuntimes(request: APIRequestContext) {
