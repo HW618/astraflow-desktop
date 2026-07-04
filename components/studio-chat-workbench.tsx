@@ -152,6 +152,19 @@ function formatAttachmentSize(bytes: number | null | undefined) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+function getAttachmentRenderKey(attachment: StudioAttachment) {
+  return (
+    attachment.id ??
+    [
+      attachment.type,
+      attachment.name,
+      attachment.mimeType,
+      attachment.size ?? "unknown-size",
+      attachment.storagePath ?? attachment.sandboxPath ?? "inline",
+    ].join(":")
+  )
+}
+
 type ApiResponse<T> =
   | {
       ok: true
@@ -809,6 +822,7 @@ function StudioChatWorkbench({
   )
   const [liveStreamConnected, setLiveStreamConnected] = React.useState(false)
   const sessionIdRef = React.useRef(sessionId)
+  const sessionProjectRequestIdRef = React.useRef(0)
 
   const visibleMessages = sessionId ? messages : []
   const resolvedRuntimeId = resolveChatRuntimeId(
@@ -900,19 +914,40 @@ function StudioChatWorkbench({
   }, [])
 
   const reloadSessionProject = React.useCallback(async () => {
+    const requestId = sessionProjectRequestIdRef.current + 1
+    sessionProjectRequestIdRef.current = requestId
+
     if (!sessionId) {
       setSelectedProjectId(getPendingProjectId())
       setSelectedPermissionMode("auto")
       return
     }
 
+    const activeSessionId = sessionId
+
     try {
       const sessions = await listStudioSessionsForComposer()
-      const session = sessions.find((candidate) => candidate.id === sessionId)
+      const session = sessions.find(
+        (candidate) => candidate.id === activeSessionId
+      )
+
+      if (
+        sessionProjectRequestIdRef.current !== requestId ||
+        sessionIdRef.current !== activeSessionId
+      ) {
+        return
+      }
 
       setSelectedProjectId(session?.projectId ?? null)
       setSelectedPermissionMode(session?.permissionMode ?? "auto")
     } catch {
+      if (
+        sessionProjectRequestIdRef.current !== requestId ||
+        sessionIdRef.current !== activeSessionId
+      ) {
+        return
+      }
+
       setSelectedProjectId(null)
       setSelectedPermissionMode("auto")
     }
@@ -1256,16 +1291,28 @@ function StudioChatWorkbench({
         return
       }
 
+      const activeSessionId = sessionId
+
       try {
-        const session = await updateSessionProject(sessionId, projectId)
+        const session = await updateSessionProject(activeSessionId, projectId)
+
+        onSessionsChange()
+        dispatchStudioSessionsChanged()
+
+        if (
+          session.id !== activeSessionId ||
+          sessionIdRef.current !== activeSessionId
+        ) {
+          return
+        }
 
         setSelectedProjectId(session.projectId)
         setSelectedPermissionMode(session.permissionMode)
-        onSessionsChange()
-        dispatchStudioSessionsChanged()
       } catch {
-        setSelectedProjectId(previousProjectId)
-        toast.error(t.studioLocalProjectBindFailed)
+        if (sessionIdRef.current === activeSessionId) {
+          setSelectedProjectId(previousProjectId)
+          toast.error(t.studioLocalProjectBindFailed)
+        }
       }
     },
     [onSessionsChange, selectedProjectId, sessionId, t]
@@ -1281,18 +1328,30 @@ function StudioChatWorkbench({
         return
       }
 
+      const activeSessionId = sessionId
+
       try {
         const session = await updateSessionPermissionMode(
-          sessionId,
+          activeSessionId,
           permissionMode
         )
 
-        setSelectedPermissionMode(session.permissionMode)
         onSessionsChange()
         dispatchStudioSessionsChanged()
+
+        if (
+          session.id !== activeSessionId ||
+          sessionIdRef.current !== activeSessionId
+        ) {
+          return
+        }
+
+        setSelectedPermissionMode(session.permissionMode)
       } catch {
-        setSelectedPermissionMode(previousPermissionMode)
-        toast.error(t.requestFailed)
+        if (sessionIdRef.current === activeSessionId) {
+          setSelectedPermissionMode(previousPermissionMode)
+          toast.error(t.requestFailed)
+        }
       }
     },
     [onSessionsChange, selectedPermissionMode, sessionId, t]
@@ -2173,22 +2232,24 @@ const ChatMessageBubble = React.memo(function ChatMessageBubble({
         <div className="flex max-w-[70%] flex-col items-end gap-2">
           {message.attachments.length > 0 ? (
             <div className="flex flex-wrap justify-end gap-2">
-              {message.attachments.map((attachment, index) =>
-                attachment.type === "image" && attachment.dataUrl ? (
+              {message.attachments.map((attachment) => {
+                const attachmentKey = getAttachmentRenderKey(attachment)
+
+                return attachment.type === "image" && attachment.dataUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
-                    key={`${message.id}-${index}`}
+                    key={attachmentKey}
                     src={attachment.dataUrl}
                     alt={attachment.name}
                     className="max-h-60 max-w-full rounded-2xl border object-contain"
                   />
                 ) : (
                   <FileAttachmentChip
-                    key={`${message.id}-${index}`}
+                    key={attachmentKey}
                     attachment={attachment}
                   />
                 )
-              )}
+              })}
             </div>
           ) : null}
           {message.content ? (
@@ -2301,9 +2362,9 @@ function AssistantPlan({
       )}
     >
       <ul className="flex flex-col gap-1.5">
-        {todos.map((todo, index) => (
+        {todos.map((todo) => (
           <li
-            key={`${todo.status}-${index}-${todo.text}`}
+            key={`${todo.status}-${todo.text}`}
             className={cn(
               "flex min-w-0 items-start gap-2",
               todo.status === "completed" && "text-muted-foreground",
@@ -3472,7 +3533,7 @@ const AssistantContentParts = React.memo(function AssistantContentParts({
         }
 
         if (part.type === "plan") {
-          return <AssistantPlan key={`plan-${index}`} todos={part.todos} />
+          return <AssistantPlan key={part.id} todos={part.todos} />
         }
 
         if (part.type === "permission") {

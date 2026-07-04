@@ -888,6 +888,9 @@ function AppSidebar() {
   const activeProjectId =
     sessions.find((session) => session.id === activeStudio.sessionId)
       ?.projectId ?? null
+  const unboundSessions = sessions.filter(
+    (session) => session.projectId === null
+  )
 
   return (
     <>
@@ -1124,9 +1127,9 @@ function AppSidebar() {
               {t.studioSessions}
             </SidebarGroupLabel>
             <SidebarGroupContent className="min-h-0">
-              {sessions.length > 0 ? (
+              {unboundSessions.length > 0 ? (
                 <SidebarMenu>
-                  {sessions.map((session) => {
+                  {unboundSessions.map((session) => {
                     const isActive = activeStudio.sessionId === session.id
                     const Icon =
                       studioModeDefinitions.find(
