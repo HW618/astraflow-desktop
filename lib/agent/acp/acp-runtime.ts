@@ -12,8 +12,9 @@ import {
 import type { BaseMessage } from "@langchain/core/messages"
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
 import { randomUUID } from "node:crypto"
-import { mkdir, readFile, realpath, writeFile } from "node:fs/promises"
-import { dirname, isAbsolute, relative, resolve } from "node:path"
+import { constants as fsConstants } from "node:fs"
+import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises"
+import { basename, dirname, isAbsolute, relative, resolve } from "node:path"
 import { Readable, Writable } from "node:stream"
 
 import type { AgentEvent } from "@/lib/agent/events"
@@ -45,11 +46,14 @@ type AcpSessionState = {
   child: ChildProcessWithoutNullStreams
   command: AcpCommandSpec
   connection: ClientConnection
+  disposed: boolean
   idleTimer: NodeJS.Timeout | null
   key: string
   queue: AgentEventQueue | null
+  runTail: Promise<void>
   runSignal: AbortSignal | null
   stderr: string
+  toolCallIds: Set<string>
   toolNames: Map<string, string>
   workspace: string
 }
@@ -68,11 +72,38 @@ class AcpStartupError extends Error {
 const ACP_IDLE_TIMEOUT_MS = 10 * 60 * 1000
 const ACP_STARTUP_TIMEOUT_MS = 20 * 1000
 const ACP_ABORT_KILL_TIMEOUT_MS = 5 * 1000
+const ACP_TERMINATE_KILL_TIMEOUT_MS = 2 * 1000
 const MAX_CAPTURED_STDERR_LENGTH = 4000
 const ASTRAFLOW_ACP_DEBUG = process.env.ASTRAFLOW_STUDIO_CHAT_DEBUG === "1"
 const ACP_SESSION_KEY_SEPARATOR = "\u0000"
+const ACP_SAFE_WRITE_FLAGS =
+  fsConstants.O_WRONLY |
+  fsConstants.O_CREAT |
+  fsConstants.O_TRUNC |
+  (fsConstants.O_NOFOLLOW ?? 0)
 
-const acpSessions = new Map<string, AcpSessionState>()
+type AcpRuntimeGlobalState = {
+  children: Set<ChildProcessWithoutNullStreams>
+  cleanupHooksInstalled: boolean
+  sessions: Map<string, AcpSessionState>
+  startups: Map<string, Promise<AcpSessionState>>
+}
+
+const ACP_GLOBAL_STATE_KEY = Symbol.for("astraflow.acp.runtimeState")
+const acpRuntimeGlobal = globalThis as typeof globalThis &
+  Record<symbol, AcpRuntimeGlobalState | undefined>
+const acpGlobalState =
+  acpRuntimeGlobal[ACP_GLOBAL_STATE_KEY] ??
+  (acpRuntimeGlobal[ACP_GLOBAL_STATE_KEY] = {
+    children: new Set(),
+    cleanupHooksInstalled: false,
+    sessions: new Map(),
+    startups: new Map(),
+  })
+
+const acpChildren = acpGlobalState.children
+const acpSessions = acpGlobalState.sessions
+const acpSessionStartups = acpGlobalState.startups
 
 class AgentEventQueue implements AsyncIterable<AgentEvent> {
   private events: AgentEvent[] = []
@@ -217,6 +248,13 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error)
 }
 
+function createAbortError(message: string) {
+  const error = new Error(message)
+  error.name = "AbortError"
+
+  return error
+}
+
 function createStartupErrorMessage({
   command,
   error,
@@ -262,6 +300,76 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string) {
   })
 }
 
+function isNotFoundError(error: unknown) {
+  return getRecord(error)?.code === "ENOENT"
+}
+
+async function findExistingAncestor(path: string) {
+  let candidate = path
+  let lastError: unknown = null
+
+  for (;;) {
+    try {
+      await lstat(candidate)
+
+      return candidate
+    } catch (error) {
+      if (!isNotFoundError(error)) {
+        throw error
+      }
+
+      lastError = error
+    }
+
+    const parent = dirname(candidate)
+
+    if (parent === candidate) {
+      throw lastError ?? new Error("No existing path ancestor found.")
+    }
+
+    candidate = parent
+  }
+}
+
+async function resolveSafeWriteParent(
+  workspaceRealPath: string,
+  parentPath: string
+) {
+  assertPathInsideWorkspace(workspaceRealPath, parentPath)
+
+  const existingAncestor = await findExistingAncestor(parentPath)
+  const existingAncestorRealPath = await realpath(existingAncestor)
+
+  assertPathInsideWorkspace(workspaceRealPath, existingAncestorRealPath)
+
+  await mkdir(parentPath, { recursive: true })
+
+  const parentRealPath = await realpath(parentPath)
+
+  assertPathInsideWorkspace(workspaceRealPath, parentRealPath)
+
+  return parentRealPath
+}
+
+async function assertSafeExistingWriteTarget(
+  workspaceRealPath: string,
+  targetPath: string
+) {
+  try {
+    await lstat(targetPath)
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      return
+    }
+
+    throw error
+  }
+
+  const targetRealPath = await realpath(targetPath)
+
+  assertPathInsideWorkspace(workspaceRealPath, targetRealPath)
+}
+
 async function resolveSafeReadPath(workspace: string, rawPath: string) {
   const workspaceRealPath = await realpath(workspace)
   const targetPath = isAbsolute(rawPath)
@@ -280,14 +388,15 @@ async function resolveSafeWritePath(workspace: string, rawPath: string) {
     ? resolve(rawPath)
     : resolve(workspaceRealPath, rawPath)
   const parentPath = dirname(targetPath)
+  const parentRealPath = await resolveSafeWriteParent(
+    workspaceRealPath,
+    parentPath
+  )
+  const safePath = resolve(parentRealPath, basename(targetPath))
 
-  await mkdir(parentPath, { recursive: true })
+  await assertSafeExistingWriteTarget(workspaceRealPath, safePath)
 
-  const parentRealPath = await realpath(parentPath)
-
-  assertPathInsideWorkspace(workspaceRealPath, parentRealPath)
-
-  return resolve(parentRealPath, targetPath.split(/[\\/]/).at(-1) ?? "file")
+  return safePath
 }
 
 function assertPathInsideWorkspace(workspace: string, target: string) {
@@ -344,7 +453,10 @@ export function createAcpClientApp({
     .onRequest(methods.client.fs.writeTextFile, async ({ params }) => {
       const safePath = await resolveSafeWritePath(workspace, params.path)
 
-      await writeFile(safePath, params.content, "utf8")
+      await writeFile(safePath, params.content, {
+        encoding: "utf8",
+        flag: ACP_SAFE_WRITE_FLAGS,
+      })
     })
     .onRequest(
       methods.client.session.requestPermission,
@@ -432,7 +544,7 @@ export function spawnAcpChild(
   command: AcpCommandSpec,
   cwd: string
 ): ChildProcessWithoutNullStreams {
-  return spawn(command.command, command.args ?? [], {
+  const child = spawn(command.command, command.args ?? [], {
     cwd,
     env: {
       ...process.env,
@@ -440,6 +552,13 @@ export function spawnAcpChild(
     },
     stdio: ["pipe", "pipe", "pipe"],
   })
+
+  acpChildren.add(child)
+  child.once("exit", () => {
+    acpChildren.delete(child)
+  })
+
+  return child
 }
 
 export function createAcpProcessStream(child: ChildProcessWithoutNullStreams) {
@@ -709,6 +828,18 @@ function toolOutputToString(update: {
   return stringifyPayload(update.content)
 }
 
+function synthesizeToolCallFromUpdate(
+  update: { toolCallId: string; rawInput?: unknown },
+  name: string
+): AgentEvent {
+  return {
+    type: "tool_call",
+    id: update.toolCallId,
+    name,
+    input: stringifyPayload(update.rawInput),
+  }
+}
+
 function normalizePlanStatus(status: unknown) {
   return status === "in_progress" || status === "completed" ? status : "pending"
 }
@@ -763,6 +894,7 @@ function mapAcpSessionUpdate(
     const name = getToolName(update, state)
 
     state.toolNames.set(update.toolCallId, name)
+    state.toolCallIds.add(update.toolCallId)
 
     return [
       {
@@ -776,32 +908,51 @@ function mapAcpSessionUpdate(
 
   if (update.sessionUpdate === "tool_call_update") {
     const name = getToolName(update, state)
+    const hasToolCall = state.toolCallIds.has(update.toolCallId)
 
     if (update.kind || update.title) {
       state.toolNames.set(update.toolCallId, name)
     }
 
     if (update.status === "completed") {
+      const result = {
+        type: "tool_result",
+        id: update.toolCallId,
+        name,
+        status: "complete",
+        output: toolOutputToString(update),
+      } satisfies AgentEvent
+
+      if (hasToolCall) {
+        return [result]
+      }
+
+      state.toolCallIds.add(update.toolCallId)
+
       return [
-        {
-          type: "tool_result",
-          id: update.toolCallId,
-          name,
-          status: "complete",
-          output: toolOutputToString(update),
-        },
+        synthesizeToolCallFromUpdate(update, name),
+        result,
       ]
     }
 
     if (update.status === "failed") {
+      const result = {
+        type: "tool_result",
+        id: update.toolCallId,
+        name,
+        status: "error",
+        error: toolOutputToString(update) || "Tool call failed.",
+      } satisfies AgentEvent
+
+      if (hasToolCall) {
+        return [result]
+      }
+
+      state.toolCallIds.add(update.toolCallId)
+
       return [
-        {
-          type: "tool_result",
-          id: update.toolCallId,
-          name,
-          status: "error",
-          error: toolOutputToString(update) || "Tool call failed.",
-        },
+        synthesizeToolCallFromUpdate(update, name),
+        result,
       ]
     }
 
@@ -832,11 +983,18 @@ function disposeAcpSession(
   state: AcpSessionState,
   reason: string
 ) {
-  if (acpSessions.get(key) !== state) {
+  const isCurrentSession = acpSessions.get(key) === state
+
+  if (isCurrentSession) {
+    acpSessions.delete(key)
+  }
+
+  if (state.disposed) {
+    terminateAcpChild(state)
     return
   }
 
-  acpSessions.delete(key)
+  state.disposed = true
 
   if (state.idleTimer) {
     clearTimeout(state.idleTimer)
@@ -847,22 +1005,43 @@ function disposeAcpSession(
     key,
     reason,
     acpSessionId: state.acpSessionId,
+    stale: !isCurrentSession,
   })
 
   state.activeSession.dispose()
   state.connection.close(new Error(reason))
 
-  if (state.child.exitCode === null && !state.child.killed) {
-    state.child.kill("SIGTERM")
+  terminateAcpChild(state)
+}
 
-    const killTimer = setTimeout(() => {
-      if (state.child.exitCode === null && !state.child.killed) {
-        state.child.kill("SIGKILL")
-      }
-    }, 2000)
+function terminateAcpChild(
+  state: AcpSessionState,
+  timeoutMs = ACP_TERMINATE_KILL_TIMEOUT_MS
+) {
+  terminateChild(state.child, timeoutMs)
+}
 
-    killTimer.unref()
+function terminateChild(
+  child: ChildProcessWithoutNullStreams,
+  timeoutMs = ACP_TERMINATE_KILL_TIMEOUT_MS
+) {
+  if (child.exitCode !== null || child.killed) {
+    return
   }
+
+  child.kill("SIGTERM")
+
+  if (timeoutMs <= 0) {
+    return
+  }
+
+  const killTimer = setTimeout(() => {
+    if (child.exitCode === null && !child.killed) {
+      child.kill("SIGKILL")
+    }
+  }, timeoutMs)
+
+  killTimer.unref()
 }
 
 function scheduleAcpSessionIdleCleanup(state: AcpSessionState) {
@@ -884,6 +1063,42 @@ function clearAcpSessionIdleCleanup(state: AcpSessionState) {
   clearTimeout(state.idleTimer)
   state.idleTimer = null
 }
+
+function disposeAllAcpSessions(reason: string) {
+  for (const [key, state] of [...acpSessions]) {
+    disposeAcpSession(key, state, reason)
+  }
+
+  for (const child of [...acpChildren]) {
+    terminateChild(child)
+  }
+}
+
+function exitCodeForSignal(signal: NodeJS.Signals) {
+  return signal === "SIGINT" ? 130 : 143
+}
+
+function installAcpProcessCleanupHooks() {
+  if (acpGlobalState.cleanupHooksInstalled) {
+    return
+  }
+
+  acpGlobalState.cleanupHooksInstalled = true
+
+  process.once("exit", () => {
+    disposeAllAcpSessions("process exit")
+  })
+
+  const shutdown = (signal: NodeJS.Signals) => {
+    disposeAllAcpSessions(`process ${signal}`)
+    process.exit(exitCodeForSignal(signal))
+  }
+
+  process.once("SIGINT", shutdown)
+  process.once("SIGTERM", shutdown)
+}
+
+installAcpProcessCleanupHooks()
 
 async function createAcpSession({
   command,
@@ -961,11 +1176,14 @@ async function createAcpSession({
       child,
       command,
       connection,
+      disposed: false,
       idleTimer: null,
       key,
       queue: null,
+      runTail: Promise.resolve(),
       runSignal: null,
       stderr: capturedStderr,
+      toolCallIds: new Set(),
       toolNames: new Map(),
       workspace,
     }
@@ -1000,10 +1218,7 @@ async function createAcpSession({
     return state
   } catch (error) {
     connection.close(error)
-
-    if (child.exitCode === null && !child.killed) {
-      child.kill("SIGTERM")
-    }
+    terminateChild(child)
 
     throw new AcpStartupError(error, capturedStderr)
   }
@@ -1045,16 +1260,144 @@ async function getOrCreateAcpSession({
     disposeAcpSession(key, existing, "ACP session stale")
   }
 
-  return {
-    state: await createAcpSession({
-      command,
-      info,
-      key,
-      sessionId,
-      workspace,
-    }),
-    shouldIncludeRecap: true,
+  const pendingStartup = acpSessionStartups.get(key)
+
+  if (pendingStartup) {
+    const state = await pendingStartup
+
+    if (!state.connection.signal.aborted) {
+      clearAcpSessionIdleCleanup(state)
+
+      return {
+        state,
+        shouldIncludeRecap: false,
+      }
+    }
+
+    disposeAcpSession(key, state, "ACP session stale")
   }
+
+  const startup = createAcpSession({
+    command,
+    info,
+    key,
+    sessionId,
+    workspace,
+  })
+
+  acpSessionStartups.set(key, startup)
+
+  try {
+    const state = await startup
+
+    return {
+      state,
+      shouldIncludeRecap: true,
+    }
+  } finally {
+    if (acpSessionStartups.get(key) === startup) {
+      acpSessionStartups.delete(key)
+    }
+  }
+}
+
+function resetAcpRunState(state: AcpSessionState) {
+  state.toolCallIds.clear()
+  state.toolNames.clear()
+}
+
+async function acquireAcpRunSlot(state: AcpSessionState, signal: AbortSignal) {
+  const previousRun = state.runTail.catch(() => undefined)
+  let releaseCurrent = () => {}
+  let acquired = false
+  let released = false
+  const currentRun = new Promise<void>((resolve) => {
+    releaseCurrent = resolve
+  })
+  const tail = previousRun.then(() => currentRun)
+
+  state.runTail = tail
+
+  let abortListener: (() => void) | null = null
+  const abortWait = new Promise<"aborted">((resolve) => {
+    if (signal.aborted) {
+      resolve("aborted")
+      return
+    }
+
+    abortListener = () => resolve("aborted")
+    signal.addEventListener("abort", abortListener, { once: true })
+  })
+  const result = await Promise.race([
+    previousRun.then(() => "ready" as const),
+    abortWait,
+  ])
+
+  if (abortListener) {
+    signal.removeEventListener("abort", abortListener)
+  }
+
+  if (result === "aborted" || signal.aborted) {
+    released = true
+    releaseCurrent()
+    throw createAbortError("ACP run aborted before acquiring the session.")
+  }
+
+  acquired = true
+
+  return () => {
+    if (released) {
+      return
+    }
+
+    released = true
+    releaseCurrent()
+
+    if (acquired && state.runTail === tail) {
+      state.runTail = Promise.resolve()
+    }
+  }
+}
+
+function cleanupAbortHandler({
+  clearAbortTimeout,
+  killTimer,
+  signal,
+  abort,
+}: {
+  clearAbortTimeout: boolean
+  killTimer: NodeJS.Timeout | null
+  signal: AbortSignal
+  abort: () => void
+}) {
+  signal.removeEventListener("abort", abort)
+
+  if (clearAbortTimeout && killTimer) {
+    clearTimeout(killTimer)
+  }
+}
+
+function scheduleAbortKill(state: AcpSessionState) {
+  const killTimer = setTimeout(() => {
+    disposeAcpSession(state.key, state, "ACP abort timeout")
+  }, ACP_ABORT_KILL_TIMEOUT_MS)
+
+  killTimer.unref()
+
+  return killTimer
+}
+
+function notifyAcpCancel(state: AcpSessionState) {
+  void state.connection.agent
+    .notify(methods.agent.session.cancel, {
+      sessionId: state.acpSessionId,
+    })
+    .catch((error) => {
+      debugAcp("cancel_failed", {
+        acpSessionId: state.acpSessionId,
+        error: errorMessage(error),
+      })
+    })
 }
 
 function installAbortHandler({
@@ -1066,21 +1409,12 @@ function installAbortHandler({
 }) {
   let killTimer: NodeJS.Timeout | null = null
   const abort = () => {
-    void state.connection.agent
-      .notify(methods.agent.session.cancel, {
-        sessionId: state.acpSessionId,
-      })
-      .catch((error) => {
-        debugAcp("cancel_failed", {
-          acpSessionId: state.acpSessionId,
-          error: errorMessage(error),
-        })
-      })
+    if (killTimer) {
+      return
+    }
 
-    killTimer = setTimeout(() => {
-      disposeAcpSession(state.key, state, "ACP abort timeout")
-    }, ACP_ABORT_KILL_TIMEOUT_MS)
-    killTimer.unref()
+    notifyAcpCancel(state)
+    killTimer = scheduleAbortKill(state)
   }
 
   if (signal.aborted) {
@@ -1089,12 +1423,16 @@ function installAbortHandler({
     signal.addEventListener("abort", abort, { once: true })
   }
 
-  return () => {
-    signal.removeEventListener("abort", abort)
-
-    if (killTimer) {
-      clearTimeout(killTimer)
-    }
+  return {
+    cleanup: (clearAbortTimeout: boolean) => {
+      cleanupAbortHandler({
+        clearAbortTimeout,
+        killTimer,
+        signal,
+        abort,
+      })
+    },
+    hasAbortTimeout: () => Boolean(killTimer),
   }
 }
 
@@ -1107,13 +1445,15 @@ async function pumpAcpPrompt({
   input: AgentRunInput
   queue: AgentEventQueue
   shouldIncludeRecap: boolean
-    state: AcpSessionState
+  state: AcpSessionState
 }) {
+  resetAcpRunState(state)
   state.runSignal = input.signal
-  const cleanupAbortHandler = installAbortHandler({
+  const abortHandler = installAbortHandler({
     signal: input.signal,
     state,
   })
+  let completedNormally = false
 
   try {
     const promptResponse = state.activeSession.prompt(
@@ -1140,6 +1480,7 @@ async function pumpAcpPrompt({
     }
 
     await promptResponse
+    completedNormally = true
   } catch (error) {
     if (!isAbortLikeError(error, input.signal)) {
       queue.push({
@@ -1148,7 +1489,7 @@ async function pumpAcpPrompt({
       })
     }
   } finally {
-    cleanupAbortHandler()
+    abortHandler.cleanup(completedNormally || !abortHandler.hasAbortTimeout())
     if (state.runSignal === input.signal) {
       state.runSignal = null
     }
@@ -1196,6 +1537,30 @@ async function* streamAcpRun(
     return
   }
 
+  let releaseRunSlot: (() => void) | null = null
+
+  try {
+    releaseRunSlot = await acquireAcpRunSlot(state, input.signal)
+    clearAcpSessionIdleCleanup(state)
+  } catch (error) {
+    if (!isAbortLikeError(error, input.signal)) {
+      yield {
+        type: "error",
+        message: errorMessage(error),
+      }
+    }
+    return
+  }
+
+  if (state.connection.signal.aborted || acpSessions.get(state.key) !== state) {
+    releaseRunSlot()
+    yield {
+      type: "error",
+      message: `${options.info.label} ACP session ended before this run could start.`,
+    }
+    return
+  }
+
   const queue = new AgentEventQueue()
 
   state.queue = queue
@@ -1209,6 +1574,8 @@ async function* streamAcpRun(
     if (state.queue === queue) {
       state.queue = null
     }
+
+    releaseRunSlot?.()
 
     if (
       acpSessions.get(state.key) === state &&
