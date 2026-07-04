@@ -4,6 +4,7 @@ import {
   initializeAcpConnection,
   spawnAcpChild,
   type AcpCommandSpec,
+  type AcpStdioCommandSpec,
 } from "@/lib/agent/acp/acp-runtime"
 import { ensureAcpWorkspace } from "@/lib/agent/acp/workspace"
 import {
@@ -41,6 +42,10 @@ const targets: SmokeTarget[] = [
 ]
 
 function commandToString(command: AcpCommandSpec) {
+  if (command.transport === "http") {
+    return command.url
+  }
+
   return [command.command, ...(command.args ?? [])].join(" ")
 }
 
@@ -74,10 +79,16 @@ async function smokeTarget(target: SmokeTarget) {
     return
   }
 
+  if (probe.command.transport === "http") {
+    console.log(`${target.id}: skipped HTTP ACP target - ${probe.command.url}`)
+    return
+  }
+
+  const command: AcpStdioCommandSpec = probe.command
   const workspace = ensureAcpWorkspace(
     `smoke-${target.id}-${Date.now()}-${Math.random().toString(36).slice(2)}`
   )
-  const child = spawnAcpChild(probe.command, workspace)
+  const child = spawnAcpChild(command, workspace)
   let stderr = ""
   const abortController = new AbortController()
   const app = createAcpClientApp({
@@ -114,7 +125,7 @@ async function smokeTarget(target: SmokeTarget) {
     )
 
     console.log(
-      `${target.id}: available - ${commandToString(probe.command)} - ` +
+      `${target.id}: available - ${commandToString(command)} - ` +
         `protocol=${initialize.protocolVersion} ` +
         `agent=${initialize.agentInfo?.name ?? "unknown"} ` +
         `session=${session.sessionId}`
@@ -124,7 +135,7 @@ async function smokeTarget(target: SmokeTarget) {
   } catch (error) {
     process.exitCode = 1
     console.log(
-      `${target.id}: failed - ${commandToString(probe.command)} - ${errorMessage(error)}`
+      `${target.id}: failed - ${commandToString(command)} - ${errorMessage(error)}`
     )
 
     if (stderr.trim()) {

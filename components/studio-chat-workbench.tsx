@@ -2445,6 +2445,20 @@ const assistantTraceLabelClassName = "block max-w-full truncate leading-6"
 const streamingPulseDotClassName =
   "[&>*:last-child]:after:ml-1.5 [&>*:last-child]:after:inline-block [&>*:last-child]:after:size-2.5 [&>*:last-child]:after:translate-y-[1px] [&>*:last-child]:after:rounded-full [&>*:last-child]:after:bg-foreground [&>*:last-child]:after:align-middle [&>*:last-child]:after:content-[''] [&>*:last-child]:after:animate-[studio-pulse-dot_1.1s_ease-in-out_infinite]"
 
+const fileToolNames = new Set([
+  "upload_file",
+  "list_files",
+  "read_file",
+  "write_file",
+  "download_file",
+  "ls",
+  "edit_file",
+  "glob",
+  "grep",
+])
+
+const commandToolNames = new Set(["run_command", "execute"])
+
 function formatReasoningDuration(locale: "en" | "zh", durationMs: number) {
   const seconds = Math.max(1, Math.round(durationMs / 1000))
 
@@ -2911,6 +2925,32 @@ function formatCommandActivityLabel({
   return typeof formatter === "function" ? formatter(command) : fallback
 }
 
+function formatGenericToolActivityLabel({
+  running,
+  toolName,
+  t,
+}: {
+  running: boolean
+  toolName: string
+  t: ReturnType<typeof useI18n>["t"]
+}) {
+  const isZh = t.studioThinking === "正在思考"
+
+  if (isZh) {
+    return toolName
+      ? `${running ? "正在调用工具" : "已调用工具"} ${toolName}`
+      : running
+        ? "正在调用工具"
+        : "已调用工具"
+  }
+
+  return toolName
+    ? `${running ? "Calling tool" : "Called tool"} ${toolName}`
+    : running
+      ? "Calling tool"
+      : "Called tool"
+}
+
 function parseToolInputObject(input: string) {
   try {
     const parsed = JSON.parse(input) as Record<string, unknown>
@@ -2931,8 +2971,11 @@ function getFileToolTarget(input: string) {
   const path = typeof parsed.path === "string" ? parsed.path.trim() : ""
   const name = typeof parsed.name === "string" ? parsed.name.trim() : ""
   const fileId = typeof parsed.file_id === "string" ? parsed.file_id.trim() : ""
+  const pattern =
+    typeof parsed.pattern === "string" ? parsed.pattern.trim() : ""
+  const query = typeof parsed.query === "string" ? parsed.query.trim() : ""
 
-  return path || name || fileId || ""
+  return path || name || fileId || pattern || query || ""
 }
 
 function getSandboxHostToolPort(input: string) {
@@ -3008,7 +3051,7 @@ function getActivityLabel(
       : t.studioToolRanCode(language)
   }
 
-  if (activity.toolName === "run_command") {
+  if (commandToolNames.has(activity.toolName)) {
     const { command } = getRunCommandPayload(activity.input)
 
     return formatCommandActivityLabel({
@@ -3026,13 +3069,7 @@ function getActivityLabel(
       : t.studioToolResolvedHost(port)
   }
 
-  if (
-    activity.toolName === "upload_file" ||
-    activity.toolName === "list_files" ||
-    activity.toolName === "read_file" ||
-    activity.toolName === "write_file" ||
-    activity.toolName === "download_file"
-  ) {
+  if (fileToolNames.has(activity.toolName)) {
     const target = getFileActivityTarget(activity)
 
     if (activity.toolName === "upload_file") {
@@ -3047,13 +3084,28 @@ function getActivityLabel(
         : t.studioToolListedFiles(target)
     }
 
+    if (activity.toolName === "ls" || activity.toolName === "glob") {
+      return activity.status === "running"
+        ? t.studioToolListingFiles(target)
+        : t.studioToolListedFiles(target)
+    }
+
     if (activity.toolName === "read_file") {
       return activity.status === "running"
         ? t.studioToolReadingFile(target)
         : t.studioToolReadFile(target)
     }
 
-    if (activity.toolName === "write_file") {
+    if (activity.toolName === "grep") {
+      return activity.status === "running"
+        ? t.studioToolSearching(target)
+        : t.studioToolAnalyzed(target)
+    }
+
+    if (
+      activity.toolName === "write_file" ||
+      activity.toolName === "edit_file"
+    ) {
       return activity.status === "running"
         ? t.studioToolWritingFile(target)
         : t.studioToolWroteFile(target)
@@ -3092,11 +3144,19 @@ function getActivityLabel(
       : t.studioToolCalledMcpTool(toolName)
   }
 
-  const query = getWebSearchQuery(activity.input)
+  if (activity.toolName === "web_search") {
+    const query = getWebSearchQuery(activity.input)
 
-  return activity.status === "running"
-    ? t.studioToolSearching(query)
-    : t.studioToolAnalyzed(query)
+    return activity.status === "running"
+      ? t.studioToolSearching(query)
+      : t.studioToolAnalyzed(query)
+  }
+
+  return formatGenericToolActivityLabel({
+    running: activity.status === "running",
+    toolName: activity.toolName,
+    t,
+  })
 }
 
 function renderActivityInlineLabel(
@@ -3407,6 +3467,71 @@ function FileToolActivity({ activity }: { activity: StudioMessageActivity }) {
   )
 }
 
+function GenericToolActivity({ activity }: { activity: StudioMessageActivity }) {
+  const { t } = useI18n()
+  const output =
+    activity.status === "error"
+      ? activity.error || t.studioToolError
+      : activity.output.trim()
+  const defaultOpen = activity.status === "running" || activity.status === "error"
+
+  return (
+    <ChainOfThought className={assistantTraceContainerClassName}>
+      <ChainOfThoughtStep
+        key={`${activity.id}-${activity.status}`}
+        defaultOpen={defaultOpen}
+      >
+        <ChainOfThoughtTrigger
+          className={assistantTraceTriggerClassName}
+          leftIcon={
+            activity.status === "complete" ? (
+              <RiCheckLine aria-hidden className="size-4" />
+            ) : (
+              <RiTerminalLine aria-hidden className="size-4" />
+            )
+          }
+        >
+          {renderActivityInlineLabel(activity, t)}
+        </ChainOfThoughtTrigger>
+
+        <ChainOfThoughtContent>
+          <div className="space-y-2 border-l pl-3">
+            {activity.input.trim() ? (
+              <CodeBlock className="rounded-2xl shadow-sm">
+                <CodeBlockGroup className="gap-3 border-b bg-muted/40 px-3 py-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <RiTerminalLine
+                      aria-hidden
+                      className="size-4 text-muted-foreground"
+                    />
+                    <span className="truncate text-sm font-medium">
+                      {t.input} · {activity.toolName}
+                    </span>
+                  </div>
+                </CodeBlockGroup>
+                <CodeBlockCode code={activity.input} language="json" />
+              </CodeBlock>
+            ) : null}
+
+            {activity.status === "running" ? null : output ? (
+              <>
+                <div className="text-xs font-semibold text-muted-foreground uppercase">
+                  {t.output}
+                </div>
+                <SandboxToolOutput output={output} />
+              </>
+            ) : (
+              <div className="text-sm text-muted-foreground">
+                {t.studioToolNoOutput}
+              </div>
+            )}
+          </div>
+        </ChainOfThoughtContent>
+      </ChainOfThoughtStep>
+    </ChainOfThought>
+  )
+}
+
 function RunCommandActivity({ activity }: { activity: StudioMessageActivity }) {
   const { t } = useI18n()
   const payload = getRunCommandPayload(activity.input)
@@ -3614,7 +3739,7 @@ function AssistantActivity({ activity }: { activity: StudioMessageActivity }) {
     return <RunCodeActivity activity={activity} />
   }
 
-  if (activity.toolName === "run_command") {
+  if (commandToolNames.has(activity.toolName)) {
     return <RunCommandActivity activity={activity} />
   }
 
@@ -3622,13 +3747,7 @@ function AssistantActivity({ activity }: { activity: StudioMessageActivity }) {
     return <SandboxHostActivity activity={activity} />
   }
 
-  if (
-    activity.toolName === "upload_file" ||
-    activity.toolName === "list_files" ||
-    activity.toolName === "read_file" ||
-    activity.toolName === "write_file" ||
-    activity.toolName === "download_file"
-  ) {
+  if (fileToolNames.has(activity.toolName)) {
     return <FileToolActivity activity={activity} />
   }
 
@@ -3678,30 +3797,30 @@ function AssistantActivity({ activity }: { activity: StudioMessageActivity }) {
     )
   }
 
-  if (activity.toolName !== "web_search" && activity.toolName !== "web_fetch") {
-    return null
+  if (activity.toolName === "web_search" || activity.toolName === "web_fetch") {
+    return (
+      <ChainOfThought className={assistantTraceContainerClassName}>
+        <ChainOfThoughtStep key={`${activity.id}-${activity.status}`} disabled>
+          <ChainOfThoughtTrigger
+            className={cn(assistantTraceTriggerClassName, "cursor-default")}
+            leftIcon={
+              activity.status === "complete" ? (
+                <RiCheckLine aria-hidden className="size-4" />
+              ) : activity.toolName === "web_fetch" ? (
+                <RiFileTextLine aria-hidden className="size-4" />
+              ) : (
+                <RiSearchLine aria-hidden className="size-4" />
+              )
+            }
+          >
+            {renderActivityInlineLabel(activity, t)}
+          </ChainOfThoughtTrigger>
+        </ChainOfThoughtStep>
+      </ChainOfThought>
+    )
   }
 
-  return (
-    <ChainOfThought className={assistantTraceContainerClassName}>
-      <ChainOfThoughtStep key={`${activity.id}-${activity.status}`} disabled>
-        <ChainOfThoughtTrigger
-          className={cn(assistantTraceTriggerClassName, "cursor-default")}
-          leftIcon={
-            activity.status === "complete" ? (
-              <RiCheckLine aria-hidden className="size-4" />
-            ) : activity.toolName === "web_fetch" ? (
-              <RiFileTextLine aria-hidden className="size-4" />
-            ) : (
-              <RiSearchLine aria-hidden className="size-4" />
-            )
-          }
-        >
-          {renderActivityInlineLabel(activity, t)}
-        </ChainOfThoughtTrigger>
-      </ChainOfThoughtStep>
-    </ChainOfThought>
-  )
+  return <GenericToolActivity activity={activity} />
 }
 
 const AssistantContentParts = React.memo(function AssistantContentParts({

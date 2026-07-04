@@ -2,7 +2,11 @@ import { spawnSync } from "node:child_process"
 import { accessSync, constants, realpathSync } from "node:fs"
 import { delimiter, join } from "node:path"
 
-import { AcpRuntime, type AcpCommandSpec } from "@/lib/agent/acp/acp-runtime"
+import {
+  AcpRuntime,
+  type AcpCommandSpec,
+  type AcpStdioCommandSpec,
+} from "@/lib/agent/acp/acp-runtime"
 import {
   registerAgentRuntime,
   type AgentRuntimeInfo,
@@ -91,7 +95,7 @@ function resolveNodeModulesBin(name: string) {
 function resolveNodePackageScript(
   packageName: string,
   relativeScriptPath: string
-): AcpCommandSpec | null {
+): AcpStdioCommandSpec | null {
   const scriptPath = join(
     process.cwd(),
     "node_modules",
@@ -244,6 +248,10 @@ export function resolveClaudeCodeAcpCommand() {
     return null
   }
 
+  if (probe.command.transport === "http") {
+    return probe.command
+  }
+
   const apiKey = getStoredModelverseApiKey()
 
   return {
@@ -256,10 +264,6 @@ export function resolveClaudeCodeAcpCommand() {
         }
       : probe.command.env,
   }
-}
-
-function openCodeAcpLooksStdioCompatible(help: string) {
-  return /stdio/i.test(help) || /--stdio\b/.test(help)
 }
 
 export function probeOpenCodeAcpCommand(): CommandProbe {
@@ -282,33 +286,13 @@ export function probeOpenCodeAcpCommand(): CommandProbe {
     return openCodeProbe
   }
 
-  const help = getCommandOutput(openCodePath, ["acp", "--help"])
-
-  if (!help) {
-    openCodeProbe = {
-      available: false,
-      detail: `${openCodePath} acp --help did not produce usable output`,
-    }
-    return openCodeProbe
-  }
-
-  if (!openCodeAcpLooksStdioCompatible(help)) {
-    openCodeProbe = {
-      available: false,
-      detail:
-        `${openCodePath} acp is HTTP-oriented (` +
-        "--port/--hostname in help) and does not advertise stdio mode",
-    }
-    return openCodeProbe
-  }
-
   openCodeProbe = {
     available: true,
     command: {
       command: openCodePath,
       args: ["acp"],
     },
-    detail: `using local OpenCode ACP command at ${openCodePath}`,
+    detail: `using local OpenCode ACP stdio command at ${openCodePath}`,
   }
 
   return openCodeProbe

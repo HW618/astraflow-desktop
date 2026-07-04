@@ -17,6 +17,7 @@ export type StudioMessageActivity = {
   input: string
   output: string
   error: string | null
+  parentTaskId?: string | null
 }
 
 export type StudioPermissionOption = {

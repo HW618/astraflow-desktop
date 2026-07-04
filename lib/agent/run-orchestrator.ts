@@ -617,6 +617,7 @@ function createSnapshotAccumulator() {
           ? {
               ...existingById,
               input: existingById.input || event.input,
+              parentTaskId: existingById.parentTaskId ?? event.parentTaskId,
             }
           : {
               id: event.id,
@@ -625,6 +626,7 @@ function createSnapshotAccumulator() {
               input: event.input,
               output: "",
               error: null,
+              parentTaskId: event.parentTaskId ?? null,
             }
 
         snapshot = {

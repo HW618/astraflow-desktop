@@ -9,6 +9,7 @@ import {
   type InitializeResponse,
   type SessionUpdate,
 } from "@agentclientprotocol/sdk"
+import { createHttpStream } from "@agentclientprotocol/sdk/experimental/http-client"
 import type { BaseMessage } from "@langchain/core/messages"
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
 import { randomUUID } from "node:crypto"
@@ -30,11 +31,20 @@ import type {
 } from "@/lib/agent/runtime"
 import { ensureAcpWorkspace } from "@/lib/agent/acp/workspace"
 
-export type AcpCommandSpec = {
+export type AcpStdioCommandSpec = {
+  transport?: "stdio"
   command: string
   args?: string[]
   env?: Record<string, string | undefined>
 }
+
+export type AcpHttpCommandSpec = {
+  transport: "http"
+  url: string
+  headers?: Record<string, string>
+}
+
+export type AcpCommandSpec = AcpStdioCommandSpec | AcpHttpCommandSpec
 
 export type AcpRuntimeOptions = {
   info: AgentRuntimeInfo
@@ -44,7 +54,7 @@ export type AcpRuntimeOptions = {
 type AcpSessionState = {
   acpSessionId: string
   activeSession: ActiveSession
-  child: ChildProcessWithoutNullStreams
+  child: ChildProcessWithoutNullStreams | null
   command: AcpCommandSpec
   connection: ClientConnection
   disposed: boolean
@@ -227,6 +237,10 @@ function getAcpWorkspace(input: AgentRunInput) {
 }
 
 function commandToString(command: AcpCommandSpec) {
+  if (command.transport === "http") {
+    return command.url
+  }
+
   return [command.command, ...(command.args ?? [])].join(" ")
 }
 
@@ -544,7 +558,7 @@ export function createAcpClientApp({
 }
 
 export function spawnAcpChild(
-  command: AcpCommandSpec,
+  command: AcpStdioCommandSpec,
   cwd: string
 ): ChildProcessWithoutNullStreams {
   const child = spawn(command.command, command.args ?? [], {
@@ -569,6 +583,35 @@ export function createAcpProcessStream(child: ChildProcessWithoutNullStreams) {
     Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
     Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>
   )
+}
+
+function createAcpCommandStream(
+  command: AcpCommandSpec,
+  cwd: string
+): {
+  child: ChildProcessWithoutNullStreams | null
+  spawnError: Promise<never>
+  stream: ReturnType<typeof ndJsonStream>
+} {
+  if (command.transport === "http") {
+    return {
+      child: null,
+      spawnError: new Promise<never>(() => undefined),
+      stream: createHttpStream(command.url, {
+        headers: command.headers,
+      }) as ReturnType<typeof ndJsonStream>,
+    }
+  }
+
+  const child = spawnAcpChild(command, cwd)
+
+  return {
+    child,
+    spawnError: new Promise<never>((_, reject) => {
+      child.once("error", reject)
+    }),
+    stream: createAcpProcessStream(child),
+  }
 }
 
 export async function initializeAcpConnection(
@@ -1022,6 +1065,10 @@ function terminateAcpChild(
   state: AcpSessionState,
   timeoutMs = ACP_TERMINATE_KILL_TIMEOUT_MS
 ) {
+  if (!state.child) {
+    return
+  }
+
   terminateChild(state.child, timeoutMs)
 }
 
@@ -1117,11 +1164,13 @@ async function createAcpSession({
   sessionId: string
   workspace: string
 }) {
-  const child = spawnAcpChild(command, workspace)
+  const { child, spawnError, stream } = createAcpCommandStream(
+    command,
+    workspace
+  )
   let state: AcpSessionState | null = null
   let capturedStderr = ""
   const fallbackAbortController = new AbortController()
-  const stream = createAcpProcessStream(child)
   const app = createAcpClientApp({
     debugLabel: info.id,
     getSignal: () => state?.runSignal ?? fallbackAbortController.signal,
@@ -1132,11 +1181,8 @@ async function createAcpSession({
     },
   })
   const connection = app.connect(stream)
-  const spawnError = new Promise<never>((_, reject) => {
-    child.once("error", reject)
-  })
 
-  child.stderr.on("data", (chunk: Buffer) => {
+  child?.stderr.on("data", (chunk: Buffer) => {
     capturedStderr = `${capturedStderr}${chunk.toString("utf8")}`
 
     if (capturedStderr.length > MAX_CAPTURED_STDERR_LENGTH) {
@@ -1192,7 +1238,7 @@ async function createAcpSession({
       workspace,
     }
 
-    child.once("exit", (code, signal) => {
+    child?.once("exit", (code, signal) => {
       if (!state) {
         return
       }
@@ -1222,7 +1268,10 @@ async function createAcpSession({
     return state
   } catch (error) {
     connection.close(error)
-    terminateChild(child)
+
+    if (child) {
+      terminateChild(child)
+    }
 
     throw new AcpStartupError(error, capturedStderr)
   }
