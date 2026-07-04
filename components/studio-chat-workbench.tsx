@@ -2819,7 +2819,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
                 onClick={handleCopy}
               >
                 <RiFileCopyLine
-                  className={cn(copied && "text-emerald-500")}
+                  className={cn(copied && "text-primary")}
                   aria-hidden
                 />
               </Button>
@@ -2831,7 +2831,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
                 size="icon-sm"
                 className={cn(
                   "rounded-full",
-                  liked === true && "bg-emerald-50 text-emerald-600"
+                  liked === true && "bg-primary/10 text-primary"
                 )}
                 onClick={() => setLiked(true)}
               >

@@ -466,47 +466,290 @@ const STUDIO_SESSION_SANDBOX_VOLUME_SETTING = "studio_session_sandbox_volume"
 let db: Database.Database | undefined
 let codeBoxSandboxOwnerColumnsReady = false
 
+export type SqliteColumnDefinition = {
+  name: string
+  definition: string
+}
+
+const studioTableColumns = {
+  studio_sessions: [
+    { name: "id", definition: "id TEXT" },
+    { name: "mode", definition: "mode TEXT NOT NULL DEFAULT 'chat'" },
+    { name: "title", definition: "title TEXT NOT NULL DEFAULT 'New chat'" },
+    { name: "created_at", definition: "created_at TEXT NOT NULL DEFAULT ''" },
+    { name: "updated_at", definition: "updated_at TEXT NOT NULL DEFAULT ''" },
+  ],
+  studio_messages: [
+    { name: "id", definition: "id TEXT" },
+    { name: "session_id", definition: "session_id TEXT NOT NULL DEFAULT ''" },
+    { name: "role", definition: "role TEXT NOT NULL DEFAULT 'assistant'" },
+    { name: "content", definition: "content TEXT NOT NULL DEFAULT ''" },
+    { name: "model", definition: "model TEXT" },
+    { name: "version_group_id", definition: "version_group_id TEXT" },
+    {
+      name: "version_index",
+      definition: "version_index INTEGER NOT NULL DEFAULT 1",
+    },
+    {
+      name: "active_version",
+      definition: "active_version INTEGER NOT NULL DEFAULT 1",
+    },
+    { name: "activities", definition: "activities TEXT" },
+    { name: "parts", definition: "parts TEXT" },
+    {
+      name: "reasoning_content",
+      definition: "reasoning_content TEXT NOT NULL DEFAULT ''",
+    },
+    {
+      name: "reasoning_duration_ms",
+      definition: "reasoning_duration_ms INTEGER",
+    },
+    { name: "status", definition: "status TEXT NOT NULL DEFAULT 'complete'" },
+    { name: "attachments", definition: "attachments TEXT" },
+    { name: "created_at", definition: "created_at TEXT NOT NULL DEFAULT ''" },
+  ],
+  studio_settings: [
+    { name: "key", definition: "key TEXT" },
+    { name: "value", definition: "value TEXT NOT NULL DEFAULT ''" },
+    { name: "updated_at", definition: "updated_at TEXT NOT NULL DEFAULT ''" },
+  ],
+  studio_session_sandboxes: [
+    { name: "session_id", definition: "session_id TEXT" },
+    { name: "sandbox_id", definition: "sandbox_id TEXT NOT NULL DEFAULT ''" },
+    { name: "sandbox_domain", definition: "sandbox_domain TEXT" },
+    { name: "template", definition: "template TEXT NOT NULL DEFAULT ''" },
+    { name: "status", definition: "status TEXT NOT NULL DEFAULT 'unknown'" },
+    {
+      name: "auto_pause_timeout_seconds",
+      definition: "auto_pause_timeout_seconds INTEGER NOT NULL DEFAULT 300",
+    },
+    { name: "volume_id", definition: "volume_id TEXT" },
+    { name: "volume_name", definition: "volume_name TEXT" },
+    { name: "volume_path", definition: "volume_path TEXT" },
+    { name: "created_at", definition: "created_at TEXT NOT NULL DEFAULT ''" },
+    { name: "updated_at", definition: "updated_at TEXT NOT NULL DEFAULT ''" },
+    { name: "last_used_at", definition: "last_used_at TEXT NOT NULL DEFAULT ''" },
+  ],
+  studio_session_files: [
+    { name: "id", definition: "id TEXT" },
+    { name: "session_id", definition: "session_id TEXT NOT NULL DEFAULT ''" },
+    { name: "message_id", definition: "message_id TEXT" },
+    { name: "kind", definition: "kind TEXT NOT NULL DEFAULT 'attachment'" },
+    {
+      name: "original_name",
+      definition: "original_name TEXT NOT NULL DEFAULT ''",
+    },
+    { name: "mime_type", definition: "mime_type TEXT" },
+    { name: "size", definition: "size INTEGER" },
+    { name: "storage_path", definition: "storage_path TEXT NOT NULL DEFAULT ''" },
+    { name: "sandbox_path", definition: "sandbox_path TEXT" },
+    { name: "source_tool_call_id", definition: "source_tool_call_id TEXT" },
+    { name: "saved_at", definition: "saved_at TEXT" },
+    { name: "created_at", definition: "created_at TEXT NOT NULL DEFAULT ''" },
+    { name: "updated_at", definition: "updated_at TEXT NOT NULL DEFAULT ''" },
+  ],
+  studio_installed_skills: [
+    { name: "slug", definition: "slug TEXT" },
+    { name: "version", definition: "version TEXT NOT NULL DEFAULT ''" },
+    { name: "skill_meta", definition: "skill_meta TEXT NOT NULL DEFAULT '{}'" },
+    { name: "skill_md", definition: "skill_md TEXT NOT NULL DEFAULT ''" },
+    { name: "enabled", definition: "enabled INTEGER NOT NULL DEFAULT 1" },
+    { name: "install_path", definition: "install_path TEXT NOT NULL DEFAULT ''" },
+    {
+      name: "installed_file_count",
+      definition: "installed_file_count INTEGER NOT NULL DEFAULT 0",
+    },
+    {
+      name: "installed_size_bytes",
+      definition: "installed_size_bytes INTEGER NOT NULL DEFAULT 0",
+    },
+    { name: "installed_at", definition: "installed_at TEXT NOT NULL DEFAULT ''" },
+    { name: "updated_at", definition: "updated_at TEXT NOT NULL DEFAULT ''" },
+  ],
+  studio_session_skill_syncs: [
+    { name: "session_id", definition: "session_id TEXT NOT NULL DEFAULT ''" },
+    { name: "slug", definition: "slug TEXT NOT NULL DEFAULT ''" },
+    { name: "version", definition: "version TEXT NOT NULL DEFAULT ''" },
+    { name: "sandbox_id", definition: "sandbox_id TEXT NOT NULL DEFAULT ''" },
+    { name: "sandbox_path", definition: "sandbox_path TEXT NOT NULL DEFAULT ''" },
+    { name: "synced_at", definition: "synced_at TEXT NOT NULL DEFAULT ''" },
+  ],
+  codebox_volumes: [
+    { name: "volume_id", definition: "volume_id TEXT" },
+    { name: "name", definition: "name TEXT NOT NULL DEFAULT ''" },
+    { name: "created_at", definition: "created_at TEXT NOT NULL DEFAULT ''" },
+    { name: "last_seen_at", definition: "last_seen_at TEXT NOT NULL DEFAULT ''" },
+  ],
+  codebox_sandboxes: [
+    { name: "sandbox_id", definition: "sandbox_id TEXT" },
+    { name: "name", definition: "name TEXT" },
+    { name: "owner_key", definition: "owner_key TEXT" },
+    { name: "owner_email", definition: "owner_email TEXT" },
+    { name: "company_id", definition: "company_id TEXT" },
+    { name: "project_id", definition: "project_id TEXT" },
+    { name: "volume_id", definition: "volume_id TEXT" },
+    { name: "volume_name", definition: "volume_name TEXT" },
+    { name: "sandbox_domain", definition: "sandbox_domain TEXT" },
+    { name: "template", definition: "template TEXT NOT NULL DEFAULT ''" },
+    { name: "status", definition: "status TEXT NOT NULL DEFAULT 'unknown'" },
+    { name: "code_server_url", definition: "code_server_url TEXT" },
+    { name: "code_server_host", definition: "code_server_host TEXT" },
+    {
+      name: "code_server_port",
+      definition: "code_server_port INTEGER NOT NULL DEFAULT 0",
+    },
+    { name: "password", definition: "password TEXT" },
+    {
+      name: "workspace_path",
+      definition: "workspace_path TEXT NOT NULL DEFAULT ''",
+    },
+    { name: "repo_url", definition: "repo_url TEXT" },
+    { name: "started_at", definition: "started_at TEXT" },
+    { name: "end_at", definition: "end_at TEXT" },
+    { name: "created_at", definition: "created_at TEXT NOT NULL DEFAULT ''" },
+    { name: "updated_at", definition: "updated_at TEXT NOT NULL DEFAULT ''" },
+    { name: "last_used_at", definition: "last_used_at TEXT NOT NULL DEFAULT ''" },
+  ],
+  studio_mcp_servers: [
+    { name: "id", definition: "id TEXT" },
+    { name: "name", definition: "name TEXT NOT NULL DEFAULT ''" },
+    { name: "title", definition: "title TEXT NOT NULL DEFAULT ''" },
+    {
+      name: "description",
+      definition: "description TEXT NOT NULL DEFAULT ''",
+    },
+    { name: "source", definition: "source TEXT NOT NULL DEFAULT ''" },
+    { name: "registry_name", definition: "registry_name TEXT" },
+    { name: "registry_version", definition: "registry_version TEXT" },
+    { name: "transport", definition: "transport TEXT NOT NULL DEFAULT 'stdio'" },
+    { name: "config", definition: "config TEXT NOT NULL DEFAULT '{}'" },
+    {
+      name: "capabilities",
+      definition: "capabilities TEXT NOT NULL DEFAULT '{}'",
+    },
+    { name: "tools", definition: "tools TEXT NOT NULL DEFAULT '[]'" },
+    { name: "resources", definition: "resources TEXT NOT NULL DEFAULT '[]'" },
+    { name: "prompts", definition: "prompts TEXT NOT NULL DEFAULT '[]'" },
+    { name: "enabled", definition: "enabled INTEGER NOT NULL DEFAULT 1" },
+    { name: "last_connected_at", definition: "last_connected_at TEXT" },
+    { name: "last_error", definition: "last_error TEXT" },
+    { name: "created_at", definition: "created_at TEXT NOT NULL DEFAULT ''" },
+    { name: "updated_at", definition: "updated_at TEXT NOT NULL DEFAULT ''" },
+  ],
+  studio_mcp_server_secrets: [
+    { name: "server_id", definition: "server_id TEXT NOT NULL DEFAULT ''" },
+    { name: "name", definition: "name TEXT NOT NULL DEFAULT ''" },
+    { name: "value", definition: "value TEXT NOT NULL DEFAULT ''" },
+    { name: "updated_at", definition: "updated_at TEXT NOT NULL DEFAULT ''" },
+  ],
+  studio_mcp_registry_servers: [
+    { name: "id", definition: "id TEXT" },
+    { name: "name", definition: "name TEXT NOT NULL DEFAULT ''" },
+    { name: "version", definition: "version TEXT NOT NULL DEFAULT ''" },
+    { name: "title", definition: "title TEXT NOT NULL DEFAULT ''" },
+    {
+      name: "description",
+      definition: "description TEXT NOT NULL DEFAULT ''",
+    },
+    { name: "status", definition: "status TEXT NOT NULL DEFAULT ''" },
+    { name: "latest", definition: "latest INTEGER NOT NULL DEFAULT 0" },
+    { name: "source", definition: "source TEXT NOT NULL DEFAULT 'official'" },
+    { name: "transports", definition: "transports TEXT NOT NULL DEFAULT '[]'" },
+    { name: "server_json", definition: "server_json TEXT NOT NULL DEFAULT '{}'" },
+    {
+      name: "registry_meta",
+      definition: "registry_meta TEXT NOT NULL DEFAULT '{}'",
+    },
+    { name: "updated_at", definition: "updated_at TEXT NOT NULL DEFAULT ''" },
+    { name: "synced_at", definition: "synced_at TEXT NOT NULL DEFAULT ''" },
+  ],
+  studio_image_generations: [
+    { name: "id", definition: "id TEXT" },
+    { name: "session_id", definition: "session_id TEXT NOT NULL DEFAULT ''" },
+    {
+      name: "model_square_id",
+      definition: "model_square_id TEXT NOT NULL DEFAULT ''",
+    },
+    { name: "model_name", definition: "model_name TEXT NOT NULL DEFAULT ''" },
+    { name: "manufacturer", definition: "manufacturer TEXT" },
+    { name: "openapi_file", definition: "openapi_file TEXT" },
+    { name: "operation_id", definition: "operation_id TEXT" },
+    { name: "prompt", definition: "prompt TEXT NOT NULL DEFAULT ''" },
+    { name: "params", definition: "params TEXT NOT NULL DEFAULT '{}'" },
+    { name: "status", definition: "status TEXT NOT NULL DEFAULT 'queued'" },
+    { name: "error_message", definition: "error_message TEXT" },
+    { name: "raw_response", definition: "raw_response TEXT" },
+    { name: "created_at", definition: "created_at TEXT NOT NULL DEFAULT ''" },
+    { name: "completed_at", definition: "completed_at TEXT" },
+  ],
+  studio_image_outputs: [
+    { name: "id", definition: "id TEXT" },
+    {
+      name: "generation_id",
+      definition: "generation_id TEXT NOT NULL DEFAULT ''",
+    },
+    {
+      name: "output_index",
+      definition: "output_index INTEGER NOT NULL DEFAULT 0",
+    },
+    { name: "url", definition: "url TEXT" },
+    { name: "data_url", definition: "data_url TEXT" },
+    { name: "storage_path", definition: "storage_path TEXT" },
+    { name: "mime_type", definition: "mime_type TEXT" },
+    { name: "width", definition: "width INTEGER" },
+    { name: "height", definition: "height INTEGER" },
+    { name: "metadata", definition: "metadata TEXT" },
+    { name: "saved_at", definition: "saved_at TEXT" },
+    { name: "created_at", definition: "created_at TEXT NOT NULL DEFAULT ''" },
+  ],
+} satisfies Record<string, SqliteColumnDefinition[]>
+
+function quoteSqliteIdentifier(identifier: string) {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(identifier)) {
+    throw new Error(`Invalid SQLite identifier: ${identifier}`)
+  }
+
+  return `"${identifier}"`
+}
+
+export function ensureSqliteTableColumns(
+  database: Database.Database,
+  tableName: string,
+  columns: SqliteColumnDefinition[]
+) {
+  const existingColumns = new Set(
+    (
+      database
+        .prepare(`PRAGMA table_info(${quoteSqliteIdentifier(tableName)})`)
+        .all() as Array<{ name: string }>
+    ).map((column) => column.name)
+  )
+
+  for (const column of columns) {
+    if (existingColumns.has(column.name)) {
+      continue
+    }
+
+    database.exec(
+      `ALTER TABLE ${quoteSqliteIdentifier(tableName)} ADD COLUMN ${
+        column.definition
+      }`
+    )
+    existingColumns.add(column.name)
+  }
+}
+
 function ensureCodeBoxSandboxOwnerColumns(database = getDb()) {
   if (codeBoxSandboxOwnerColumnsReady) {
     return
   }
 
-  const columns = database
-    .prepare(`PRAGMA table_info(codebox_sandboxes)`)
-    .all() as Array<{ name: string }>
-
-  if (!columns.some((column) => column.name === "owner_key")) {
-    database.exec(`ALTER TABLE codebox_sandboxes ADD COLUMN owner_key TEXT`)
-  }
-
-  if (!columns.some((column) => column.name === "name")) {
-    database.exec(`ALTER TABLE codebox_sandboxes ADD COLUMN name TEXT`)
-  }
-
-  if (!columns.some((column) => column.name === "owner_email")) {
-    database.exec(`ALTER TABLE codebox_sandboxes ADD COLUMN owner_email TEXT`)
-  }
-
-  if (!columns.some((column) => column.name === "project_id")) {
-    database.exec(`ALTER TABLE codebox_sandboxes ADD COLUMN project_id TEXT`)
-  }
-
-  if (!columns.some((column) => column.name === "company_id")) {
-    database.exec(`ALTER TABLE codebox_sandboxes ADD COLUMN company_id TEXT`)
-  }
-
-  if (!columns.some((column) => column.name === "volume_id")) {
-    database.exec(`ALTER TABLE codebox_sandboxes ADD COLUMN volume_id TEXT`)
-  }
-
-  if (!columns.some((column) => column.name === "volume_name")) {
-    database.exec(`ALTER TABLE codebox_sandboxes ADD COLUMN volume_name TEXT`)
-  }
-
-  database.exec(`
-    CREATE INDEX IF NOT EXISTS codebox_sandboxes_owner_updated_idx
-      ON codebox_sandboxes(owner_key, updated_at DESC);
-  `)
+  ensureSqliteTableColumns(
+    database,
+    "codebox_sandboxes",
+    studioTableColumns.codebox_sandboxes
+  )
+  ensureSchemaIndexes(database)
 
   codeBoxSandboxOwnerColumnsReady = true
 }
@@ -532,6 +775,7 @@ function getDb() {
   db.pragma("foreign_keys = ON")
   initializeSchema(db)
   migrateSchema(db)
+  ensureSchemaIndexes(db)
   reconcileInterruptedRuns(db)
 
   return db
@@ -585,15 +829,6 @@ function initializeSchema(database: Database.Database) {
       FOREIGN KEY (session_id) REFERENCES studio_sessions(id) ON DELETE CASCADE
     );
 
-    CREATE INDEX IF NOT EXISTS studio_sessions_updated_at_idx
-      ON studio_sessions(updated_at DESC);
-
-    CREATE INDEX IF NOT EXISTS studio_messages_session_id_created_at_idx
-      ON studio_messages(session_id, created_at ASC);
-
-    CREATE INDEX IF NOT EXISTS studio_messages_version_group_idx
-      ON studio_messages(session_id, version_group_id);
-
     CREATE TABLE IF NOT EXISTS studio_settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,
@@ -634,12 +869,6 @@ function initializeSchema(database: Database.Database) {
       FOREIGN KEY (message_id) REFERENCES studio_messages(id) ON DELETE SET NULL
     );
 
-    CREATE INDEX IF NOT EXISTS studio_session_files_session_idx
-      ON studio_session_files(session_id, created_at ASC);
-
-    CREATE INDEX IF NOT EXISTS studio_session_files_saved_idx
-      ON studio_session_files(saved_at DESC, created_at DESC);
-
     CREATE TABLE IF NOT EXISTS studio_installed_skills (
       slug TEXT PRIMARY KEY,
       version TEXT NOT NULL,
@@ -652,9 +881,6 @@ function initializeSchema(database: Database.Database) {
       installed_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
-
-    CREATE INDEX IF NOT EXISTS studio_installed_skills_enabled_idx
-      ON studio_installed_skills(enabled, updated_at DESC);
 
     CREATE TABLE IF NOT EXISTS studio_session_skill_syncs (
       session_id TEXT NOT NULL,
@@ -674,9 +900,6 @@ function initializeSchema(database: Database.Database) {
       created_at TEXT NOT NULL,
       last_seen_at TEXT NOT NULL
     );
-
-    CREATE INDEX IF NOT EXISTS codebox_volumes_name_idx
-      ON codebox_volumes(name);
 
     CREATE TABLE IF NOT EXISTS codebox_sandboxes (
       sandbox_id TEXT PRIMARY KEY,
@@ -703,12 +926,6 @@ function initializeSchema(database: Database.Database) {
       last_used_at TEXT NOT NULL
     );
 
-    CREATE INDEX IF NOT EXISTS codebox_sandboxes_updated_idx
-      ON codebox_sandboxes(updated_at DESC);
-
-    CREATE INDEX IF NOT EXISTS codebox_sandboxes_owner_updated_idx
-      ON codebox_sandboxes(owner_key, updated_at DESC);
-
     CREATE TABLE IF NOT EXISTS studio_mcp_servers (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -729,9 +946,6 @@ function initializeSchema(database: Database.Database) {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
-
-    CREATE INDEX IF NOT EXISTS studio_mcp_servers_enabled_idx
-      ON studio_mcp_servers(enabled, updated_at DESC);
 
     CREATE TABLE IF NOT EXISTS studio_mcp_server_secrets (
       server_id TEXT NOT NULL,
@@ -757,12 +971,6 @@ function initializeSchema(database: Database.Database) {
       updated_at TEXT NOT NULL,
       synced_at TEXT NOT NULL
     );
-
-    CREATE INDEX IF NOT EXISTS studio_mcp_registry_servers_name_idx
-      ON studio_mcp_registry_servers(name, latest DESC);
-
-    CREATE INDEX IF NOT EXISTS studio_mcp_registry_servers_synced_idx
-      ON studio_mcp_registry_servers(synced_at DESC);
 
     CREATE TABLE IF NOT EXISTS studio_image_generations (
       id TEXT PRIMARY KEY,
@@ -798,103 +1006,59 @@ function initializeSchema(database: Database.Database) {
       FOREIGN KEY (generation_id) REFERENCES studio_image_generations(id) ON DELETE CASCADE
     );
 
+  `)
+}
+
+function migrateSchema(database: Database.Database) {
+  for (const [tableName, columns] of Object.entries(studioTableColumns)) {
+    ensureSqliteTableColumns(database, tableName, columns)
+  }
+}
+
+function ensureSchemaIndexes(database: Database.Database) {
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS studio_sessions_updated_at_idx
+      ON studio_sessions(updated_at DESC);
+
+    CREATE INDEX IF NOT EXISTS studio_messages_session_id_created_at_idx
+      ON studio_messages(session_id, created_at ASC);
+
+    CREATE INDEX IF NOT EXISTS studio_messages_version_group_idx
+      ON studio_messages(session_id, version_group_id);
+
+    CREATE INDEX IF NOT EXISTS studio_session_files_session_idx
+      ON studio_session_files(session_id, created_at ASC);
+
+    CREATE INDEX IF NOT EXISTS studio_session_files_saved_idx
+      ON studio_session_files(saved_at DESC, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS studio_installed_skills_enabled_idx
+      ON studio_installed_skills(enabled, updated_at DESC);
+
+    CREATE INDEX IF NOT EXISTS codebox_volumes_name_idx
+      ON codebox_volumes(name);
+
+    CREATE INDEX IF NOT EXISTS codebox_sandboxes_updated_idx
+      ON codebox_sandboxes(updated_at DESC);
+
+    CREATE INDEX IF NOT EXISTS codebox_sandboxes_owner_updated_idx
+      ON codebox_sandboxes(owner_key, updated_at DESC);
+
+    CREATE INDEX IF NOT EXISTS studio_mcp_servers_enabled_idx
+      ON studio_mcp_servers(enabled, updated_at DESC);
+
+    CREATE INDEX IF NOT EXISTS studio_mcp_registry_servers_name_idx
+      ON studio_mcp_registry_servers(name, latest DESC);
+
+    CREATE INDEX IF NOT EXISTS studio_mcp_registry_servers_synced_idx
+      ON studio_mcp_registry_servers(synced_at DESC);
+
     CREATE INDEX IF NOT EXISTS studio_image_generations_session_idx
       ON studio_image_generations(session_id, created_at ASC);
 
     CREATE INDEX IF NOT EXISTS studio_image_outputs_generation_idx
       ON studio_image_outputs(generation_id, output_index ASC);
 
-    CREATE INDEX IF NOT EXISTS studio_image_outputs_saved_idx
-      ON studio_image_outputs(saved_at DESC, created_at DESC);
-  `)
-}
-
-function migrateSchema(database: Database.Database) {
-  const columns = database
-    .prepare(`PRAGMA table_info(studio_messages)`)
-    .all() as Array<{ name: string }>
-
-  if (!columns.some((column) => column.name === "attachments")) {
-    database.exec(`ALTER TABLE studio_messages ADD COLUMN attachments TEXT`)
-  }
-
-  if (!columns.some((column) => column.name === "reasoning_content")) {
-    database.exec(
-      `ALTER TABLE studio_messages ADD COLUMN reasoning_content TEXT NOT NULL DEFAULT ''`
-    )
-  }
-
-  if (!columns.some((column) => column.name === "reasoning_duration_ms")) {
-    database.exec(
-      `ALTER TABLE studio_messages ADD COLUMN reasoning_duration_ms INTEGER`
-    )
-  }
-
-  if (!columns.some((column) => column.name === "model")) {
-    database.exec(`ALTER TABLE studio_messages ADD COLUMN model TEXT`)
-  }
-
-  if (!columns.some((column) => column.name === "version_group_id")) {
-    database.exec(
-      `ALTER TABLE studio_messages ADD COLUMN version_group_id TEXT`
-    )
-  }
-
-  if (!columns.some((column) => column.name === "version_index")) {
-    database.exec(
-      `ALTER TABLE studio_messages ADD COLUMN version_index INTEGER NOT NULL DEFAULT 1`
-    )
-  }
-
-  if (!columns.some((column) => column.name === "active_version")) {
-    database.exec(
-      `ALTER TABLE studio_messages ADD COLUMN active_version INTEGER NOT NULL DEFAULT 1`
-    )
-  }
-
-  if (!columns.some((column) => column.name === "activities")) {
-    database.exec(`ALTER TABLE studio_messages ADD COLUMN activities TEXT`)
-  }
-
-  if (!columns.some((column) => column.name === "parts")) {
-    database.exec(`ALTER TABLE studio_messages ADD COLUMN parts TEXT`)
-  }
-
-  const sandboxColumns = database
-    .prepare(`PRAGMA table_info(studio_session_sandboxes)`)
-    .all() as Array<{ name: string }>
-
-  if (!sandboxColumns.some((column) => column.name === "volume_id")) {
-    database.exec(
-      `ALTER TABLE studio_session_sandboxes ADD COLUMN volume_id TEXT`
-    )
-  }
-
-  if (!sandboxColumns.some((column) => column.name === "volume_name")) {
-    database.exec(
-      `ALTER TABLE studio_session_sandboxes ADD COLUMN volume_name TEXT`
-    )
-  }
-
-  if (!sandboxColumns.some((column) => column.name === "volume_path")) {
-    database.exec(
-      `ALTER TABLE studio_session_sandboxes ADD COLUMN volume_path TEXT`
-    )
-  }
-
-  ensureCodeBoxSandboxOwnerColumns(database)
-
-  const imageOutputColumns = database
-    .prepare(`PRAGMA table_info(studio_image_outputs)`)
-    .all() as Array<{ name: string }>
-
-  if (!imageOutputColumns.some((column) => column.name === "storage_path")) {
-    database.exec(
-      `ALTER TABLE studio_image_outputs ADD COLUMN storage_path TEXT`
-    )
-  }
-
-  database.exec(`
     CREATE INDEX IF NOT EXISTS studio_image_outputs_saved_idx
       ON studio_image_outputs(saved_at DESC, created_at DESC);
   `)

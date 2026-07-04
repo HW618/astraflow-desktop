@@ -1,7 +1,11 @@
 import Database from "better-sqlite3"
 import { randomUUID } from "node:crypto"
 
-import { getStudioDatabase } from "@/lib/studio-db"
+import {
+  ensureSqliteTableColumns,
+  getStudioDatabase,
+  type SqliteColumnDefinition,
+} from "@/lib/studio-db"
 
 import type {
   StudioSavedVideoOutput,
@@ -109,6 +113,51 @@ type RecordVideoGenerationTaskInput = {
 
 let videoSchemaReady = false
 
+const videoTableColumns = {
+  studio_video_generations: [
+    { name: "id", definition: "id TEXT" },
+    { name: "session_id", definition: "session_id TEXT NOT NULL DEFAULT ''" },
+    {
+      name: "model_square_id",
+      definition: "model_square_id TEXT NOT NULL DEFAULT ''",
+    },
+    { name: "model_name", definition: "model_name TEXT NOT NULL DEFAULT ''" },
+    { name: "manufacturer", definition: "manufacturer TEXT" },
+    { name: "openapi_file", definition: "openapi_file TEXT" },
+    { name: "operation_id", definition: "operation_id TEXT" },
+    { name: "provider_task_id", definition: "provider_task_id TEXT" },
+    { name: "provider_request_id", definition: "provider_request_id TEXT" },
+    { name: "prompt", definition: "prompt TEXT NOT NULL DEFAULT ''" },
+    { name: "params", definition: "params TEXT NOT NULL DEFAULT '{}'" },
+    { name: "status", definition: "status TEXT NOT NULL DEFAULT 'queued'" },
+    { name: "error_message", definition: "error_message TEXT" },
+    { name: "raw_response", definition: "raw_response TEXT" },
+    { name: "created_at", definition: "created_at TEXT NOT NULL DEFAULT ''" },
+    { name: "completed_at", definition: "completed_at TEXT" },
+  ],
+  studio_video_outputs: [
+    { name: "id", definition: "id TEXT" },
+    {
+      name: "generation_id",
+      definition: "generation_id TEXT NOT NULL DEFAULT ''",
+    },
+    {
+      name: "output_index",
+      definition: "output_index INTEGER NOT NULL DEFAULT 0",
+    },
+    { name: "url", definition: "url TEXT" },
+    { name: "data_url", definition: "data_url TEXT" },
+    { name: "storage_path", definition: "storage_path TEXT" },
+    { name: "mime_type", definition: "mime_type TEXT" },
+    { name: "width", definition: "width INTEGER" },
+    { name: "height", definition: "height INTEGER" },
+    { name: "duration_seconds", definition: "duration_seconds REAL" },
+    { name: "metadata", definition: "metadata TEXT" },
+    { name: "saved_at", definition: "saved_at TEXT" },
+    { name: "created_at", definition: "created_at TEXT NOT NULL DEFAULT ''" },
+  ],
+} satisfies Record<string, SqliteColumnDefinition[]>
+
 function nowIso() {
   return new Date().toISOString()
 }
@@ -162,61 +211,26 @@ function initializeVideoSchema(database: Database.Database) {
       created_at TEXT NOT NULL,
       FOREIGN KEY (generation_id) REFERENCES studio_video_generations(id) ON DELETE CASCADE
     );
+  `)
 
+  migrateVideoSchema(database)
+  ensureVideoSchemaIndexes(database)
+}
+
+function migrateVideoSchema(database: Database.Database) {
+  for (const [tableName, columns] of Object.entries(videoTableColumns)) {
+    ensureSqliteTableColumns(database, tableName, columns)
+  }
+}
+
+function ensureVideoSchemaIndexes(database: Database.Database) {
+  database.exec(`
     CREATE INDEX IF NOT EXISTS studio_video_generations_session_idx
       ON studio_video_generations(session_id, created_at ASC);
 
     CREATE INDEX IF NOT EXISTS studio_video_outputs_generation_idx
       ON studio_video_outputs(generation_id, output_index ASC);
 
-    CREATE INDEX IF NOT EXISTS studio_video_outputs_saved_idx
-      ON studio_video_outputs(saved_at DESC, created_at DESC);
-  `)
-
-  ensureVideoGenerationTaskColumns(database)
-  ensureVideoOutputStorageColumns(database)
-}
-
-function ensureVideoGenerationTaskColumns(database: Database.Database) {
-  const columns = new Set(
-    (
-      database
-        .prepare("PRAGMA table_info(studio_video_generations)")
-        .all() as Array<{ name: string }>
-    ).map((column) => column.name)
-  )
-
-  if (!columns.has("provider_task_id")) {
-    database.exec(`
-      ALTER TABLE studio_video_generations
-      ADD COLUMN provider_task_id TEXT
-    `)
-  }
-
-  if (!columns.has("provider_request_id")) {
-    database.exec(`
-      ALTER TABLE studio_video_generations
-      ADD COLUMN provider_request_id TEXT
-    `)
-  }
-}
-
-function ensureVideoOutputStorageColumns(database: Database.Database) {
-  const columns = new Set(
-    (
-      database
-        .prepare("PRAGMA table_info(studio_video_outputs)")
-        .all() as Array<{ name: string }>
-    ).map((column) => column.name)
-  )
-
-  if (!columns.has("storage_path")) {
-    database.exec(
-      `ALTER TABLE studio_video_outputs ADD COLUMN storage_path TEXT`
-    )
-  }
-
-  database.exec(`
     CREATE INDEX IF NOT EXISTS studio_video_outputs_saved_idx
       ON studio_video_outputs(saved_at DESC, created_at DESC);
   `)

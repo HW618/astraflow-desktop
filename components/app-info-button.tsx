@@ -2,13 +2,13 @@
 
 import * as React from "react"
 import {
-  RiExternalLinkLine,
   RiInformationLine,
   RiLoader4Line,
   RiRefreshLine,
 } from "@remixicon/react"
 import { toast } from "sonner"
 
+import { AstraFlowLogo } from "@/components/astraflow-logo"
 import { useI18n } from "@/components/i18n-provider"
 import { Button } from "@/components/ui/button"
 import {
@@ -157,7 +157,7 @@ function AppInfoButton({ className }: { className?: string }) {
               ? t.appUpdateLatest(update.latestVersion)
               : t.appUpdateStatus
   const statusTone = hasUpdate
-    ? "text-emerald-600 dark:text-emerald-400"
+    ? "text-primary"
     : error || update?.message
       ? "text-destructive"
       : "text-muted-foreground"
@@ -172,7 +172,7 @@ function AppInfoButton({ className }: { className?: string }) {
           title={t.appInfo}
           className={cn(
             hasUpdate
-              ? "bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/15 hover:text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300 dark:hover:bg-emerald-500/25 dark:hover:text-emerald-200"
+              ? "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary"
               : "text-muted-foreground hover:text-foreground",
             className
           )}
@@ -183,9 +183,7 @@ function AppInfoButton({ className }: { className?: string }) {
       </PopoverTrigger>
       <PopoverContent align="start" className="w-80 gap-3" side="bottom">
         <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-sm font-semibold">AstraFlow</div>
-          </div>
+          <AstraFlowLogo className="h-7 min-w-0 shrink" />
           <div className="flex shrink-0 items-center gap-2">
             <span className="rounded-full bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
               v{info?.currentVersion ?? "..."}
@@ -237,14 +235,6 @@ function AppInfoButton({ className }: { className?: string }) {
             <RiRefreshLine className={cn(isLoading && "animate-spin")} />
             {t.appUpdateCheck}
           </Button>
-          {update?.releaseUrl ? (
-            <Button variant="ghost" size="sm" asChild>
-              <a href={update.releaseUrl} target="_blank" rel="noreferrer">
-                <RiExternalLinkLine data-icon="inline-start" />
-                {t.appUpdateOpenRelease}
-              </a>
-            </Button>
-          ) : null}
         </div>
       </PopoverContent>
     </Popover>

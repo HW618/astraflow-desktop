@@ -5,7 +5,6 @@ import * as React from "react"
 import {
   RiArrowDownSLine,
   RiBuilding2Line,
-  RiExternalLinkLine,
   RiFolderLine,
   RiIdCardLine,
   RiInformationLine,
@@ -253,7 +252,7 @@ function AppInfoButton() {
               ? t.appUpdateLatest(update.latestVersion)
               : t.appUpdateStatus
   const statusTone = hasUpdate
-    ? "text-emerald-600 dark:text-emerald-400"
+    ? "text-primary"
     : error || update?.message
       ? "text-destructive"
       : "text-muted-foreground"
@@ -269,7 +268,7 @@ function AppInfoButton() {
           className={cn(
             "ml-1",
             hasUpdate
-              ? "bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/15 hover:text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300 dark:hover:bg-emerald-500/25 dark:hover:text-emerald-200"
+              ? "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary"
               : "text-muted-foreground hover:text-foreground"
           )}
         >
@@ -333,14 +332,6 @@ function AppInfoButton() {
             <RiRefreshLine className={cn(isLoading && "animate-spin")} />
             {t.appUpdateCheck}
           </Button>
-          {update?.releaseUrl ? (
-            <Button variant="ghost" size="sm" asChild>
-              <a href={update.releaseUrl} target="_blank" rel="noreferrer">
-                <RiExternalLinkLine data-icon="inline-start" />
-                {t.appUpdateOpenRelease}
-              </a>
-            </Button>
-          ) : null}
         </div>
       </PopoverContent>
     </Popover>

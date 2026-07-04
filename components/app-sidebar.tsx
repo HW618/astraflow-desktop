@@ -19,15 +19,14 @@ import {
   RiMore2Line,
   RiPencilLine,
   RiPuzzleLine,
-  RiRefreshLine,
   RiSettings3Line,
   RiStore2Line,
   RiUser3Line,
   RiVideoLine,
 } from "@remixicon/react"
 import type { RemixiconComponentType } from "@remixicon/react"
-import { toast } from "sonner"
 
+import { AppInfoButton } from "@/components/app-info-button"
 import { AstraFlowLogo } from "@/components/astraflow-logo"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { useI18n } from "@/components/i18n-provider"
@@ -100,23 +99,6 @@ type SidebarProjectsResponse =
       message?: string
     }
 
-type SidebarAppInfoPayload = {
-  update: {
-    latestVersion: string | null
-    updateAvailable: boolean | null
-  } | null
-}
-
-type SidebarAppInfoResponse =
-  | {
-      ok: true
-      data: SidebarAppInfoPayload
-    }
-  | {
-      ok: false
-      message?: string
-    }
-
 type NavItem = {
   href: string
   label: string
@@ -135,8 +117,6 @@ const studioModeDefinitions: StudioModeDefinition[] = [
   { id: "video", icon: RiVideoLine },
   { id: "audio", icon: RiMicLine },
 ]
-
-const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000
 
 class LoginRequiredError extends Error {
   constructor() {
@@ -229,19 +209,6 @@ async function fetchSidebarAccount() {
   }
 
   return payload.data.user
-}
-
-async function fetchSidebarAppInfo() {
-  const response = await fetch("/api/app-info?check=1", { cache: "no-store" })
-  const payload = (await response.json()) as SidebarAppInfoResponse
-
-  if (!response.ok || !payload.ok) {
-    throw new Error(
-      (!payload.ok && payload.message) || "Failed to load app info."
-    )
-  }
-
-  return payload.data
 }
 
 function getInitials(value: string) {
@@ -408,7 +375,7 @@ function SidebarAccountMenu({
           className="flex w-full min-w-0 items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-sm transition-[background-color,color,width,height,padding] group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-0 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:outline-none"
         >
           <Avatar className="size-8">
-            <AvatarFallback className="bg-emerald-500 text-background">
+            <AvatarFallback className="bg-primary text-primary-foreground">
               {loading ? "..." : getInitials(displayName)}
             </AvatarFallback>
           </Avatar>
@@ -454,110 +421,6 @@ function SidebarAccountMenu({
         <LogoutButton className="w-full justify-start" />
       </PopoverContent>
     </Popover>
-  )
-}
-
-function SidebarUpdateButton() {
-  const { locale, t } = useI18n()
-  const [latestVersion, setLatestVersion] = React.useState("")
-  const [isChecking, setIsChecking] = React.useState(true)
-  const [isInstalling, setIsInstalling] = React.useState(false)
-  const label = locale === "zh" ? "更新" : "Update"
-
-  const checkUpdate = React.useCallback(
-    async (announce = false) => {
-      try {
-        setIsChecking(true)
-        const info = await fetchSidebarAppInfo()
-        const update = info.update
-        const nextVersion =
-          update?.updateAvailable === true ? update.latestVersion || label : ""
-
-        setLatestVersion(nextVersion)
-
-        if (announce && !nextVersion) {
-          toast.success(t.appUpdateCurrent)
-        }
-      } catch (checkError) {
-        setLatestVersion("")
-
-        if (announce) {
-          toast.error(
-            checkError instanceof Error
-              ? checkError.message
-              : t.appUpdateCheckFailed
-          )
-        }
-      } finally {
-        setIsChecking(false)
-      }
-    },
-    [label, t.appUpdateCheckFailed, t.appUpdateCurrent]
-  )
-
-  React.useEffect(() => {
-    queueMicrotask(() => {
-      void checkUpdate()
-    })
-
-    const interval = window.setInterval(() => {
-      void checkUpdate()
-    }, UPDATE_CHECK_INTERVAL_MS)
-
-    return () => {
-      window.clearInterval(interval)
-    }
-  }, [checkUpdate])
-
-  async function installUpdate() {
-    if (!window.astraflowDesktop?.installUpdate) {
-      toast.error(t.appUpdateInstallUnavailable)
-      return
-    }
-
-    const toastId = toast.loading(t.appUpdateInstalling)
-
-    try {
-      setIsInstalling(true)
-      await window.astraflowDesktop.installUpdate()
-      toast.success(t.appUpdateInstallRestarting, { id: toastId })
-    } catch (installError) {
-      toast.error(
-        installError instanceof Error
-          ? installError.message
-          : t.appUpdateInstallFailed,
-        { id: toastId }
-      )
-    } finally {
-      setIsInstalling(false)
-    }
-  }
-
-  return (
-    <Button
-      type="button"
-      variant="outline"
-      size="xs"
-      className={`h-7 shrink-0 rounded-lg px-2 text-xs font-medium group-data-[collapsible=icon]:hidden ${
-        latestVersion
-          ? "border-primary/20 bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary"
-          : "border-sidebar-border/70 bg-sidebar-accent/45 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-      }`}
-      title={
-        latestVersion ? t.appUpdateAvailable(latestVersion) : t.appUpdateCheck
-      }
-      disabled={isInstalling || isChecking}
-      onClick={() =>
-        latestVersion ? void installUpdate() : void checkUpdate(true)
-      }
-    >
-      {isInstalling || isChecking ? (
-        <RiLoader4Line className="animate-spin" aria-hidden />
-      ) : (
-        <RiRefreshLine aria-hidden />
-      )}
-      {label}
-    </Button>
   )
 }
 
@@ -778,17 +641,18 @@ function AppSidebar() {
         ) : (
           <>
             <SidebarHeader>
-              <div className="flex items-center gap-1.5 px-3 pt-0.5">
+              <div className="flex items-center gap-2 px-3 pt-0.5">
                 <Link
                   href="/studio"
                   aria-label="AstraFlow"
-                  className="flex min-w-0 items-center overflow-hidden"
+                  className="flex min-w-0 flex-1 items-center overflow-hidden"
                 >
                   <AstraFlowLogo
-                    className="h-6 shrink-0"
+                    className="h-7 shrink-0"
                     fetchPriority="high"
                   />
                 </Link>
+                <AppInfoButton className="h-8 shrink-0 rounded-xl group-data-[collapsible=icon]:hidden" />
               </div>
             </SidebarHeader>
 
@@ -964,7 +828,6 @@ function AppSidebar() {
                 loading={isAccountLoading}
               />
             </div>
-            <SidebarUpdateButton />
           </div>
         </SidebarFooter>
       </Sidebar>

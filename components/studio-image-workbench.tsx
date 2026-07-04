@@ -1473,7 +1473,7 @@ function StatusBadge({ generation }: { generation: StudioImageGeneration }) {
         generation.status === "error" &&
           "border-destructive/40 text-destructive",
         generation.status === "complete" &&
-          "border-emerald-500/40 text-emerald-600"
+          "border-primary/35 text-primary"
       )}
     >
       {labelMap[generation.status]}

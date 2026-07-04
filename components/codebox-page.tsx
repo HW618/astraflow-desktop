@@ -2077,7 +2077,7 @@ function OpenVSCodeDialog({
                 >
                   {group.label}
                   {group.key === defaultInstallTab ? (
-                    <span className="ml-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300">
+                    <span className="ml-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
                       {t.codeboxSshRecommended}
                     </span>
                   ) : null}
@@ -2101,7 +2101,7 @@ function OpenVSCodeDialog({
                     {activeInstallTab === defaultInstallTab ? (
                       <Badge
                         variant="outline"
-                        className="border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                        className="border-primary/30 bg-primary/10 text-primary"
                       >
                         {t.codeboxSshRecommended}
                       </Badge>

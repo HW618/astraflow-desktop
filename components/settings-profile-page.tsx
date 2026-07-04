@@ -340,7 +340,7 @@ function SettingsProfilePage() {
 
           <section className="flex flex-col items-center pt-2 text-center">
             <Avatar className="size-20">
-              <AvatarFallback className="bg-emerald-500 text-2xl font-medium text-background">
+              <AvatarFallback className="bg-primary text-2xl font-medium text-primary-foreground">
                 {getInitials(displayName)}
               </AvatarFallback>
             </Avatar>

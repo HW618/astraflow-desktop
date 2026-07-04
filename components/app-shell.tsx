@@ -11,9 +11,10 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 
-const SIDEBAR_MIN_WIDTH = 176
+const SIDEBAR_MIN_WIDTH = 220
 const SIDEBAR_MAX_WIDTH = 420
-const SIDEBAR_DEFAULT_WIDTH = SIDEBAR_MIN_WIDTH
+const SIDEBAR_DEFAULT_WIDTH = 260
+const LEGACY_SIDEBAR_DEFAULT_WIDTH = 176
 const PREVIOUS_SIDEBAR_DEFAULT_WIDTH = 288
 // Below this drag position the logo no longer fits, so the sidebar collapses.
 const SIDEBAR_COLLAPSE_AT = 176
@@ -134,7 +135,10 @@ function AppShell({ children }: { children: React.ReactNode }) {
         10
       )
 
-      if (stored === PREVIOUS_SIDEBAR_DEFAULT_WIDTH) {
+      if (
+        stored === LEGACY_SIDEBAR_DEFAULT_WIDTH ||
+        stored === PREVIOUS_SIDEBAR_DEFAULT_WIDTH
+      ) {
         setSidebarWidth(SIDEBAR_DEFAULT_WIDTH)
       } else if (Number.isFinite(stored)) {
         setSidebarWidth(clampSidebarWidth(stored))
