@@ -15,7 +15,7 @@ type CommandProbe =
   | { available: false; detail: string }
 
 const ACP_RUNTIME_CAPABILITIES = {
-  hitl: false,
+  hitl: true,
   resume: true,
   subagents: false,
   plan: true,

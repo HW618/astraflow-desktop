@@ -36,7 +36,6 @@ test("Codex runtime shows and persists ACP permission mode", async ({
   const session = await createChatSession(request)
 
   await gotoSession(page, session.id)
-  await expect(permissionModeSelect(page)).toBeHidden()
 
   await selectRuntime(page, "Codex")
   test.skip(
