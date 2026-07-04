@@ -13,7 +13,8 @@ export type RuntimeCapabilities = {
   skills: boolean
 }
 
-export type AgentRuntimeId = "langchain" | "deepagents"
+export type AgentRuntimeId =
+  "langchain" | "deepagents" | "claude-code" | "codex" | "opencode"
 
 export type AgentRuntimeInfo = {
   id: AgentRuntimeId

@@ -7,6 +7,7 @@ import {
 
 import "@/lib/agent/adapters/langchain-runtime"
 import "@/lib/agent/adapters/deepagents-runtime"
+import "@/lib/agent/adapters/acp-runtimes"
 import {
   cancelAgentRun,
   getAgentRun,
