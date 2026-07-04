@@ -24,6 +24,10 @@ import {
   ASTRAFLOW_SANDBOX_DEFAULT_RUN_TIMEOUT_SECONDS,
   ASTRAFLOW_SANDBOX_REQUEST_TIMEOUT_MS,
 } from "@/lib/astraflow-sandbox-runtime"
+import {
+  requestToolPermission,
+  type PermissionGatewayContext,
+} from "@/lib/agent/permission-gateway"
 import { getOrCreateSessionSandbox } from "@/lib/astraflow-session-sandbox"
 import { withStudioSessionLock } from "@/lib/studio-session-lock"
 
@@ -34,6 +38,8 @@ type DeepAgentsE2BBackendOptions = {
   sessionId: string
   apiKey: string
   commandTimeoutSeconds?: number
+  permissionContext: PermissionGatewayContext
+  signal: AbortSignal
 }
 
 function quoteShell(value: string) {
@@ -220,19 +226,25 @@ export class DeepAgentsE2BBackend extends BaseSandbox {
 
   private readonly apiKey: string
   private readonly commandTimeoutSeconds: number
+  private readonly permissionContext: PermissionGatewayContext
   private readonly sessionId: string
+  private readonly signal: AbortSignal
   private sandboxPromise: Promise<Sandbox> | null = null
 
   constructor({
     apiKey,
     commandTimeoutSeconds = ASTRAFLOW_SANDBOX_DEFAULT_RUN_TIMEOUT_SECONDS,
+    permissionContext,
+    signal,
     sessionId,
   }: DeepAgentsE2BBackendOptions) {
     super()
     this.apiKey = apiKey
     this.commandTimeoutSeconds = commandTimeoutSeconds
     this.id = `astraflow-e2b:${sessionId}`
+    this.permissionContext = permissionContext
     this.sessionId = sessionId
+    this.signal = signal
   }
 
   private getSandbox() {
@@ -245,6 +257,16 @@ export class DeepAgentsE2BBackend extends BaseSandbox {
     })
 
     return this.sandboxPromise
+  }
+
+  private async getPermissionDenial(toolName: string, input: unknown) {
+    const permission = await requestToolPermission({
+      context: this.permissionContext,
+      input,
+      toolName,
+    })
+
+    return permission.allowed ? null : permission.message
   }
 
   private async runCommand(command: string): Promise<ExecuteResponse> {
@@ -262,6 +284,7 @@ export class DeepAgentsE2BBackend extends BaseSandbox {
             timeoutMs + 10_000,
             ASTRAFLOW_SANDBOX_REQUEST_TIMEOUT_MS
           ),
+          signal: this.signal,
         }
       )
     } catch (error) {
@@ -284,6 +307,16 @@ export class DeepAgentsE2BBackend extends BaseSandbox {
   }
 
   async execute(command: string): Promise<ExecuteResponse> {
+    const denial = await this.getPermissionDenial("execute", { command })
+
+    if (denial) {
+      return {
+        output: denial,
+        exitCode: 1,
+        truncated: false,
+      }
+    }
+
     return withStudioSessionLock(this.sessionId, () => this.runCommand(command))
   }
 
@@ -361,6 +394,15 @@ export class DeepAgentsE2BBackend extends BaseSandbox {
     filePath: string,
     content: string
   ): Promise<WriteResult> {
+    const denial = await this.getPermissionDenial("write_file", {
+      path: filePath,
+      content,
+    })
+
+    if (denial) {
+      return { error: denial }
+    }
+
     return withStudioSessionLock(this.sessionId, async () => {
       try {
         const sandbox = await this.getSandbox()
@@ -385,6 +427,17 @@ export class DeepAgentsE2BBackend extends BaseSandbox {
     newString: string,
     replaceAll = false
   ): Promise<EditResult> {
+    const denial = await this.getPermissionDenial("edit_file", {
+      path: filePath,
+      oldString,
+      newString,
+      replaceAll,
+    })
+
+    if (denial) {
+      return { error: denial }
+    }
+
     return withStudioSessionLock(this.sessionId, async () => {
       try {
         const sandbox = await this.getSandbox()
@@ -432,6 +485,18 @@ export class DeepAgentsE2BBackend extends BaseSandbox {
   override async uploadFiles(
     files: Array<[string, Uint8Array]>
   ): Promise<FileUploadResponse[]> {
+    const denial = await this.getPermissionDenial(
+      "upload_file",
+      files.map(([path, content]) => ({
+        path,
+        bytes: content.byteLength,
+      }))
+    )
+
+    if (denial) {
+      return files.map(([path]) => ({ path, error: "permission_denied" }))
+    }
+
     return withStudioSessionLock(this.sessionId, async () => {
       const sandbox = await this.getSandbox()
       const responses: FileUploadResponse[] = []

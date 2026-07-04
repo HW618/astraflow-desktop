@@ -181,14 +181,25 @@ const CHAT_REASONING_EFFORT_STORAGE_KEY = "astraflow:chat-reasoning-effort"
 const PENDING_PROJECT_STORAGE_KEY = "astraflow:pending-project"
 const DEFAULT_CHAT_RUNTIME_ID = "langchain"
 const PROJECT_NONE_VALUE = "__none__"
-const ACP_PERMISSION_RUNTIME_IDS = new Set(["codex", "claude-code"])
 
-type ChatRuntimeOption = Pick<AgentRuntimeInfo, "id" | "label" | "description">
+type ChatRuntimeOption = Pick<
+  AgentRuntimeInfo,
+  "id" | "label" | "description" | "capabilities"
+>
 
 const FALLBACK_CHAT_RUNTIME_INFO: ChatRuntimeOption = {
   id: DEFAULT_CHAT_RUNTIME_ID,
   label: "AstraFlow Agent",
   description: "Built-in LangChain agent",
+  capabilities: {
+    hitl: true,
+    resume: false,
+    subagents: false,
+    plan: false,
+    sandbox: true,
+    mcp: true,
+    skills: true,
+  },
 }
 
 const chatModelListeners = new Set<() => void>()
@@ -418,6 +429,7 @@ function normalizeChatRuntimeInfos(runtimes: AgentRuntimeInfo[]) {
         id: runtime.id,
         label: runtime.label,
         description: runtime.description,
+        capabilities: runtime.capabilities,
       })
       return options
     },
@@ -450,8 +462,14 @@ function getChatRuntimeLabel(
   )
 }
 
-function supportsPermissionMode(runtimeId: string) {
-  return ACP_PERMISSION_RUNTIME_IDS.has(runtimeId)
+function supportsPermissionMode(
+  runtimeId: string,
+  runtimeInfos: ChatRuntimeOption[]
+) {
+  return (
+    runtimeInfos.find((runtime) => runtime.id === runtimeId)?.capabilities
+      .hitl ?? false
+  )
 }
 
 async function readJson<T>(response: Response) {
@@ -1837,7 +1855,7 @@ function ChatComposer({
   const selectedRuntimeInfo =
     runtimeInfos.find((runtime) => runtime.id === runtimeId) ??
     FALLBACK_CHAT_RUNTIME_INFO
-  const showPermissionMode = supportsPermissionMode(runtimeId)
+  const showPermissionMode = supportsPermissionMode(runtimeId, runtimeInfos)
   const selectedProject =
     localProjects.find((project) => project.id === selectedProjectId) ?? null
   const selectedProjectValue = selectedProject?.id ?? PROJECT_NONE_VALUE

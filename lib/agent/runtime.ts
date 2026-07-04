@@ -34,6 +34,7 @@ export type AgentRunInput = {
 
 export interface AgentRuntime {
   readonly info: AgentRuntimeInfo
+  getInfo?: () => AgentRuntimeInfo
   startRun(input: AgentRunInput): AsyncIterable<AgentEvent>
 }
 
@@ -62,6 +63,6 @@ export function getAgentRuntime(id: string): AgentRuntime | null {
 
 export function listAgentRuntimeInfos(): AgentRuntimeInfo[] {
   return Array.from(getAgentRuntimeRegistry().values()).map(
-    (runtime) => runtime.info
+    (runtime) => runtime.getInfo?.() ?? runtime.info
   )
 }

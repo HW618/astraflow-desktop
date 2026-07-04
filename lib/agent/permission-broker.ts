@@ -77,6 +77,30 @@ function createSessionPermissionRule(sessionId: string, toolName: string) {
   rules.add(normalizedToolName)
 }
 
+export function hasPermissionRule({
+  projectId,
+  sessionId,
+  toolName,
+}: {
+  projectId?: string | null
+  sessionId: string
+  toolName: string
+}) {
+  const resolvedProjectId =
+    projectId === undefined
+      ? (getStudioSession(sessionId)?.projectId ?? null)
+      : projectId
+
+  return (
+    hasStudioPermissionRule({
+      projectId: resolvedProjectId,
+      toolName,
+    }) ||
+    (resolvedProjectId === null &&
+      hasSessionPermissionRule(sessionId, toolName))
+  )
+}
+
 export function isReadOnlyToolKind(toolName: string) {
   // ACP ToolKind values are coarse; only retrieval categories may bypass review.
   return ["read", "search", "fetch"].includes(toolName.trim().toLowerCase())
@@ -102,12 +126,11 @@ export function requestPermission(input: {
   }
 
   if (
-    hasStudioPermissionRule({
+    hasPermissionRule({
       projectId,
+      sessionId: input.sessionId,
       toolName: input.toolName,
-    }) ||
-    (projectId === null &&
-      hasSessionPermissionRule(input.sessionId, input.toolName))
+    })
   ) {
     const option = findAllowOption(input.options)
 

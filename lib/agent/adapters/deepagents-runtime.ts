@@ -18,7 +18,12 @@ import {
   getStoredExaApiKey,
 } from "@/lib/ai/tools/web"
 import { DeepAgentsE2BBackend } from "@/lib/agent/deepagents-e2b-backend"
+import { AgentEventQueue } from "@/lib/agent/event-queue"
 import type { AgentEvent } from "@/lib/agent/events"
+import {
+  type PermissionGatewayContext,
+  wrapToolsWithPermissionGateway,
+} from "@/lib/agent/permission-gateway"
 import {
   registerAgentRuntime,
   type AgentRunInput,
@@ -30,6 +35,7 @@ import { createModelverseChatModel } from "@/lib/modelverse-langchain"
 import { DEFAULT_SYSTEM_PROMPT } from "@/lib/modelverse-openai"
 import {
   getStudioModelverseApiKey,
+  getStudioSession,
   listStudioSessionFiles,
 } from "@/lib/studio-db"
 
@@ -47,80 +53,7 @@ const DEEPAGENTS_BUILTIN_TOOL_NAMES = new Set([
   "execute",
 ])
 
-type AgentEventQueueState =
-  | { status: "open" }
-  | { status: "closed" }
-  | { status: "failed"; error: unknown }
 type AgentTodo = Extract<AgentEvent, { type: "plan_update" }>["todos"][number]
-
-class AgentEventQueue implements AsyncIterable<AgentEvent> {
-  private events: AgentEvent[] = []
-  private state: AgentEventQueueState = { status: "open" }
-  private waiters: Array<() => void> = []
-
-  push(event: AgentEvent) {
-    if (this.state.status !== "open") {
-      return
-    }
-
-    this.events.push(event)
-    this.notify()
-  }
-
-  close() {
-    if (this.state.status !== "open") {
-      return
-    }
-
-    this.state = { status: "closed" }
-    this.notify()
-  }
-
-  fail(error: unknown) {
-    if (this.state.status !== "open") {
-      return
-    }
-
-    this.state = { status: "failed", error }
-    this.notify()
-  }
-
-  private notify() {
-    const waiters = this.waiters
-    this.waiters = []
-
-    for (const waiter of waiters) {
-      waiter()
-    }
-  }
-
-  private wait() {
-    return new Promise<void>((resolve) => {
-      this.waiters.push(resolve)
-    })
-  }
-
-  async *[Symbol.asyncIterator]() {
-    while (true) {
-      const event = this.events.shift()
-
-      if (event) {
-        yield event
-        continue
-      }
-
-      if (this.state.status === "closed") {
-        return
-      }
-
-      if (this.state.status === "failed") {
-        throw this.state.error
-      }
-
-      await this.wait()
-    }
-  }
-}
 
 function getRecord(value: unknown) {
   return typeof value === "object" && value !== null
@@ -167,12 +100,14 @@ function debugDeepAgents(label: string, payload: Record<string, unknown>) {
 }
 
 function createDeepAgentsSystemPrompt({
+  hasSandboxBackend,
   hasMcpTools,
   hasSandboxGetHost,
   hasWebFetch,
   hasWebSearch,
   sessionFilesManifest,
 }: {
+  hasSandboxBackend: boolean
   hasMcpTools: boolean
   hasSandboxGetHost: boolean
   hasWebFetch: boolean
@@ -193,9 +128,15 @@ function createDeepAgentsSystemPrompt({
     )
   }
 
-  toolInstructions.push(
-    "Use the Deep Agent built-in filesystem tools for sandbox files: ls, read_file, write_file, edit_file, glob, and grep. Use execute for shell commands in the persistent per-chat AstraFlow Sandbox."
-  )
+  if (hasSandboxBackend) {
+    toolInstructions.push(
+      "Use the Deep Agent built-in filesystem tools for sandbox files: ls, read_file, write_file, edit_file, glob, and grep. Use execute for shell commands in the persistent per-chat AstraFlow Sandbox."
+    )
+  } else {
+    toolInstructions.push(
+      "Use the Deep Agent built-in filesystem tools for temporary in-memory files: ls, read_file, write_file, edit_file, glob, and grep. Do not claim access to a persistent AstraFlow Sandbox unless a sandbox backend is configured; execute may be unavailable."
+    )
+  }
 
   if (hasSandboxGetHost) {
     toolInstructions.push(
@@ -375,7 +316,7 @@ async function pumpMessageDeltas(
 
 async function pumpToolCall(
   call: {
-    callId: string
+    callId?: string
     error: Promise<string | undefined>
     input: unknown
     name: string
@@ -385,11 +326,15 @@ async function pumpToolCall(
   queue: AgentEventQueue,
   parentTaskId?: string
 ) {
-  if (call.name === "write_todos") {
-    const planEvent = parsePlanUpdate(call.input)
+  const toolCallId = call.callId || randomUUID()
 
-    if (planEvent) {
-      queue.push(planEvent)
+  if (call.name === "write_todos") {
+    if (!parentTaskId) {
+      const planEvent = parsePlanUpdate(call.input)
+
+      if (planEvent) {
+        queue.push(planEvent)
+      }
     }
 
     await call.status.catch(() => "error")
@@ -398,7 +343,7 @@ async function pumpToolCall(
 
   queue.push({
     type: "tool_call",
-    id: call.callId || randomUUID(),
+    id: toolCallId,
     name: call.name,
     input: stringifyToolPayload(call.input),
     ...(parentTaskId ? { parentTaskId } : {}),
@@ -413,7 +358,7 @@ async function pumpToolCall(
 
     queue.push({
       type: "tool_result",
-      id: call.callId || randomUUID(),
+      id: toolCallId,
       name: call.name,
       status: "error",
       error: error ?? "Tool call failed.",
@@ -427,7 +372,7 @@ async function pumpToolCall(
 
   queue.push({
     type: "tool_result",
-    id: call.callId || randomUUID(),
+    id: toolCallId,
     name: call.name,
     status: "complete",
     output: stringifyToolPayload(output),
@@ -436,7 +381,7 @@ async function pumpToolCall(
 
 async function pumpToolCalls(
   toolCalls: AsyncIterable<{
-    callId: string
+    callId?: string
     error: Promise<string | undefined>
     input: unknown
     name: string
@@ -502,7 +447,7 @@ async function pumpSubagent(
     output: Promise<unknown>
     subagents: AsyncIterable<unknown>
     toolCalls: AsyncIterable<{
-      callId: string
+      callId?: string
       error: Promise<string | undefined>
       input: unknown
       name: string
@@ -561,6 +506,7 @@ async function* streamDeepAgentsRun({
   > | null = null
 
   try {
+    const session = getStudioSession(sessionId)
     const resolvedReasoningEffort = resolveChatReasoningEffort(
       model,
       reasoningEffort
@@ -571,13 +517,22 @@ async function* streamDeepAgentsRun({
       modelverseApiKey,
       sessionId,
     })
+    const queue = new AgentEventQueue()
+    const permissionContext: PermissionGatewayContext = {
+      sessionId,
+      permissionMode: session?.permissionMode ?? "ask",
+      projectId: session?.projectId ?? null,
+      signal,
+      emit: (event) => queue.push(event),
+    }
 
     mcpToolClient = await createStudioMcpToolClient()
 
-    const tools = filterDeepAgentsTools([
-      ...nativeTools,
-      ...mcpToolClient.tools,
-    ])
+    const tools = wrapToolsWithPermissionGateway(
+      filterDeepAgentsTools([...nativeTools, ...mcpToolClient.tools]),
+      permissionContext
+    )
+    const hasSandboxBackend = Boolean(modelverseApiKey)
     const hasWebFetch = tools.some(
       (agentTool) => agentTool.name === "web_fetch"
     )
@@ -604,11 +559,14 @@ async function* streamDeepAgentsRun({
         ? {
             backend: new DeepAgentsE2BBackend({
               apiKey: modelverseApiKey,
+              permissionContext,
+              signal,
               sessionId,
             }),
           }
         : {}),
       systemPrompt: createDeepAgentsSystemPrompt({
+        hasSandboxBackend,
         hasMcpTools,
         hasSandboxGetHost,
         hasWebFetch,
@@ -624,7 +582,6 @@ async function* streamDeepAgentsRun({
         recursionLimit: DEEPAGENTS_RECURSION_LIMIT,
       }
     )
-    const queue = new AgentEventQueue()
     const runOutput = run.output.catch((error) => {
       if (isAbortLikeError(error, signal)) {
         return null
@@ -632,11 +589,22 @@ async function* streamDeepAgentsRun({
 
       throw error
     })
+    const runCompletion = runOutput.then(() => {
+      if (signal.aborted || !run.interrupted) {
+        return
+      }
+
+      queue.push({
+        type: "error",
+        message:
+          "Deep Agents run was interrupted before completion. Built-in HITL interrupts require a checkpointer and are disabled for this runtime path.",
+      })
+    })
     const pumps = [
       pumpMessageDeltas(run.messages, queue),
       pumpToolCalls(run.toolCalls, queue),
       pumpSubagents(run.subagents, queue),
-      runOutput.then(() => undefined),
+      runCompletion,
     ]
     const done = Promise.all(pumps)
       .then(() => queue.close())
@@ -675,21 +643,26 @@ async function* streamDeepAgentsRun({
   }
 }
 
-export const deepAgentsRuntime: AgentRuntime = {
-  info: {
+function getDeepAgentsRuntimeInfo() {
+  return {
     id: "deepagents",
     label: "Deep Agent",
     description: "深度智能体：规划、子智能体、沙箱文件系统",
     capabilities: {
-      hitl: false,
+      hitl: true,
       resume: false,
       subagents: true,
       plan: true,
-      sandbox: true,
+      sandbox: Boolean(getStudioModelverseApiKey()?.key),
       mcp: true,
       skills: true,
     },
-  },
+  } satisfies AgentRuntime["info"]
+}
+
+export const deepAgentsRuntime: AgentRuntime = {
+  info: getDeepAgentsRuntimeInfo(),
+  getInfo: getDeepAgentsRuntimeInfo,
   startRun(input) {
     return streamDeepAgentsRun(input)
   },
