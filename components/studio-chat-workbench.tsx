@@ -497,18 +497,8 @@ async function listLocalProjectsForComposer() {
   const response = await fetch("/api/studio/local-projects", {
     cache: "no-store",
   })
-  const payload = (await response.json()) as ApiResponse<
-    StudioLocalProjectWithGitInfo[]
-  > & { host?: string }
 
-  if (!response.ok || !payload.ok) {
-    throw new Error("Request failed")
-  }
-
-  return {
-    projects: payload.data ?? [],
-    host: typeof payload.host === "string" ? payload.host : null,
-  }
+  return readJson<StudioLocalProjectWithGitInfo[]>(response)
 }
 
 async function listStudioSessionsForComposer() {
@@ -835,7 +825,6 @@ function StudioChatWorkbench({
   const [localProjects, setLocalProjects] = React.useState<
     StudioLocalProjectWithGitInfo[]
   >([])
-  const [projectHost, setProjectHost] = React.useState<string | null>(null)
   const [selectedProjectId, setSelectedProjectId] = React.useState<
     string | null
   >(() => getPendingProjectId())
@@ -939,10 +928,7 @@ function StudioChatWorkbench({
 
   const reloadLocalProjects = React.useCallback(async () => {
     try {
-      const { projects, host } = await listLocalProjectsForComposer()
-
-      setLocalProjects(projects)
-      setProjectHost(host)
+      setLocalProjects(await listLocalProjectsForComposer())
     } catch {
       setLocalProjects([])
     }
@@ -1613,7 +1599,6 @@ function StudioChatWorkbench({
                 reasoningEffort={selectedReasoningEffort}
                 permissionMode={selectedPermissionMode}
                 localProjects={localProjects}
-                projectHost={projectHost}
                 selectedProjectId={selectedProjectId}
                 attachments={pendingAttachments}
                 onModelChange={setSelectedModel}
@@ -1645,7 +1630,6 @@ function StudioChatWorkbench({
               reasoningEffort={selectedReasoningEffort}
               permissionMode={selectedPermissionMode}
               localProjects={localProjects}
-              projectHost={projectHost}
               selectedProjectId={selectedProjectId}
               attachments={pendingAttachments}
               onModelChange={setSelectedModel}
@@ -1687,7 +1671,6 @@ type ChatComposerProps = {
   reasoningEffort: ChatReasoningEffort
   permissionMode: StudioPermissionMode
   localProjects: StudioLocalProjectWithGitInfo[]
-  projectHost: string | null
   selectedProjectId: string | null
   attachments: PendingAttachment[]
   onModelChange: (model: SupportedChatModel) => void
@@ -1848,7 +1831,6 @@ function ChatComposer({
   reasoningEffort,
   permissionMode,
   localProjects,
-  projectHost,
   selectedProjectId,
   attachments,
   onModelChange,
@@ -1955,13 +1937,13 @@ function ChatComposer({
   }
 
   return (
-    <div className="flex w-full flex-col gap-2">
+    <div className="flex w-full flex-col overflow-hidden rounded-[1.875rem] bg-muted/40 p-0.5 shadow-lg shadow-foreground/5">
       <PromptInput
         value={value}
         onValueChange={onValueChange}
         onSubmit={onSubmit}
         isLoading={isBusy}
-        className="w-full rounded-4xl border bg-background/95 px-3.5 py-3 shadow-lg shadow-foreground/5"
+        className="w-full rounded-[1.625rem] border bg-background/95 px-3.5 py-3 shadow-sm"
       >
         {attachments.length > 0 ? (
           <div
@@ -2219,7 +2201,7 @@ function ChatComposer({
         </div>
       </PromptInput>
 
-      <div className="flex w-full min-w-0 items-center gap-1 rounded-2xl border bg-muted/40 px-2 py-1 text-sm text-muted-foreground">
+      <div className="flex w-full min-w-0 items-center gap-1 px-2 py-1.5 text-sm text-muted-foreground">
         <Select
           value={selectedProjectValue}
           onValueChange={handleProjectValueChange}
@@ -2341,18 +2323,6 @@ function ChatComposer({
           </span>
         ) : null}
 
-        {projectHost ? (
-          <span className="ml-auto flex shrink-0 items-center gap-1.5 px-2">
-            {projectHost}
-            <span
-              aria-hidden
-              className={cn(
-                "size-2 rounded-full",
-                selectedProject ? "bg-emerald-500" : "bg-muted-foreground/40"
-              )}
-            />
-          </span>
-        ) : null}
       </div>
     </div>
   )

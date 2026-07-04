@@ -1,8 +1,8 @@
 "use client"
+import Image from "next/image"
 import { RiClaudeFill, RiOpenaiFill } from "@remixicon/react"
 import { Bot, Network } from "lucide-react"
 
-import { AstraFlowLogo } from "@/components/astraflow-logo"
 import { cn } from "@/lib/utils"
 
 type AgentRuntimeIconProps = {
@@ -20,7 +20,14 @@ function AgentRuntimeIcon({ runtimeId, className }: AgentRuntimeIconProps) {
           className
         )}
       >
-        <AstraFlowLogo className="h-3.5 max-w-4 object-contain" />
+        <Image
+          src="/icon/icon.svg"
+          alt=""
+          width={224}
+          height={254}
+          className="h-4 w-auto object-contain"
+          unoptimized
+        />
       </span>
     )
   }

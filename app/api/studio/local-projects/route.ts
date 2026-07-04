@@ -1,5 +1,4 @@
 import { stat, realpath } from "node:fs/promises"
-import { hostname } from "node:os"
 import { basename, isAbsolute } from "node:path"
 import { NextResponse } from "next/server"
 import { z } from "zod"
@@ -84,7 +83,7 @@ export async function GET() {
 
   const projects = await Promise.all(listStudioLocalProjects().map(withGitInfo))
 
-  return NextResponse.json({ ok: true, data: projects, host: hostname() })
+  return NextResponse.json({ ok: true, data: projects })
 }
 
 export async function POST(request: Request) {
