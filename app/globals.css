@@ -116,6 +116,15 @@ html[data-astraflow-platform="darwin"] .electron-drag-corner {
   -webkit-app-region: drag;
 }
 
+.electron-collapsed-sidebar-trigger {
+  -webkit-app-region: no-drag;
+}
+
+html[data-astraflow-platform="darwin"]:not([data-astraflow-fullscreen="true"])
+  .electron-collapsed-sidebar-trigger {
+  left: 80px;
+}
+
 html[data-astraflow-fullscreen="true"] .electron-drag-corner {
   display: none;
 }

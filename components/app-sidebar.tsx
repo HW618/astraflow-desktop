@@ -33,11 +33,11 @@ import {
   type SettingsDialogSection,
 } from "@/components/account-settings-dialog"
 import { AppInfoButton } from "@/components/app-info-button"
-import { AstraFlowLogo } from "@/components/astraflow-logo"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { useI18n } from "@/components/i18n-provider"
 import { Button } from "@/components/ui/button"
 import { LogoutButton } from "@/components/logout-button"
+import { SidebarToggleButton } from "@/components/sidebar-toggle-button"
 import {
   Dialog,
   DialogContent,
@@ -142,6 +142,7 @@ const studioModeDefinitions: StudioModeDefinition[] = [
   { id: "video", icon: RiVideoLine },
   { id: "audio", icon: RiMicLine },
 ]
+const CHAT_ENVIRONMENT_STORAGE_KEY = "astraflow:chat-environment"
 
 class LoginRequiredError extends Error {
   constructor() {
@@ -778,14 +779,13 @@ function AppSidebar() {
   }
 
   function handleNewSessionClick() {
-    // Bind the upcoming session to the project the user selected in the
-    // sidebar (falling back to the active session's project).
-    const projectId = lastSelectedProjectId ?? activeProjectId
+    // Bind only when the user explicitly selected a project in the sidebar.
+    const projectId = lastSelectedProjectId
 
-    if (projectId) {
-      setPendingProjectId(projectId)
-      dispatchStudioSessionsChanged()
-    }
+    setPendingProjectId(projectId ?? null)
+    window.localStorage.setItem(CHAT_ENVIRONMENT_STORAGE_KEY, "local")
+    window.dispatchEvent(new Event("storage"))
+    dispatchStudioSessionsChanged()
   }
 
   function getProjectSessions(projectId: string) {
@@ -916,13 +916,7 @@ function AppSidebar() {
       <Sidebar collapsible="offcanvas">
         <SidebarHeader data-electron-drag-header>
           <div className="flex items-center gap-2 px-3 pt-0.5">
-            <Link
-              href="/studio"
-              aria-label="AstraFlow"
-              className="flex min-w-0 items-center overflow-hidden"
-            >
-              <AstraFlowLogo className="h-7 shrink-0" fetchPriority="high" />
-            </Link>
+            <SidebarToggleButton />
             <div className="min-w-0 flex-1" />
             <AppInfoButton className="h-8 shrink-0 rounded-xl group-data-[collapsible=icon]:hidden" />
           </div>
@@ -998,7 +992,7 @@ function AppSidebar() {
             </SidebarGroupContent>
           </SidebarGroup>
 
-          <SidebarGroup className="py-0.5">
+          <SidebarGroup className="gap-0.5 py-0.5">
             <SidebarGroupLabel className="h-6">
               {t.studioLocalProjects}
             </SidebarGroupLabel>
@@ -1006,6 +1000,7 @@ function AppSidebar() {
               type="button"
               aria-label={t.studioLocalProjectAdd}
               title={t.studioLocalProjectAdd}
+              className="top-1 right-2 size-7 rounded-lg"
               onClick={() => void handleAddProject()}
             >
               <RiAddLine aria-hidden />
@@ -1024,7 +1019,11 @@ function AppSidebar() {
                       <SidebarMenuItem key={project.id}>
                         <SidebarMenuButton
                           type="button"
-                          className="h-8"
+                          isActive={
+                            lastSelectedProjectId === project.id ||
+                            activeProjectId === project.id
+                          }
+                          className="h-8 rounded-lg px-2.5 pr-7"
                           tooltip={project.name}
                           title={project.path}
                           onClick={() => toggleProject(project.id)}
@@ -1049,6 +1048,7 @@ function AppSidebar() {
                           <PopoverTrigger asChild>
                             <SidebarMenuAction
                               aria-label={t.studioSessionActions}
+                              className="top-1.5 right-1.5 rounded-lg"
                               showOnHover
                               onClick={(event) => event.stopPropagation()}
                             >
@@ -1100,7 +1100,7 @@ function AppSidebar() {
                         </Popover>
 
                         {isExpanded ? (
-                          <SidebarMenuSub>
+                          <SidebarMenuSub className="mx-4 mt-0.5 border-sidebar-border/70 px-2 py-0.5">
                             {projectSessions.length > 0 ? (
                               projectSessions.map((session) => (
                                 <SidebarMenuSubItem key={session.id}>

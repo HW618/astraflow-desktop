@@ -4,10 +4,10 @@ import * as React from "react"
 import { usePathname } from "next/navigation"
 
 import { AppSidebar } from "@/components/app-sidebar"
+import { SidebarToggleButton } from "@/components/sidebar-toggle-button"
 import {
   SidebarInset,
   SidebarProvider,
-  SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar"
 
@@ -16,7 +16,7 @@ const SIDEBAR_MAX_WIDTH = 420
 const SIDEBAR_DEFAULT_WIDTH = 260
 const LEGACY_SIDEBAR_DEFAULT_WIDTH = 176
 const PREVIOUS_SIDEBAR_DEFAULT_WIDTH = 288
-// Below this drag position the logo no longer fits, so the sidebar collapses.
+// Below this drag position, hand off from resizing to the hidden sidebar state.
 const SIDEBAR_COLLAPSE_AT = 176
 const SIDEBAR_WIDTH_STORAGE_KEY = "astraflow.sidebar-width"
 
@@ -122,7 +122,21 @@ function MobileSidebarTrigger() {
 
   return (
     <div className="absolute top-2 left-2 z-30">
-      <SidebarTrigger />
+      <SidebarToggleButton />
+    </div>
+  )
+}
+
+function DesktopCollapsedSidebarTrigger() {
+  const { open, isMobile } = useSidebar()
+
+  if (open || isMobile) {
+    return null
+  }
+
+  return (
+    <div className="electron-collapsed-sidebar-trigger fixed top-2 left-2 z-50 hidden md:block">
+      <SidebarToggleButton />
     </div>
   )
 }
@@ -179,6 +193,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
       }
     >
       <ElectronCollapsedDragCorner />
+      <DesktopCollapsedSidebarTrigger />
       <div className="flex min-h-0 w-full flex-1">
         <React.Suspense fallback={null}>
           <AppSidebar />

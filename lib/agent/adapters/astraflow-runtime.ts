@@ -524,7 +524,7 @@ async function* streamDeepAgentsRun({
   > | null = null
 
   try {
-    const environment: AgentRunEnvironment = requestedEnvironment ?? "remote"
+    const environment: AgentRunEnvironment = requestedEnvironment ?? "local"
     const session = getStudioSession(sessionId)
     const resolvedReasoningEffort = resolveChatReasoningEffort(
       model,

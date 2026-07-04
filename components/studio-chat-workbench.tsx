@@ -91,7 +91,7 @@ import {
 } from "@/lib/chat-models"
 import type { AgentRuntimeInfo } from "@/lib/agent/runtime"
 import {
-  getPendingProjectId,
+  consumePendingProjectId,
   setPendingProjectId,
 } from "@/lib/studio-pending-project"
 import {
@@ -188,7 +188,7 @@ const PROJECT_NONE_VALUE = "__none__"
 
 type ChatRunEnvironment = "remote" | "local"
 
-const DEFAULT_CHAT_ENVIRONMENT: ChatRunEnvironment = "remote"
+const DEFAULT_CHAT_ENVIRONMENT: ChatRunEnvironment = "local"
 
 type ChatRuntimeOption = Pick<
   AgentRuntimeInfo,
@@ -297,8 +297,10 @@ function getStoredChatEnvironment(): ChatRunEnvironment {
     return DEFAULT_CHAT_ENVIRONMENT
   }
 
-  return window.localStorage.getItem(CHAT_ENVIRONMENT_STORAGE_KEY) === "local"
-    ? "local"
+  const stored = window.localStorage.getItem(CHAT_ENVIRONMENT_STORAGE_KEY)
+
+  return stored === "remote" || stored === "local"
+    ? stored
     : DEFAULT_CHAT_ENVIRONMENT
 }
 
@@ -850,7 +852,7 @@ function StudioChatWorkbench({
   >([])
   const [selectedProjectId, setSelectedProjectId] = React.useState<
     string | null
-  >(() => getPendingProjectId())
+  >(null)
   const [selectedPermissionMode, setSelectedPermissionMode] =
     React.useState<StudioPermissionMode>("ask")
   const [messages, setMessages] = React.useState<StudioMessage[]>([])
@@ -966,7 +968,7 @@ function StudioChatWorkbench({
     sessionProjectRequestIdRef.current = requestId
 
     if (!sessionId) {
-      setSelectedProjectId(getPendingProjectId())
+      setSelectedProjectId(consumePendingProjectId())
       setSelectedPermissionMode("ask")
       return
     }
@@ -1409,32 +1411,6 @@ function StudioChatWorkbench({
     [onSessionsChange, selectedPermissionMode, sessionId, t]
   )
 
-  const [dismissedPermissionIds, setDismissedPermissionIds] = React.useState<
-    string[]
-  >([])
-  const pendingPermissionPart = React.useMemo(() => {
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      const message = messages[index]
-
-      if (message.role !== "assistant") {
-        continue
-      }
-
-      for (const part of message.parts) {
-        if (part.type === "permission" && part.status === "pending") {
-          return part
-        }
-      }
-    }
-
-    return null
-  }, [messages])
-  const activePermissionPart =
-    pendingPermissionPart &&
-    !dismissedPermissionIds.includes(pendingPermissionPart.id)
-      ? pendingPermissionPart
-      : null
-
   const handlePermissionDecision = React.useCallback(
     (
       requestId: string,
@@ -1495,7 +1471,12 @@ function StudioChatWorkbench({
           ? { id: sessionId }
           : await createSession(prompt || attachments[0]?.name || "New chat")
       const activeSessionId = activeSession.id
-      const projectIdForNewSession = !sessionId ? getPendingProjectId() : null
+      const projectIdForNewSession =
+        !sessionId &&
+        selectedProjectId &&
+        localProjects.some((project) => project.id === selectedProjectId)
+          ? selectedProjectId
+          : null
       let nextPermissionMode = selectedPermissionMode
 
       if (projectIdForNewSession) {
@@ -1511,6 +1492,9 @@ function StudioChatWorkbench({
         } catch {
           toast.error(t.studioLocalProjectBindFailed)
         }
+      } else if (!sessionId) {
+        setSelectedProjectId(null)
+        setPendingProjectId(null)
       }
 
       if (
@@ -1688,13 +1672,6 @@ function StudioChatWorkbench({
         </div>
       ) : null}
 
-      <PermissionRequestDialog
-        part={activePermissionPart}
-        onDecision={handlePermissionDecision}
-        onDismiss={(requestId) =>
-          setDismissedPermissionIds((current) => [...current, requestId])
-        }
-      />
     </section>
   )
 }
@@ -2700,71 +2677,6 @@ function AssistantPermissionCard({
         </div>
       ) : null}
     </div>
-  )
-}
-
-function PermissionRequestDialog({
-  part,
-  onDecision,
-  onDismiss,
-}: {
-  part: Extract<StudioMessagePart, { type: "permission" }> | null
-  onDecision: (
-    requestId: string,
-    option: StudioPermissionOption,
-    status: Extract<StudioMessagePart, { type: "permission" }>["status"]
-  ) => void
-  onDismiss: (requestId: string) => void
-}) {
-  const { t } = useI18n()
-
-  if (!part) {
-    return null
-  }
-
-  return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open) {
-          onDismiss(part.id)
-        }
-      }}
-    >
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>{t.studioPermissionRequested}</DialogTitle>
-          <DialogDescription className="truncate font-medium text-foreground">
-            {part.toolName}
-          </DialogDescription>
-        </DialogHeader>
-        <pre className="max-h-64 min-w-0 overflow-auto rounded-lg bg-muted/60 px-3 py-2 font-mono text-xs leading-5 whitespace-pre-wrap text-foreground">
-          {part.input.trim() || t.studioPermissionNoInput}
-        </pre>
-        <div className="flex flex-wrap justify-end gap-2">
-          {part.options.map((option) => (
-            <Button
-              key={option.optionId}
-              type="button"
-              variant={
-                option.kind.startsWith("reject")
-                  ? "destructive"
-                  : option.kind === "allow_always"
-                    ? "default"
-                    : "outline"
-              }
-              size="sm"
-              className="h-8 rounded-xl"
-              onClick={() =>
-                onDecision(part.id, option, getPermissionDecisionStatus(option))
-              }
-            >
-              {option.name || option.optionId}
-            </Button>
-          ))}
-        </div>
-      </DialogContent>
-    </Dialog>
   )
 }
 
