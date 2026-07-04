@@ -38,3 +38,8 @@ pnpm-debug.log*
 *.tsbuildinfo
 next-env.d.ts
 .ace-tool/
+
+# local artifacts
+/test-results/
+/image.png
+/image copy.png
