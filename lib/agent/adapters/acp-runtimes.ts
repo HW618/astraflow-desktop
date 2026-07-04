@@ -11,8 +11,6 @@ import {
   registerAgentRuntime,
   type AgentRuntimeInfo,
 } from "@/lib/agent/runtime"
-import { MODELVERSE_BASE_URL } from "@/lib/modelverse-config"
-import { getStoredModelverseApiKey } from "@/lib/modelverse-openai"
 
 type CommandProbe =
   | { available: true; command: AcpCommandSpec; detail: string }
@@ -235,7 +233,7 @@ export function probeClaudeCodeAcpCommand(): CommandProbe {
   claudeCodeProbe = {
     available: true,
     command: claudeAgentAcpScript,
-    detail: `using ${scriptPath}; ModelVerse env is resolved when the runtime starts`,
+    detail: `using ${scriptPath}`,
   }
 
   return claudeCodeProbe
@@ -244,26 +242,7 @@ export function probeClaudeCodeAcpCommand(): CommandProbe {
 export function resolveClaudeCodeAcpCommand() {
   const probe = probeClaudeCodeAcpCommand()
 
-  if (!probe.available) {
-    return null
-  }
-
-  if (probe.command.transport === "http") {
-    return probe.command
-  }
-
-  const apiKey = getStoredModelverseApiKey()
-
-  return {
-    ...probe.command,
-    env: apiKey
-      ? {
-          ...(probe.command.env ?? {}),
-          ANTHROPIC_AUTH_TOKEN: apiKey,
-          ANTHROPIC_BASE_URL: MODELVERSE_BASE_URL,
-        }
-      : probe.command.env,
-  }
+  return probe.available ? probe.command : null
 }
 
 export function probeOpenCodeAcpCommand(): CommandProbe {
