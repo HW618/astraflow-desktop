@@ -1,4 +1,3 @@
-import { execFile } from "node:child_process"
 import { stat, realpath } from "node:fs/promises"
 import { basename, isAbsolute } from "node:path"
 import { NextResponse } from "next/server"
@@ -16,6 +15,7 @@ import type {
   StudioLocalProjectGitInfo,
   StudioLocalProjectWithGitInfo,
 } from "@/lib/studio-types"
+import { runSafeGit } from "./safe-git"
 
 export const runtime = "nodejs"
 
@@ -31,26 +31,11 @@ const deleteLocalProjectSchema = z.object({
   action: z.enum(["delete", "clearPermissionRules"]).default("delete"),
 })
 
-function execGit(path: string, args: string[]) {
-  return new Promise<string>((resolve, reject) => {
-    execFile(
-      "git",
-      ["-C", path, ...args],
-      {
-        timeout: GIT_TIMEOUT_MS,
-        maxBuffer: 1024 * 1024,
-      },
-      (error, stdout) => {
-        if (error) {
-          reject(error)
-          return
-        }
-
-        resolve(stdout.toString())
-      }
-    )
+const execGit = (path: string, args: string[]) =>
+  runSafeGit(path, args, {
+    timeout: GIT_TIMEOUT_MS,
+    maxBuffer: 1024 * 1024,
   })
-}
 
 async function readGitInfo(path: string): Promise<StudioLocalProjectGitInfo> {
   try {
