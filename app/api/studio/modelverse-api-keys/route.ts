@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 
+import { requireAuthenticatedRequest } from "@/lib/app-auth"
 import {
   clearStudioModelverseApiKey,
   getSelectedUCloudProjectId,
@@ -294,6 +295,12 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const authError = await requireAuthenticatedRequest(request)
+
+  if (authError) {
+    return authError
+  }
+
   const credentials = await requireCredentials()
 
   if (!credentials) {
@@ -374,6 +381,12 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
+  const authError = await requireAuthenticatedRequest(request)
+
+  if (authError) {
+    return authError
+  }
+
   const credentials = await requireCredentials()
 
   if (!credentials) {
@@ -425,6 +438,12 @@ export async function PATCH(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  const authError = await requireAuthenticatedRequest(request)
+
+  if (authError) {
+    return authError
+  }
+
   const credentials = await requireCredentials()
 
   if (!credentials) {

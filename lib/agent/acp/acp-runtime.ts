@@ -348,8 +348,8 @@ export function createAcpClientApp({
     })
     .onRequest(
       methods.client.session.requestPermission,
-      async ({ params, requestId }) => {
-        const permissionRequestId = String(requestId ?? randomUUID())
+      async ({ params }) => {
+        const permissionRequestId = randomUUID()
         const options: PermissionOption[] = params.options.map((option) => ({
           optionId: option.optionId,
           name: option.name,

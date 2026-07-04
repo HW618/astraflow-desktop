@@ -1,11 +1,18 @@
 import { NextResponse } from "next/server"
 
+import { requireSameOriginRequest } from "@/lib/app-auth"
 import { getStudioOAuthStatus } from "@/lib/studio-db"
 import { completeUCloudOAuthFlowFromCallbackUrl } from "@/lib/ucloud-oauth"
 
 export const runtime = "nodejs"
 
 export async function POST(request: Request) {
+  const originError = requireSameOriginRequest(request)
+
+  if (originError) {
+    return originError
+  }
+
   try {
     const body = (await request.json()) as { callbackUrl?: unknown }
     const callbackUrl =

@@ -1,10 +1,17 @@
 import { NextResponse } from "next/server"
 
+import { requireSameOriginRequest } from "@/lib/app-auth"
 import { startUCloudOAuthFlow } from "@/lib/ucloud-oauth"
 
 export const runtime = "nodejs"
 
-export async function POST() {
+export async function POST(request: Request) {
+  const originError = requireSameOriginRequest(request)
+
+  if (originError) {
+    return originError
+  }
+
   try {
     return NextResponse.json({
       ok: true,

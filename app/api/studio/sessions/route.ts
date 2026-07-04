@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 
+import { requireAuthenticatedRequest } from "@/lib/app-auth"
 import { createStudioSession, listStudioSessions } from "@/lib/studio-db"
 import { studioModes } from "@/lib/studio-types"
 
@@ -12,10 +13,22 @@ const createSessionSchema = z.object({
 })
 
 export async function GET() {
+  const authError = await requireAuthenticatedRequest()
+
+  if (authError) {
+    return authError
+  }
+
   return NextResponse.json({ ok: true, data: listStudioSessions() })
 }
 
 export async function POST(request: Request) {
+  const authError = await requireAuthenticatedRequest(request)
+
+  if (authError) {
+    return authError
+  }
+
   const parsed = createSessionSchema.safeParse(await request.json())
 
   if (!parsed.success) {
