@@ -650,20 +650,23 @@ function createSnapshotAccumulator() {
         )
 
         if (activityIndex < 0) {
-          for (
-            let index = snapshot.activities.length - 1;
-            index >= 0;
-            index--
-          ) {
-            const activity = snapshot.activities[index]
+          const matchingRunningIndexes = snapshot.activities
+            .map((activity, index) => ({ activity, index }))
+            .filter(
+              ({ activity }) =>
+                activity.toolName === event.name &&
+                activity.status === "running"
+            )
 
-            if (
-              activity.toolName === event.name &&
-              activity.status === "running"
-            ) {
-              activityIndex = index
-              break
-            }
+          if (matchingRunningIndexes.length === 1) {
+            activityIndex = matchingRunningIndexes[0].index
+          } else {
+            console.warn("[studio-chat] tool_result_unmatched", {
+              eventId: event.id,
+              toolName: event.name,
+              runningMatches: matchingRunningIndexes.length,
+            })
+            return false
           }
         }
 

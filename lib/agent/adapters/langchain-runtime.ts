@@ -9,8 +9,10 @@ import { resolveChatReasoningEffort } from "@/lib/chat-models"
 import { isMcpToolName } from "@/lib/mcp"
 import { createModelverseChatModel } from "@/lib/modelverse-langchain"
 import { DEFAULT_SYSTEM_PROMPT } from "@/lib/modelverse-openai"
-import { getStudioModelverseApiKey } from "@/lib/studio-db"
+import { getStudioModelverseApiKey, getStudioSession } from "@/lib/studio-db"
 import type { AgentEvent } from "@/lib/agent/events"
+import { AgentEventQueue } from "@/lib/agent/event-queue"
+import { wrapToolsWithPermissionGateway } from "@/lib/agent/permission-gateway"
 import {
   registerAgentRuntime,
   type AgentRunInput,
@@ -127,14 +129,22 @@ function getStringValue(...values: unknown[]) {
   return null
 }
 
-function getToolCallId(data: Record<string, unknown>, runId: unknown) {
+function getExplicitToolCallId(data: Record<string, unknown>) {
   const toolCall = getRecord(data.tool_call) ?? getRecord(data.toolCall)
-  const id = getStringValue(
+
+  return getStringValue(
     data.tool_call_id,
     data.toolCallId,
-    toolCall?.id,
-    runId
+    toolCall?.id
   )
+}
+
+function getToolRunId(runId: unknown) {
+  return getStringValue(runId)
+}
+
+function getFallbackToolCallId(data: Record<string, unknown>, runId: unknown) {
+  const id = getExplicitToolCallId(data) ?? getToolRunId(runId)
 
   return id ?? randomUUID()
 }
@@ -154,6 +164,96 @@ function inferToolNameFromToolCallId(toolCallId: string) {
   const [candidate] = toolCallId.split(":")
 
   return isVisibleToolName(candidate) ? candidate : null
+}
+
+function getSingleRunningToolCallId(
+  runningToolCallsByName: Map<string, Set<string>>,
+  toolName: string | null
+) {
+  if (!toolName) {
+    return null
+  }
+
+  const runningIds = runningToolCallsByName.get(toolName)
+
+  if (!runningIds || runningIds.size !== 1) {
+    return null
+  }
+
+  return Array.from(runningIds)[0]
+}
+
+function markToolCallRunning(
+  runningToolCallsByName: Map<string, Set<string>>,
+  toolCallId: string,
+  toolName: string
+) {
+  const runningIds = runningToolCallsByName.get(toolName) ?? new Set<string>()
+
+  runningIds.add(toolCallId)
+  runningToolCallsByName.set(toolName, runningIds)
+}
+
+function markToolCallFinished(
+  runningToolCallsByName: Map<string, Set<string>>,
+  toolCallId: string,
+  toolName: string
+) {
+  const runningIds = runningToolCallsByName.get(toolName)
+
+  if (!runningIds) {
+    return
+  }
+
+  runningIds.delete(toolCallId)
+
+  if (runningIds.size === 0) {
+    runningToolCallsByName.delete(toolName)
+  }
+}
+
+function resolveToolCallIdForEvent({
+  data,
+  runningToolCallsByName,
+  toolName,
+  toolRunIdAliases,
+  runId,
+}: {
+  data: Record<string, unknown>
+  runningToolCallsByName: Map<string, Set<string>>
+  toolName: string | null
+  toolRunIdAliases: Map<string, string>
+  runId: unknown
+}) {
+  const explicitId = getExplicitToolCallId(data)
+
+  if (explicitId) {
+    return explicitId
+  }
+
+  const toolRunId = getToolRunId(runId)
+
+  if (toolRunId) {
+    const alias = toolRunIdAliases.get(toolRunId)
+
+    if (alias) {
+      return alias
+    }
+
+    const runningToolCallId = getSingleRunningToolCallId(
+      runningToolCallsByName,
+      toolName
+    )
+    const toolCallId = runningToolCallId ?? toolRunId
+
+    toolRunIdAliases.set(toolRunId, toolCallId)
+    return toolCallId
+  }
+
+  return (
+    getSingleRunningToolCallId(runningToolCallsByName, toolName) ??
+    randomUUID()
+  )
 }
 
 function resolveToolNameForEvent({
@@ -248,12 +348,14 @@ ${sandboxManifest ? `\n${sandboxManifest}` : ""}`
 
 function createToolCallEvent({
   input,
+  runningToolCallsByName,
   seenToolCalls,
   toolCallId,
   toolEventSeq,
   toolName,
 }: {
   input: unknown
+  runningToolCallsByName: Map<string, Set<string>>
   seenToolCalls: Map<string, string>
   toolCallId: string
   toolEventSeq: number
@@ -270,6 +372,7 @@ function createToolCallEvent({
   }
 
   seenToolCalls.set(toolCallId, toolName)
+  markToolCallRunning(runningToolCallsByName, toolCallId, toolName)
   debugStudioChatTool("tool_call_emit", {
     seq: toolEventSeq,
     toolCallId,
@@ -292,11 +395,13 @@ async function* streamLangChainRun({
   sessionId,
   signal,
 }: AgentRunInput): AsyncGenerator<AgentEvent> {
+  const queue = new AgentEventQueue()
   let mcpToolClient: Awaited<
     ReturnType<typeof createStudioMcpToolClient>
   > | null = null
 
   try {
+    const session = getStudioSession(sessionId)
     const resolvedReasoningEffort = resolveChatReasoningEffort(
       model,
       reasoningEffort
@@ -311,7 +416,16 @@ async function* streamLangChainRun({
       modelverseApiKey,
     })
     mcpToolClient = await createStudioMcpToolClient()
-    const tools = [...nativeTools, ...mcpToolClient.tools]
+    const tools = wrapToolsWithPermissionGateway(
+      [...nativeTools, ...mcpToolClient.tools],
+      {
+        sessionId,
+        permissionMode: session?.permissionMode ?? "ask",
+        projectId: session?.projectId ?? null,
+        signal,
+        emit: (event) => queue.push(event),
+      }
+    )
     const hasWebFetch = tools.some(
       (agentTool) => agentTool.name === "web_fetch"
     )
@@ -351,196 +465,266 @@ async function* streamLangChainRun({
       throw error
     })
     const seenToolCalls = new Map<string, string>()
+    const runningToolCallsByName = new Map<string, Set<string>>()
+    const toolRunIdAliases = new Map<string, string>()
     let toolEventSeq = 0
 
-    for await (const rawEvent of run) {
-      const { method, data, event, name, runId } = getRawEventData(rawEvent)
+    const pumpEvents = (async () => {
+      for await (const rawEvent of run) {
+        const { method, data, event, name, runId } = getRawEventData(rawEvent)
 
-      if (!data) {
-        continue
-      }
+        if (!data) {
+          continue
+        }
 
-      if (method === "messages") {
-        if (data.event === "content-block-delta") {
-          const delta = getRecord(data.delta)
+        if (method === "messages") {
+          if (data.event === "content-block-delta") {
+            const delta = getRecord(data.delta)
 
-          if (delta?.type === "reasoning-delta") {
-            yield {
-              type: "reasoning_delta",
-              delta: typeof delta.reasoning === "string" ? delta.reasoning : "",
+            if (delta?.type === "reasoning-delta") {
+              queue.push({
+                type: "reasoning_delta",
+                delta:
+                  typeof delta.reasoning === "string" ? delta.reasoning : "",
+              })
+            }
+
+            if (delta?.type === "text-delta") {
+              queue.push({
+                type: "text_delta",
+                delta: typeof delta.text === "string" ? delta.text : "",
+              })
             }
           }
 
-          if (delta?.type === "text-delta") {
-            yield {
-              type: "text_delta",
-              delta: typeof delta.text === "string" ? delta.text : "",
+          if (data.event === "content-block-finish") {
+            const contentBlock = getContentBlock(data)
+
+            if (
+              contentBlock?.type === "tool_call" &&
+              isVisibleToolName(contentBlock.name)
+            ) {
+              debugStudioChatTool("message_tool_call_block", {
+                seq: ++toolEventSeq,
+                toolCallId:
+                  typeof contentBlock.id === "string" ? contentBlock.id : null,
+                toolName: contentBlock.name,
+                dataKeys: Object.keys(data),
+              })
+              const toolCallEvent = createToolCallEvent({
+                toolCallId:
+                  typeof contentBlock.id === "string"
+                    ? contentBlock.id
+                    : randomUUID(),
+                toolName: contentBlock.name,
+                input: contentBlock.args ?? contentBlock.input ?? "",
+                runningToolCallsByName,
+                seenToolCalls,
+                toolEventSeq: ++toolEventSeq,
+              })
+
+              if (toolCallEvent) {
+                queue.push(toolCallEvent)
+              }
             }
           }
         }
 
-        if (data.event === "content-block-finish") {
-          const contentBlock = getContentBlock(data)
+        if (
+          event === "on_tool_start" ||
+          event === "on_tool_end" ||
+          event === "on_tool_error"
+        ) {
+          const fallbackToolCallId = getFallbackToolCallId(data, runId)
+          const fallbackToolName = resolveToolNameForEvent({
+            data,
+            fallbackName: name,
+            toolCallId: fallbackToolCallId,
+            seenToolCalls,
+          })
+          const toolCallId = resolveToolCallIdForEvent({
+            data,
+            runningToolCallsByName,
+            toolName: fallbackToolName,
+            toolRunIdAliases,
+            runId,
+          })
+          const toolName = resolveToolNameForEvent({
+            data,
+            fallbackName: name,
+            toolCallId,
+            seenToolCalls,
+          })
 
-          if (
-            contentBlock?.type === "tool_call" &&
-            isVisibleToolName(contentBlock.name)
-          ) {
-            debugStudioChatTool("message_tool_call_block", {
+          debugStudioChatTool("langchain_tool_event_seen", {
+            seq: ++toolEventSeq,
+            event,
+            method,
+            name,
+            runId,
+            toolName,
+            dataKeys: Object.keys(data),
+          })
+
+          if (!isVisibleToolName(toolName)) {
+            debugStudioChatTool("langchain_tool_event_skipped", {
               seq: ++toolEventSeq,
-              toolCallId:
-                typeof contentBlock.id === "string" ? contentBlock.id : null,
-              toolName: contentBlock.name,
-              dataKeys: Object.keys(data),
+              event,
+              toolCallId,
+              rawToolName: getToolName(data, name),
+              knownToolName: seenToolCalls.get(toolCallId),
             })
+            continue
+          }
+
+          if (event === "on_tool_start") {
             const toolCallEvent = createToolCallEvent({
-              toolCallId:
-                typeof contentBlock.id === "string"
-                  ? contentBlock.id
-                  : randomUUID(),
-              toolName: contentBlock.name,
-              input: contentBlock.args ?? contentBlock.input ?? "",
+              toolCallId,
+              toolName,
+              input: getToolInput(data),
+              runningToolCallsByName,
               seenToolCalls,
               toolEventSeq: ++toolEventSeq,
             })
 
             if (toolCallEvent) {
-              yield toolCallEvent
+              queue.push(toolCallEvent)
             }
           }
-        }
-      }
 
-      if (
-        event === "on_tool_start" ||
-        event === "on_tool_end" ||
-        event === "on_tool_error"
-      ) {
-        const toolCallId = getToolCallId(data, runId)
-        const toolName = resolveToolNameForEvent({
-          data,
-          fallbackName: name,
-          toolCallId,
-          seenToolCalls,
-        })
+          if (event === "on_tool_end") {
+            queue.push({
+              type: "tool_result",
+              id: toolCallId,
+              name: toolName,
+              status: "complete",
+              output: stringifyToolPayload(getToolOutput(data.output)),
+            })
+            markToolCallFinished(
+              runningToolCallsByName,
+              toolCallId,
+              toolName
+            )
+          }
 
-        debugStudioChatTool("langchain_tool_event_seen", {
-          seq: ++toolEventSeq,
-          event,
-          method,
-          name,
-          runId,
-          toolName,
-          dataKeys: Object.keys(data),
-        })
-
-        if (!isVisibleToolName(toolName)) {
-          debugStudioChatTool("langchain_tool_event_skipped", {
-            seq: ++toolEventSeq,
-            event,
-            toolCallId,
-            rawToolName: getToolName(data, name),
-            knownToolName: seenToolCalls.get(toolCallId),
-          })
-          continue
+          if (event === "on_tool_error") {
+            queue.push({
+              type: "tool_result",
+              id: toolCallId,
+              name: toolName,
+              status: "error",
+              error: stringifyToolPayload(
+                getToolOutput(data.error ?? data.output)
+              ),
+            })
+            markToolCallFinished(
+              runningToolCallsByName,
+              toolCallId,
+              toolName
+            )
+          }
         }
 
-        if (event === "on_tool_start") {
-          const toolCallEvent = createToolCallEvent({
-            toolCallId,
-            toolName,
-            input: getToolInput(data),
+        if (method === "tools") {
+          const fallbackToolCallId = getFallbackToolCallId(data, runId)
+          const fallbackToolName = resolveToolNameForEvent({
+            data,
+            fallbackName: name,
+            toolCallId: fallbackToolCallId,
             seenToolCalls,
-            toolEventSeq: ++toolEventSeq,
           })
-
-          if (toolCallEvent) {
-            yield toolCallEvent
-          }
-        }
-
-        if (event === "on_tool_end") {
-          yield {
-            type: "tool_result",
-            id: toolCallId,
-            name: toolName,
-            status: "complete",
-            output: stringifyToolPayload(getToolOutput(data.output)),
-          }
-        }
-
-        if (event === "on_tool_error") {
-          yield {
-            type: "tool_result",
-            id: toolCallId,
-            name: toolName,
-            status: "error",
-            error: stringifyToolPayload(
-              getToolOutput(data.error ?? data.output)
-            ),
-          }
-        }
-      }
-
-      if (method === "tools") {
-        const toolCallId = getToolCallId(data, runId)
-        const toolName = resolveToolNameForEvent({
-          data,
-          fallbackName: name,
-          toolCallId,
-          seenToolCalls,
-        })
-
-        if (!isVisibleToolName(toolName)) {
-          debugStudioChatTool("custom_tool_event_skipped", {
-            seq: ++toolEventSeq,
-            event: data.event,
-            toolCallId,
-            rawToolName: getToolName(data, name),
-            knownToolName: seenToolCalls.get(toolCallId),
+          const toolCallId = resolveToolCallIdForEvent({
+            data,
+            runningToolCallsByName,
+            toolName: fallbackToolName,
+            toolRunIdAliases,
+            runId,
           })
-          continue
-        }
-
-        if (data.event === "tool-started") {
-          const toolCallEvent = createToolCallEvent({
+          const toolName = resolveToolNameForEvent({
+            data,
+            fallbackName: name,
             toolCallId,
-            toolName,
-            input: getToolInput(data),
             seenToolCalls,
-            toolEventSeq: ++toolEventSeq,
           })
 
-          if (toolCallEvent) {
-            yield toolCallEvent
+          if (!isVisibleToolName(toolName)) {
+            debugStudioChatTool("custom_tool_event_skipped", {
+              seq: ++toolEventSeq,
+              event: data.event,
+              toolCallId,
+              rawToolName: getToolName(data, name),
+              knownToolName: seenToolCalls.get(toolCallId),
+            })
+            continue
           }
-        }
 
-        if (data.event === "tool-finished") {
-          yield {
-            type: "tool_result",
-            id: toolCallId,
-            name: toolName,
-            status: "complete",
-            output: stringifyToolPayload(getToolOutput(data.output)),
+          if (data.event === "tool-started") {
+            const toolCallEvent = createToolCallEvent({
+              toolCallId,
+              toolName,
+              input: getToolInput(data),
+              runningToolCallsByName,
+              seenToolCalls,
+              toolEventSeq: ++toolEventSeq,
+            })
+
+            if (toolCallEvent) {
+              queue.push(toolCallEvent)
+            }
           }
-        }
 
-        if (data.event === "tool-error") {
-          yield {
-            type: "tool_result",
-            id: toolCallId,
-            name: toolName,
-            status: "error",
-            error: stringifyToolPayload(
-              getToolOutput(data.message ?? data.error)
-            ),
+          if (data.event === "tool-finished") {
+            queue.push({
+              type: "tool_result",
+              id: toolCallId,
+              name: toolName,
+              status: "complete",
+              output: stringifyToolPayload(getToolOutput(data.output)),
+            })
+            markToolCallFinished(
+              runningToolCallsByName,
+              toolCallId,
+              toolName
+            )
+          }
+
+          if (data.event === "tool-error") {
+            queue.push({
+              type: "tool_result",
+              id: toolCallId,
+              name: toolName,
+              status: "error",
+              error: stringifyToolPayload(
+                getToolOutput(data.message ?? data.error)
+              ),
+            })
+            markToolCallFinished(
+              runningToolCallsByName,
+              toolCallId,
+              toolName
+            )
           }
         }
       }
+
+      await runOutput
+    })()
+    const done = pumpEvents
+      .then(() => queue.close())
+      .catch((error) => {
+        if (isAbortLikeError(error, signal)) {
+          queue.close()
+          return
+        }
+
+        queue.fail(error)
+      })
+
+    for await (const event of queue) {
+      yield event
     }
 
-    await runOutput
+    await done
   } catch (error) {
     if (isAbortLikeError(error, signal)) {
       return
@@ -560,7 +744,7 @@ export const langChainAgentRuntime: AgentRuntime = {
     label: "AstraFlow Agent",
     description: "内置 LangChain agent",
     capabilities: {
-      hitl: false,
+      hitl: true,
       resume: false,
       subagents: false,
       plan: false,
