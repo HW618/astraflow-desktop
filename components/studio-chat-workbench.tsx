@@ -3555,26 +3555,103 @@ function SandboxToolOutput({ output }: { output: string }) {
   )
 }
 
-function FileToolActivity({ activity }: { activity: StudioMessageActivity }) {
+function getActivityFailureOutput(
+  activity: StudioMessageActivity,
+  t: ReturnType<typeof useI18n>["t"]
+) {
+  if (activity.status !== "error") {
+    return ""
+  }
+
+  const explicitError = activity.error?.trim()
+
+  if (explicitError) {
+    return explicitError
+  }
+
+  const output = activity.output.trim()
+
+  if (!output) {
+    return t.studioToolError
+  }
+
+  const parsed = parseSandboxToolOutput(output)
+
+  return parsed.error || parsed.stderr || output
+}
+
+function ToolFailureDetails({
+  activity,
+}: {
+  activity: StudioMessageActivity
+}) {
   const { t } = useI18n()
+  const output = getActivityFailureOutput(activity, t)
+
+  return (
+    <div className="space-y-2 border-l pl-3">
+      <div className="text-xs font-semibold text-destructive uppercase">
+        {t.studioToolError}
+      </div>
+      {output ? (
+        <SandboxToolOutput output={output} />
+      ) : (
+        <div className="text-sm text-muted-foreground">
+          {t.studioToolNoOutput}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function InlineToolActivity({
+  activity,
+  leftIcon,
+}: {
+  activity: StudioMessageActivity
+  leftIcon: React.ReactNode
+}) {
+  const { t } = useI18n()
+  const failed = activity.status === "error"
 
   return (
     <ChainOfThought className={assistantTraceContainerClassName}>
-      <ChainOfThoughtStep key={`${activity.id}-${activity.status}`} disabled>
+      <ChainOfThoughtStep
+        key={`${activity.id}-${activity.status}`}
+        defaultOpen={failed}
+        disabled={!failed}
+      >
         <ChainOfThoughtTrigger
-          className={cn(assistantTraceTriggerClassName, "cursor-default")}
-          leftIcon={
-            activity.status === "complete" ? (
-              <RiCheckLine aria-hidden className="size-4" />
-            ) : (
-              <RiFileTextLine aria-hidden className="size-4" />
-            )
-          }
+          className={cn(
+            assistantTraceTriggerClassName,
+            !failed && "cursor-default"
+          )}
+          leftIcon={leftIcon}
         >
           {renderActivityInlineLabel(activity, t)}
         </ChainOfThoughtTrigger>
+        {failed ? (
+          <ChainOfThoughtContent>
+            <ToolFailureDetails activity={activity} />
+          </ChainOfThoughtContent>
+        ) : null}
       </ChainOfThoughtStep>
     </ChainOfThought>
+  )
+}
+
+function FileToolActivity({ activity }: { activity: StudioMessageActivity }) {
+  return (
+    <InlineToolActivity
+      activity={activity}
+      leftIcon={
+        activity.status === "complete" ? (
+          <RiCheckLine aria-hidden className="size-4" />
+        ) : (
+          <RiFileTextLine aria-hidden className="size-4" />
+        )
+      }
+    />
   )
 }
 
@@ -3582,7 +3659,7 @@ function GenericToolActivity({ activity }: { activity: StudioMessageActivity }) 
   const { t } = useI18n()
   const output =
     activity.status === "error"
-      ? activity.error || t.studioToolError
+      ? getActivityFailureOutput(activity, t)
       : activity.output.trim()
   const defaultOpen = activity.status === "running" || activity.status === "error"
 
@@ -3626,8 +3703,15 @@ function GenericToolActivity({ activity }: { activity: StudioMessageActivity }) 
 
             {activity.status === "running" ? null : output ? (
               <>
-                <div className="text-xs font-semibold text-muted-foreground uppercase">
-                  {t.output}
+                <div
+                  className={cn(
+                    "text-xs font-semibold uppercase",
+                    activity.status === "error"
+                      ? "text-destructive"
+                      : "text-muted-foreground"
+                  )}
+                >
+                  {activity.status === "error" ? t.studioToolError : t.output}
                 </div>
                 <SandboxToolOutput output={output} />
               </>
@@ -3648,7 +3732,7 @@ function RunCommandActivity({ activity }: { activity: StudioMessageActivity }) {
   const payload = getRunCommandPayload(activity.input)
   const output =
     activity.status === "error"
-      ? activity.error || t.studioToolError
+      ? getActivityFailureOutput(activity, t)
       : activity.output.trim()
   const defaultOpen =
     activity.status === "running" || activity.status === "error"
@@ -3695,8 +3779,15 @@ function RunCommandActivity({ activity }: { activity: StudioMessageActivity }) {
 
           {activity.status === "running" ? null : (
             <div className="space-y-2 border-l pl-3">
-              <div className="text-xs font-semibold text-muted-foreground uppercase">
-                {t.output}
+              <div
+                className={cn(
+                  "text-xs font-semibold uppercase",
+                  activity.status === "error"
+                    ? "text-destructive"
+                    : "text-muted-foreground"
+                )}
+              >
+                {activity.status === "error" ? t.studioToolError : t.output}
               </div>
               {output ? (
                 <SandboxToolOutput output={output} />
@@ -3718,7 +3809,7 @@ function RunCodeActivity({ activity }: { activity: StudioMessageActivity }) {
   const payload = getRunCodePayload(activity.input)
   const output =
     activity.status === "error"
-      ? activity.error || t.studioToolError
+      ? getActivityFailureOutput(activity, t)
       : activity.output.trim()
   const lifecycleLabel =
     payload.autoPause === null
@@ -3772,8 +3863,15 @@ function RunCodeActivity({ activity }: { activity: StudioMessageActivity }) {
 
           {activity.status === "running" ? null : (
             <div className="space-y-2 border-l pl-3">
-              <div className="text-xs font-semibold text-muted-foreground uppercase">
-                {t.output}
+              <div
+                className={cn(
+                  "text-xs font-semibold uppercase",
+                  activity.status === "error"
+                    ? "text-destructive"
+                    : "text-muted-foreground"
+                )}
+              >
+                {activity.status === "error" ? t.studioToolError : t.output}
               </div>
               {output ? (
                 <SandboxToolOutput output={output} />
@@ -3798,7 +3896,7 @@ function SandboxHostActivity({
   const { t } = useI18n()
   const output =
     activity.status === "error"
-      ? activity.error || t.studioToolError
+      ? getActivityFailureOutput(activity, t)
       : activity.output.trim()
   const defaultOpen =
     activity.status === "running" ||
@@ -3827,8 +3925,15 @@ function SandboxHostActivity({
         <ChainOfThoughtContent>
           {activity.status === "running" ? null : output ? (
             <div className="space-y-2 border-l pl-3">
-              <div className="text-xs font-semibold text-muted-foreground uppercase">
-                {t.output}
+              <div
+                className={cn(
+                  "text-xs font-semibold uppercase",
+                  activity.status === "error"
+                    ? "text-destructive"
+                    : "text-muted-foreground"
+                )}
+              >
+                {activity.status === "error" ? t.studioToolError : t.output}
               </div>
               <SandboxToolOutput output={output} />
             </div>
@@ -3844,8 +3949,6 @@ function SandboxHostActivity({
 }
 
 function AssistantActivity({ activity }: { activity: StudioMessageActivity }) {
-  const { t } = useI18n()
-
   if (activity.toolName === "run_code") {
     return <RunCodeActivity activity={activity} />
   }
@@ -3868,66 +3971,48 @@ function AssistantActivity({ activity }: { activity: StudioMessageActivity }) {
     activity.toolName === "load_skill"
   ) {
     return (
-      <ChainOfThought className={assistantTraceContainerClassName}>
-        <ChainOfThoughtStep key={`${activity.id}-${activity.status}`} disabled>
-          <ChainOfThoughtTrigger
-            className={cn(assistantTraceTriggerClassName, "cursor-default")}
-            leftIcon={
-              activity.status === "complete" ? (
-                <RiCheckLine aria-hidden className="size-4" />
-              ) : (
-                <RiBookOpenLine aria-hidden className="size-4" />
-              )
-            }
-          >
-            {renderActivityInlineLabel(activity, t)}
-          </ChainOfThoughtTrigger>
-        </ChainOfThoughtStep>
-      </ChainOfThought>
+      <InlineToolActivity
+        activity={activity}
+        leftIcon={
+          activity.status === "complete" ? (
+            <RiCheckLine aria-hidden className="size-4" />
+          ) : (
+            <RiBookOpenLine aria-hidden className="size-4" />
+          )
+        }
+      />
     )
   }
 
   if (isMcpToolName(activity.toolName)) {
     return (
-      <ChainOfThought className={assistantTraceContainerClassName}>
-        <ChainOfThoughtStep key={`${activity.id}-${activity.status}`} disabled>
-          <ChainOfThoughtTrigger
-            className={cn(assistantTraceTriggerClassName, "cursor-default")}
-            leftIcon={
-              activity.status === "complete" ? (
-                <RiCheckLine aria-hidden className="size-4" />
-              ) : (
-                <RiExternalLinkLine aria-hidden className="size-4" />
-              )
-            }
-          >
-            {renderActivityInlineLabel(activity, t)}
-          </ChainOfThoughtTrigger>
-        </ChainOfThoughtStep>
-      </ChainOfThought>
+      <InlineToolActivity
+        activity={activity}
+        leftIcon={
+          activity.status === "complete" ? (
+            <RiCheckLine aria-hidden className="size-4" />
+          ) : (
+            <RiExternalLinkLine aria-hidden className="size-4" />
+          )
+        }
+      />
     )
   }
 
   if (activity.toolName === "web_search" || activity.toolName === "web_fetch") {
     return (
-      <ChainOfThought className={assistantTraceContainerClassName}>
-        <ChainOfThoughtStep key={`${activity.id}-${activity.status}`} disabled>
-          <ChainOfThoughtTrigger
-            className={cn(assistantTraceTriggerClassName, "cursor-default")}
-            leftIcon={
-              activity.status === "complete" ? (
-                <RiCheckLine aria-hidden className="size-4" />
-              ) : activity.toolName === "web_fetch" ? (
-                <RiFileTextLine aria-hidden className="size-4" />
-              ) : (
-                <RiSearchLine aria-hidden className="size-4" />
-              )
-            }
-          >
-            {renderActivityInlineLabel(activity, t)}
-          </ChainOfThoughtTrigger>
-        </ChainOfThoughtStep>
-      </ChainOfThought>
+      <InlineToolActivity
+        activity={activity}
+        leftIcon={
+          activity.status === "complete" ? (
+            <RiCheckLine aria-hidden className="size-4" />
+          ) : activity.toolName === "web_fetch" ? (
+            <RiFileTextLine aria-hidden className="size-4" />
+          ) : (
+            <RiSearchLine aria-hidden className="size-4" />
+          )
+        }
+      />
     )
   }
 
