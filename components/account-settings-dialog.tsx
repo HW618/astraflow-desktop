@@ -455,7 +455,7 @@ function AccountSettingsDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="h-[min(88vh,820px)] w-[min(94vw,1180px)] max-w-none gap-0 overflow-hidden rounded-[28px] p-0"
+        className="h-[min(88vh,820px)] w-[min(94vw,1180px)] max-w-none gap-0 overflow-hidden rounded-[28px] p-0 sm:max-w-none"
         showCloseButton
       >
         <DialogTitle className="sr-only">{t.settings}</DialogTitle>
@@ -504,8 +504,8 @@ function AccountSettingsDialog({
             </nav>
           </aside>
 
-          <main className="min-h-0 overflow-y-auto px-5 py-5 md:px-8 md:py-7">
-            <div className="mx-auto flex max-w-4xl flex-col gap-5">
+          <main className="min-h-0 min-w-0 overflow-y-auto px-5 py-5 md:px-8 md:py-7">
+            <div className="mx-auto flex w-full min-w-0 max-w-4xl flex-col gap-5">
               <div className="flex min-w-0 items-start justify-between gap-4 border-b pr-12 pb-4">
                 <div className="min-w-0">
                   <h2 className="text-2xl font-semibold tracking-normal">
