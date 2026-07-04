@@ -16,6 +16,12 @@ try {
   })
 }
 
+ipcRenderer.on("astraflow:fullscreen-changed", (_event, isFullScreen) => {
+  document.documentElement.dataset.astraflowFullscreen = isFullScreen
+    ? "true"
+    : "false"
+})
+
 contextBridge.exposeInMainWorld("astraflowDesktop", {
   platform,
   installUpdate: () => ipcRenderer.invoke("astraflow:install-update"),

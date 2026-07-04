@@ -99,14 +99,18 @@ function SidebarResizeHandle({
 
 function ElectronTitlebar() {
   return (
-    <div className="electron-titlebar flex shrink-0 items-center overflow-hidden bg-background/90 px-3 text-foreground backdrop-blur">
-      <div className="flex min-w-0 items-center gap-2 pl-[76px]">
-        <span className="truncate text-sm font-semibold text-muted-foreground">
-          AstraFlow
-        </span>
-      </div>
-    </div>
+    <div className="electron-titlebar shrink-0 overflow-hidden bg-background" />
   )
+}
+
+function ElectronCollapsedDragCorner() {
+  const { open, isMobile } = useSidebar()
+
+  if (open || isMobile) {
+    return null
+  }
+
+  return <div aria-hidden className="electron-drag-corner" />
 }
 
 function MobileSidebarTrigger() {
@@ -147,10 +151,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
   }, [])
 
   React.useEffect(() => {
-    window.localStorage.setItem(
-      SIDEBAR_WIDTH_STORAGE_KEY,
-      String(sidebarWidth)
-    )
+    window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth))
   }, [sidebarWidth])
 
   if (pathname === "/login") {
@@ -177,7 +178,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
         } as React.CSSProperties
       }
     >
-      <ElectronTitlebar />
+      <ElectronCollapsedDragCorner />
       <div className="flex min-h-0 w-full flex-1">
         <React.Suspense fallback={null}>
           <AppSidebar />

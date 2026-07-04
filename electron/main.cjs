@@ -409,7 +409,9 @@ function createMainWindow(url, { show = true } = {}) {
     process.platform === "darwin"
       ? {
           titleBarStyle: "hiddenInset",
-          trafficLightPosition: { x: 13, y: 13 },
+          // Vertically centered with the 3rem sidebar header row that acts as
+          // the drag region on macOS.
+          trafficLightPosition: { x: 13, y: 17 },
         }
       : {}
 
@@ -431,6 +433,19 @@ function createMainWindow(url, { show = true } = {}) {
   })
 
   attachNavigationGuards(window)
+
+  if (process.platform === "darwin") {
+    // Let the renderer collapse the traffic-light padding while the lights
+    // are auto-hidden in fullscreen.
+    const sendFullScreenState = (isFullScreen) => {
+      if (!window.isDestroyed()) {
+        window.webContents.send("astraflow:fullscreen-changed", isFullScreen)
+      }
+    }
+
+    window.on("enter-full-screen", () => sendFullScreenState(true))
+    window.on("leave-full-screen", () => sendFullScreenState(false))
+  }
 
   window.once("closed", () => {
     if (mainWindow === window) {

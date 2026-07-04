@@ -75,21 +75,49 @@
   --sidebar-ring: oklch(0.61 0.16 268);
 }
 
-html[data-astraflow-platform="darwin"] {
-  --electron-titlebar-height: 40px;
-}
-
+/* macOS hiddenInset window: no dedicated titlebar row — the sidebar header
+   doubles as the drag region and clears the traffic lights. In fullscreen the
+   traffic lights auto-hide, so the extra left padding collapses too. The
+   .electron-titlebar strip remains only for pages without a sidebar (login). */
 .electron-titlebar {
   height: var(--electron-titlebar-height);
   -webkit-app-region: drag;
 }
 
 html[data-astraflow-platform="darwin"] .electron-titlebar {
-  border-bottom: 1px solid var(--border);
+  --electron-titlebar-height: 40px;
 }
 
-.electron-titlebar [data-electron-titlebar-control] {
+html[data-astraflow-platform="darwin"] [data-electron-drag-header] {
+  -webkit-app-region: drag;
+  min-height: 3rem;
+  justify-content: center;
+}
+
+html[data-astraflow-platform="darwin"]:not([data-astraflow-fullscreen="true"])
+  [data-electron-drag-header]
+  > * {
+  padding-left: 72px;
+}
+
+html[data-astraflow-platform="darwin"]
+  [data-electron-drag-header]
+  :is(a, button) {
   -webkit-app-region: no-drag;
+}
+
+html[data-astraflow-platform="darwin"] .electron-drag-corner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 40;
+  height: 3rem;
+  width: 80px;
+  -webkit-app-region: drag;
+}
+
+html[data-astraflow-fullscreen="true"] .electron-drag-corner {
+  display: none;
 }
 
 .dark {

@@ -914,15 +914,16 @@ function AppSidebar() {
   return (
     <>
       <Sidebar collapsible="offcanvas">
-        <SidebarHeader>
+        <SidebarHeader data-electron-drag-header>
           <div className="flex items-center gap-2 px-3 pt-0.5">
             <Link
               href="/studio"
               aria-label="AstraFlow"
-              className="flex min-w-0 flex-1 items-center overflow-hidden"
+              className="flex min-w-0 items-center overflow-hidden"
             >
               <AstraFlowLogo className="h-7 shrink-0" fetchPriority="high" />
             </Link>
+            <div className="min-w-0 flex-1" />
             <AppInfoButton className="h-8 shrink-0 rounded-xl group-data-[collapsible=icon]:hidden" />
           </div>
         </SidebarHeader>

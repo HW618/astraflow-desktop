@@ -27,7 +27,9 @@ extraMetadata:
 
 mac:
   category: public.app-category.productivity
-  icon: public/icon/icon.svg
+  # electron-builder cannot rasterize SVG for macOS; use the pre-rendered
+  # 1024px PNG (converted to icns at build time).
+  icon: public/icon/icon.png
   hardenedRuntime: true
   gatekeeperAssess: false
   target:
