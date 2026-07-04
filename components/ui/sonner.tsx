@@ -1,6 +1,5 @@
 "use client"
 
-import { useTheme } from "next-themes"
 import type { CSSProperties } from "react"
 import {
   RiCheckboxCircleLine,
@@ -10,6 +9,8 @@ import {
   RiLoaderLine,
 } from "@remixicon/react"
 import { Toaster as Sonner, type ToasterProps } from "sonner"
+
+import { useTheme } from "@/components/theme-provider"
 
 const Toaster = ({ ...props }: ToasterProps) => {
   const { theme = "system" } = useTheme()

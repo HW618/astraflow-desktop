@@ -169,6 +169,8 @@ const en = {
     `Open an interactive shell in ${name}.`,
   codeboxTerminalDescriptionFallback:
     "Open an interactive shell in this sandbox.",
+  codeboxTerminalNew: "New terminal",
+  codeboxTerminalClose: "Close terminal panel",
   codeboxTerminalConnecting: "Connecting to sandbox terminal...",
   codeboxTerminalConnected: "Connected.",
   codeboxTerminalExited: (code: number) => `Terminal exited with code ${code}.`,
@@ -1053,6 +1055,8 @@ const zh: Dictionary = {
   codeboxTerminalDescription: (name: string) =>
     `在 ${name} 中打开交互式 Shell。`,
   codeboxTerminalDescriptionFallback: "在这个沙箱中打开交互式 Shell。",
+  codeboxTerminalNew: "新建终端",
+  codeboxTerminalClose: "关闭终端面板",
   codeboxTerminalConnecting: "正在连接沙箱终端...",
   codeboxTerminalConnected: "已连接。",
   codeboxTerminalExited: (code: number) => `终端已退出，代码 ${code}。`,

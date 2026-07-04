@@ -19,10 +19,10 @@ import {
   RiUser3Line,
 } from "@remixicon/react"
 import type { RemixiconComponentType } from "@remixicon/react"
-import { useTheme } from "next-themes"
 import { toast } from "sonner"
 
 import { AppInfoButton } from "@/components/app-info-button"
+import { useTheme } from "@/components/theme-provider"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"

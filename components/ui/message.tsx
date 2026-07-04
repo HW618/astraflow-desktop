@@ -56,6 +56,7 @@ const MessageContent = ({
   markdown = false,
   className,
   openLinksInWorkspace,
+  streaming,
   ...props
 }: MessageContentProps) => {
   const classNames = cn(
@@ -67,6 +68,7 @@ const MessageContent = ({
     <Markdown
       className={classNames}
       openLinksInWorkspace={openLinksInWorkspace ?? true}
+      streaming={streaming}
       {...props}
     >
       {children as string}

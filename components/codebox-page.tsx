@@ -4,6 +4,7 @@ import * as React from "react"
 import type { FitAddon as XTermFitAddon } from "@xterm/addon-fit"
 import type { Terminal as XTermTerminal } from "@xterm/xterm"
 import {
+  RiAddLine,
   RiArrowRightUpLine,
   RiArrowUpLine,
   RiCheckLine,
@@ -1238,6 +1239,11 @@ function CodeBoxPage() {
         </div>
       </section>
 
+      <CodeBoxTerminalPanel
+        sandbox={terminalSandbox}
+        onClose={() => setTerminalSandbox(null)}
+      />
+
       <GithubDeviceDialog
         open={githubDialogOpen}
         onOpenChange={setGithubDialogOpen}
@@ -1286,14 +1292,6 @@ function CodeBoxPage() {
           }
         }}
         onOpen={openSandboxWorkspace}
-      />
-      <CodeBoxTerminalDialog
-        sandbox={terminalSandbox}
-        onOpenChange={(open) => {
-          if (!open) {
-            setTerminalSandbox(null)
-          }
-        }}
       />
       <OpenVSCodeDialog
         sandbox={sshSandbox}
@@ -1883,56 +1881,82 @@ function parseTerminalEvent(event: MessageEvent<string>) {
   }
 }
 
-function CodeBoxTerminalDialog({
+function CodeBoxTerminalPanel({
   sandbox,
-  onOpenChange,
+  onClose,
 }: {
   sandbox: CodeBoxSandbox | null
-  onOpenChange: (open: boolean) => void
+  onClose: () => void
 }) {
   const { t } = useI18n()
+  const [terminalKey, setTerminalKey] = React.useState(0)
   const sandboxLabel =
     sandbox?.name ||
     (sandbox?.repoUrl ? getRepoName(sandbox.repoUrl) : sandbox?.sandboxId) ||
     ""
 
   return (
-    <Dialog open={Boolean(sandbox)} onOpenChange={onOpenChange}>
-      <DialogContent
-        className="grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden rounded-3xl max-w-none gap-5 sm:max-w-none"
-        style={{
-          width: "min(1120px, calc(100vw - 2rem))",
-          maxHeight: "calc(100vh - 2rem)",
-        }}
+    <div
+      data-testid="codebox-terminal-panel"
+      aria-hidden={!sandbox}
+      className={cn(
+        "shrink-0 overflow-hidden border-t bg-background transition-[height,border-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
+        sandbox ? "border-border" : "pointer-events-none border-transparent"
+      )}
+      style={{ height: sandbox ? "min(44vh, 440px)" : 0 }}
+    >
+      <div
+        className={cn(
+          "h-full transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
+          sandbox ? "translate-y-0 opacity-100" : "translate-y-5 opacity-0"
+        )}
       >
-        <DialogHeader>
-          <div className="mb-1 flex size-10 items-center justify-center rounded-2xl bg-secondary text-secondary-foreground">
-            <RiTerminalBoxLine className="size-5" aria-hidden />
+        <div className="flex h-10 items-center justify-between px-4">
+          <div className="flex min-w-0 items-center gap-1">
+            <div
+              className="flex h-8 min-w-0 max-w-72 items-center gap-2 rounded-xl bg-muted px-3 text-sm font-medium"
+              title={sandboxLabel || t.codeboxTerminal}
+            >
+              <RiTerminalBoxLine className="size-4 shrink-0" aria-hidden />
+              <span className="truncate">{t.codeboxTerminal}</span>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              className="size-8 rounded-lg text-muted-foreground hover:text-foreground"
+              aria-label={t.codeboxTerminalNew}
+              title={t.codeboxTerminalNew}
+              disabled={!sandbox}
+              onClick={() => setTerminalKey((current) => current + 1)}
+            >
+              <RiAddLine aria-hidden className="size-4" />
+            </Button>
           </div>
-          <DialogTitle>{t.codeboxTerminalTitle}</DialogTitle>
-          <DialogDescription>
-            {sandboxLabel
-              ? t.codeboxTerminalDescription(sandboxLabel)
-              : t.codeboxTerminalDescriptionFallback}
-          </DialogDescription>
-        </DialogHeader>
 
-        <div className="min-h-0 overflow-hidden rounded-2xl border bg-background">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className="size-8 rounded-lg text-muted-foreground hover:text-foreground"
+            aria-label={t.codeboxTerminalClose}
+            title={t.codeboxTerminalClose}
+            onClick={onClose}
+          >
+            <RiCloseLine aria-hidden className="size-4" />
+          </Button>
+        </div>
+
+        <div className="relative h-[calc(100%-2.5rem)] min-h-0 bg-background">
           {sandbox ? (
             <CodeBoxTerminalSurface
-              key={sandbox.sandboxId}
+              key={`${sandbox.sandboxId}:${terminalKey}`}
               sandbox={sandbox}
             />
           ) : null}
         </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            {t.codeboxCancel}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </div>
   )
 }
 
@@ -2197,7 +2221,7 @@ function CodeBoxTerminalSurface({ sandbox }: { sandbox: CodeBoxSandbox }) {
   return (
     <div
       ref={containerRef}
-      className="h-[min(62vh,640px)] min-h-80 overflow-hidden bg-background p-2 font-mono text-xs"
+      className="size-full overflow-hidden bg-background px-4 py-1 font-mono text-xs"
     />
   )
 }

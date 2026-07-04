@@ -2,8 +2,8 @@
 
 import * as React from "react"
 import { RiMoonLine, RiSunLine } from "@remixicon/react"
-import { useTheme } from "next-themes"
 
+import { useTheme } from "@/components/theme-provider"
 import { Button } from "@/components/ui/button"
 import { useI18n } from "@/components/i18n-provider"
 

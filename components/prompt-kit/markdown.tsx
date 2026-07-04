@@ -37,7 +37,19 @@ export type MarkdownProps = {
   className?: string
   autoPreviewHtml?: boolean
   openLinksInWorkspace?: boolean
+  streaming?: boolean
   components?: Partial<Components>
+}
+
+type MarkdownSourceBlock = {
+  key: string
+  content: string
+  kind: string
+  streamingSensitive: boolean
+}
+
+type MarkdownRenderBlock = MarkdownSourceBlock & {
+  mutable: boolean
 }
 
 const markdownExternalProtocols = new Set([
@@ -48,9 +60,143 @@ const markdownExternalProtocols = new Set([
   "vscode-insiders:",
 ])
 
-function parseMarkdownIntoBlocks(markdown: string): string[] {
+function hashMarkdownBlock(value: string) {
+  let hash = 5381
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 33) ^ value.charCodeAt(index)
+  }
+
+  return (hash >>> 0).toString(36)
+}
+
+function getMarkdownTokenKind(token: ReturnType<typeof marked.lexer>[number]) {
+  return typeof token.type === "string" ? token.type : "block"
+}
+
+function looksLikeMarkdownTable(block: string) {
+  const lines = block
+    .trim()
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  if (lines.length < 2) {
+    return false
+  }
+
+  const hasPipeRow = lines[0].includes("|")
+  const hasSeparator = /^:?-{3,}:?(?:\s*\|\s*:?-{3,}:?)*\s*$/.test(
+    lines[1].replace(/^\|/, "").replace(/\|$/, "").trim()
+  )
+
+  return hasPipeRow && hasSeparator
+}
+
+function hasUnclosedFence(block: string) {
+  let openFence: { character: string; length: number } | null = null
+
+  for (const line of block.split("\n")) {
+    const match = line.match(/^(?: {0,3})([`~]{3,})/)
+
+    if (!match) {
+      continue
+    }
+
+    const fence = match[1]
+    const character = fence[0]
+
+    if (!openFence) {
+      openFence = { character, length: fence.length }
+      continue
+    }
+
+    if (character === openFence.character && fence.length >= openFence.length) {
+      openFence = null
+    }
+  }
+
+  return Boolean(openFence)
+}
+
+function isStreamingSensitiveBlock(block: string, kind: string) {
+  return (
+    kind === "table" ||
+    looksLikeMarkdownTable(block) ||
+    hasUnclosedFence(block) ||
+    isHtmlFenceBlock(block)
+  )
+}
+
+export function parseMarkdownIntoBlocks(
+  markdown: string
+): MarkdownSourceBlock[] {
   const tokens = marked.lexer(markdown)
-  return tokens.map((token) => token.raw)
+
+  return tokens.map((token, index) => {
+    const content = token.raw
+    const kind = getMarkdownTokenKind(token)
+
+    return {
+      key: `${index}-${kind}-${hashMarkdownBlock(content)}`,
+      content,
+      kind,
+      streamingSensitive: isStreamingSensitiveBlock(content, kind),
+    }
+  })
+}
+
+function getStreamingTailStartIndex(blocks: MarkdownSourceBlock[]) {
+  if (blocks.length <= 1) {
+    return 0
+  }
+
+  let tailStartIndex = blocks.length - 1
+
+  for (let index = tailStartIndex; index >= 0; index -= 1) {
+    if (!blocks[index].streamingSensitive) {
+      break
+    }
+
+    tailStartIndex = index
+  }
+
+  return tailStartIndex
+}
+
+function createMarkdownRenderBlocks(
+  markdown: string,
+  streaming: boolean
+): MarkdownRenderBlock[] {
+  const blocks = parseMarkdownIntoBlocks(markdown)
+
+  if (!streaming) {
+    return blocks.map((block) => ({ ...block, mutable: false }))
+  }
+
+  const tailStartIndex = getStreamingTailStartIndex(blocks)
+  const stableBlocks = blocks
+    .slice(0, tailStartIndex)
+    .map((block) => ({ ...block, mutable: false }))
+  const tailContent = blocks
+    .slice(tailStartIndex)
+    .map((block) => block.content)
+    .join("")
+
+  if (!tailContent) {
+    return stableBlocks
+  }
+
+  return [
+    ...stableBlocks,
+    {
+      key: `tail-${tailStartIndex}`,
+      content: tailContent,
+      kind: "stream-tail",
+      streamingSensitive: true,
+      mutable: true,
+    },
+  ]
 }
 
 function extractLanguage(className?: string): string {
@@ -67,26 +213,42 @@ function isHtmlLanguage(language: string) {
   return ["html", "htm"].includes(language.toLowerCase())
 }
 
-function isCompleteHtmlFenceBlock(block: string) {
+function getFenceBlockLanguage(block: string) {
   const opener = block.match(/^(?: {0,3})([`~]{3,})([^\n]*)\n/)
+
+  if (!opener) {
+    return null
+  }
+
+  return {
+    fence: opener[1],
+    language: opener[2].trim().split(/\s+/)[0] ?? "",
+  }
+}
+
+function isHtmlFenceBlock(block: string) {
+  const opener = getFenceBlockLanguage(block)
+
+  return opener ? isHtmlLanguage(opener.language) : false
+}
+
+function isCompleteHtmlFenceBlock(block: string) {
+  const opener = getFenceBlockLanguage(block)
 
   if (!opener) {
     return false
   }
 
-  const fence = opener[1]
-  const language = opener[2].trim().split(/\s+/)[0] ?? ""
-
-  if (!isHtmlLanguage(language)) {
+  if (!isHtmlLanguage(opener.language)) {
     return false
   }
 
   const lines = block.replace(/\n$/, "").split("\n")
   const closingLine = lines.at(-1)?.trim() ?? ""
-  const fenceCharacter = fence[0]
+  const fenceCharacter = opener.fence[0]
 
   return (
-    closingLine.length >= fence.length &&
+    closingLine.length >= opener.fence.length &&
     [...closingLine].every((character) => character === fenceCharacter)
   )
 }
@@ -381,7 +543,7 @@ function createMarkdownComponents(
         return (
           <span
             className={cn(
-              "bg-primary-foreground rounded-sm px-1 font-mono text-sm",
+              "rounded-sm bg-primary-foreground px-1 font-mono text-sm",
               className
             )}
             {...props}
@@ -408,25 +570,25 @@ function createMarkdownComponents(
   }
 }
 
-const MemoizedMarkdownBlock = memo(
-  function MarkdownBlock({
-  content,
-  autoPreviewHtml,
-  openLinksInWorkspace,
-  components,
-}: {
-  content: string
-  autoPreviewHtml: boolean
-  openLinksInWorkspace: boolean
-  components?: Partial<Components>
-}) {
-  const markdownComponents = useMemo(
-    () => ({
-      ...createMarkdownComponents(autoPreviewHtml, openLinksInWorkspace),
-      ...components,
-    }),
-    [autoPreviewHtml, components, openLinksInWorkspace]
-  )
+const MarkdownBlockRenderer = memo(
+  function MarkdownBlockRenderer({
+    content,
+    autoPreviewHtml,
+    openLinksInWorkspace,
+    components,
+  }: {
+    content: string
+    autoPreviewHtml: boolean
+    openLinksInWorkspace: boolean
+    components?: Partial<Components>
+  }) {
+    const markdownComponents = useMemo(
+      () => ({
+        ...createMarkdownComponents(autoPreviewHtml, openLinksInWorkspace),
+        ...components,
+      }),
+      [autoPreviewHtml, components, openLinksInWorkspace]
+    )
 
     return (
       <ReactMarkdown
@@ -447,7 +609,7 @@ const MemoizedMarkdownBlock = memo(
   }
 )
 
-MemoizedMarkdownBlock.displayName = "MemoizedMarkdownBlock"
+MarkdownBlockRenderer.displayName = "MarkdownBlockRenderer"
 
 function MarkdownComponent({
   children,
@@ -455,19 +617,27 @@ function MarkdownComponent({
   className,
   autoPreviewHtml = true,
   openLinksInWorkspace = false,
+  streaming = false,
   components,
 }: MarkdownProps) {
   const generatedId = useId()
   const blockId = id ?? generatedId
-  const blocks = useMemo(() => parseMarkdownIntoBlocks(children), [children])
+  const blocks = useMemo(
+    () => createMarkdownRenderBlocks(children, streaming),
+    [children, streaming]
+  )
 
   return (
     <div className={className}>
-      {blocks.map((block, index) => (
-        <MemoizedMarkdownBlock
-          key={`${blockId}-block-${index}`}
-          content={block}
-          autoPreviewHtml={autoPreviewHtml && isCompleteHtmlFenceBlock(block)}
+      {blocks.map((block) => (
+        <MarkdownBlockRenderer
+          key={block.mutable ? `${blockId}-tail` : `${blockId}-${block.key}`}
+          content={block.content}
+          autoPreviewHtml={
+            autoPreviewHtml &&
+            !block.mutable &&
+            isCompleteHtmlFenceBlock(block.content)
+          }
           openLinksInWorkspace={openLinksInWorkspace}
           components={components}
         />
@@ -479,4 +649,4 @@ function MarkdownComponent({
 const Markdown = memo(MarkdownComponent)
 Markdown.displayName = "Markdown"
 
-export { Markdown }
+export { Markdown, MarkdownBlockRenderer }
