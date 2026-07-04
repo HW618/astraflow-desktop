@@ -505,7 +505,7 @@ const studioTableColumns = {
     { name: "project_id", definition: "project_id TEXT" },
     {
       name: "permission_mode",
-      definition: "permission_mode TEXT NOT NULL DEFAULT 'auto'",
+      definition: "permission_mode TEXT NOT NULL DEFAULT 'ask'",
     },
     { name: "created_at", definition: "created_at TEXT NOT NULL DEFAULT ''" },
     { name: "updated_at", definition: "updated_at TEXT NOT NULL DEFAULT ''" },
@@ -879,7 +879,7 @@ function initializeSchema(database: Database.Database) {
       mode TEXT NOT NULL,
       title TEXT NOT NULL,
       project_id TEXT,
-      permission_mode TEXT NOT NULL DEFAULT 'auto',
+      permission_mode TEXT NOT NULL DEFAULT 'ask',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -1104,6 +1104,15 @@ function migrateSchema(database: Database.Database) {
   for (const [tableName, columns] of Object.entries(studioTableColumns)) {
     ensureSqliteTableColumns(database, tableName, columns)
   }
+
+  database
+    .prepare(
+      `
+        DELETE FROM studio_permission_rules
+        WHERE project_id IS NULL
+      `
+    )
+    .run()
 }
 
 function ensureSchemaIndexes(database: Database.Database) {
@@ -1197,7 +1206,7 @@ function normalizePermissionMode(value: unknown): StudioPermissionMode {
   return typeof value === "string" &&
     studioPermissionModes.includes(value as StudioPermissionMode)
     ? (value as StudioPermissionMode)
-    : "auto"
+    : "ask"
 }
 
 function mapLocalProject(row: DbLocalProjectRow): StudioLocalProject {
@@ -1493,58 +1502,75 @@ function parseParts(raw: string | null): StudioMessagePart[] {
       return []
     }
 
-    return parsed.filter((item): item is StudioMessagePart => {
-      if (typeof item !== "object" || item === null) {
-        return false
-      }
+    return parsed
+      .filter((item): item is StudioMessagePart => {
+        if (typeof item !== "object" || item === null) {
+          return false
+        }
 
-      const part = item as StudioMessagePart
+        const part = item as StudioMessagePart
 
-      if (part.type === "text") {
-        return typeof part.id === "string" && typeof part.content === "string"
-      }
-
-      if (part.type === "reasoning") {
-        return typeof part.id === "string" && typeof part.content === "string"
-      }
-
-      if (part.type === "plan") {
-        return (
-          typeof part.id === "string" &&
-          typeof part.content === "string" &&
-          Array.isArray(part.todos) &&
-          part.todos.every(
-            (todo) =>
-              typeof todo.text === "string" &&
-              (todo.status === "pending" ||
-                todo.status === "in_progress" ||
-                todo.status === "completed")
+        if (part.type === "text") {
+          return (
+            typeof part.id === "string" && typeof part.content === "string"
           )
-        )
-      }
+        }
 
-      if (part.type === "permission") {
+        if (part.type === "reasoning") {
+          return (
+            typeof part.id === "string" && typeof part.content === "string"
+          )
+        }
+
+        if (part.type === "plan") {
+          return (
+            typeof part.id === "string" &&
+            typeof part.content === "string" &&
+            Array.isArray(part.todos) &&
+            part.todos.every(
+              (todo) =>
+                typeof todo.text === "string" &&
+                (todo.status === "pending" ||
+                  todo.status === "in_progress" ||
+                  todo.status === "completed")
+            )
+          )
+        }
+
+        if (part.type === "permission") {
+          return (
+            typeof part.id === "string" &&
+            typeof part.toolName === "string" &&
+            typeof part.input === "string" &&
+            (part.status === "pending" ||
+              part.status === "approved" ||
+              part.status === "denied" ||
+              part.status === "cancelled") &&
+            Array.isArray(part.options) &&
+            part.options.every(isStudioPermissionOption) &&
+            (typeof part.selectedOptionId === "string" ||
+              part.selectedOptionId === null)
+          )
+        }
+
         return (
+          part.type === "tool" &&
           typeof part.id === "string" &&
-          typeof part.toolName === "string" &&
-          typeof part.input === "string" &&
-          (part.status === "pending" ||
-            part.status === "approved" ||
-            part.status === "denied" ||
-            part.status === "cancelled") &&
-          Array.isArray(part.options) &&
-          part.options.every(isStudioPermissionOption) &&
-          (typeof part.selectedOptionId === "string" ||
-            part.selectedOptionId === null)
+          isStudioMessageActivity(part.activity)
         )
-      }
-
-      return (
-        part.type === "tool" &&
-        typeof part.id === "string" &&
-        isStudioMessageActivity(part.activity)
+      })
+      .map((part) =>
+        part.type === "reasoning"
+          ? {
+              ...part,
+              durationMs:
+                typeof part.durationMs === "number" &&
+                Number.isFinite(part.durationMs)
+                  ? part.durationMs
+                  : null,
+            }
+          : part
       )
-    })
   } catch {
     return []
   }
@@ -2734,7 +2760,7 @@ export function hasStudioPermissionRule({
 }) {
   const normalizedToolName = toolName.trim()
 
-  if (!normalizedToolName) {
+  if (!normalizedToolName || !projectId) {
     return false
   }
 
@@ -2744,17 +2770,11 @@ export function hasStudioPermissionRule({
         SELECT id, project_id, tool_name, created_at
         FROM studio_permission_rules
         WHERE tool_name = ?
-          AND (
-            project_id = ?
-            OR project_id IS NULL
-          )
-        ORDER BY
-          CASE WHEN project_id = ? THEN 0 ELSE 1 END,
-          created_at DESC
+          AND project_id = ?
         LIMIT 1
       `
     )
-    .get(normalizedToolName, projectId, projectId) as
+    .get(normalizedToolName, projectId) as
     | DbPermissionRuleRow
     | undefined
 
@@ -2770,7 +2790,7 @@ export function createStudioPermissionRule({
 }) {
   const normalizedToolName = toolName.trim()
 
-  if (!normalizedToolName) {
+  if (!normalizedToolName || !projectId) {
     return null
   }
 
@@ -2877,7 +2897,7 @@ export function createStudioSession({ mode, title }: CreateSessionInput) {
     mode,
     title: normalizeTitle(title),
     projectId: null,
-    permissionMode: "auto",
+    permissionMode: "ask",
     createdAt: nowIso(),
     updatedAt: nowIso(),
   }

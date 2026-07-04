@@ -19,6 +19,7 @@ import { Readable, Writable } from "node:stream"
 
 import type { AgentEvent } from "@/lib/agent/events"
 import {
+  cancelSessionPermissions,
   requestPermission,
   type PermissionOption,
 } from "@/lib/agent/permission-broker"
@@ -995,6 +996,7 @@ function disposeAcpSession(
   }
 
   state.disposed = true
+  cancelSessionPermissions(state.key.split(ACP_SESSION_KEY_SEPARATOR)[1] ?? "")
 
   if (state.idleTimer) {
     clearTimeout(state.idleTimer)
