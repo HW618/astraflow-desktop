@@ -22,7 +22,7 @@ const ELECTRON_BUILDER_ARCH_NAMES = {
   4: "universal",
 }
 
-const REBUILDABLE_NATIVE_MODULES = ["better-sqlite3"]
+const REBUILDABLE_NATIVE_MODULES = ["better-sqlite3", "node-pty"]
 
 function copyFilter(sourcePath) {
   return !sourcePath.endsWith(".map")
@@ -377,7 +377,7 @@ async function rebuildElectronNativeModules(context, targetAppDir) {
     electronVersion,
     platform: context.electronPlatformName,
     arch,
-    onlyModules: ["better-sqlite3"],
+    onlyModules: REBUILDABLE_NATIVE_MODULES,
     force: true,
     buildFromSource: true,
     disablePreGypCopy: true,
@@ -398,8 +398,10 @@ async function rebuildElectronNativeModules(context, targetAppDir) {
 
   await rebuildTask
 
-  if (!foundNativeModules.includes("better-sqlite3")) {
-    throw new Error("better-sqlite3 was not found during Electron rebuild.")
+  for (const moduleName of REBUILDABLE_NATIVE_MODULES) {
+    if (!foundNativeModules.includes(moduleName)) {
+      throw new Error(`${moduleName} was not found during Electron rebuild.`)
+    }
   }
 
   pruneRebuildableNativeModules(targetAppDir)

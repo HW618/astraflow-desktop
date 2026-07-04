@@ -15,6 +15,7 @@ const forcedRuntimeDependencies = [
   "@agentclientprotocol/claude-agent-acp",
   "@agentclientprotocol/codex-acp",
   "electron-updater",
+  "node-pty",
   "opencode-ai",
 ]
 const runtimeDependenciesWithRequiredOptionals = new Set(["@openai/codex"])
@@ -148,6 +149,7 @@ const packageJson = {
       join(appDir, "node_modules"),
       "electron-updater"
     ),
+    "node-pty": readDependencyVersion(join(appDir, "node_modules"), "node-pty"),
   },
 }
 

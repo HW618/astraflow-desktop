@@ -29,7 +29,7 @@ function AgentRuntimeIcon({ runtimeId, className }: AgentRuntimeIconProps) {
           alt=""
           width={224}
           height={254}
-          className="h-4 w-auto object-contain"
+          className="h-full w-auto object-contain"
           unoptimized
         />
       </span>

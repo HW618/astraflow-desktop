@@ -25,6 +25,10 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import {
+  STUDIO_OPEN_MARKDOWN_TARGET_EVENT,
+  type StudioOpenMarkdownTargetDetail,
+} from "@/lib/studio-markdown-open"
 import { cn } from "@/lib/utils"
 
 export type MarkdownProps = {
@@ -32,6 +36,7 @@ export type MarkdownProps = {
   id?: string
   className?: string
   autoPreviewHtml?: boolean
+  openLinksInWorkspace?: boolean
   components?: Partial<Components>
 }
 
@@ -116,6 +121,56 @@ function getOpenableMarkdownUrl(href: string) {
   } catch {
     return null
   }
+}
+
+function getWorkspaceMarkdownTarget(href: string) {
+  const trimmedHref = href.trim()
+
+  if (!trimmedHref || trimmedHref.startsWith("#")) {
+    return null
+  }
+
+  if (
+    trimmedHref.startsWith("/") ||
+    trimmedHref.startsWith("~/") ||
+    trimmedHref.startsWith("file://")
+  ) {
+    return trimmedHref
+  }
+
+  try {
+    const parsed = new URL(trimmedHref)
+
+    return ["http:", "https:", "file:"].includes(parsed.protocol)
+      ? parsed.toString()
+      : null
+  } catch {
+    return null
+  }
+}
+
+function openMarkdownTargetInWorkspace(
+  href: string,
+  source: StudioOpenMarkdownTargetDetail["source"]
+) {
+  const target = getWorkspaceMarkdownTarget(href)
+
+  if (!target) {
+    return false
+  }
+
+  window.dispatchEvent(
+    new CustomEvent<StudioOpenMarkdownTargetDetail>(
+      STUDIO_OPEN_MARKDOWN_TARGET_EVENT,
+      {
+        detail: {
+          href: target,
+          source,
+        },
+      }
+    )
+  )
+  return true
 }
 
 function openMarkdownLink(url: string) {
@@ -234,7 +289,10 @@ function MarkdownCodeBlock({
   )
 }
 
-function createMarkdownComponents(autoPreviewHtml: boolean): Partial<Components> {
+function createMarkdownComponents(
+  autoPreviewHtml: boolean,
+  openLinksInWorkspace: boolean
+): Partial<Components> {
   return {
     a: function LinkComponent(props) {
       const { href, children, node, onClick, ...anchorProps } = props
@@ -245,7 +303,20 @@ function createMarkdownComponents(autoPreviewHtml: boolean): Partial<Components>
       function handleClick(event: MouseEvent<HTMLAnchorElement>) {
         onClick?.(event)
 
-        if (event.defaultPrevented || event.button !== 0 || !openableUrl) {
+        if (event.defaultPrevented || event.button !== 0) {
+          return
+        }
+
+        if (
+          openLinksInWorkspace &&
+          href &&
+          openMarkdownTargetInWorkspace(href, "link")
+        ) {
+          event.preventDefault()
+          return
+        }
+
+        if (!openableUrl) {
           return
         }
 
@@ -264,6 +335,39 @@ function createMarkdownComponents(autoPreviewHtml: boolean): Partial<Components>
         >
           {children}
         </a>
+      )
+    },
+    img: function ImageComponent(props) {
+      const { src, alt, node, onClick, ...imageProps } = props
+      void node
+
+      function handleClick(event: MouseEvent<HTMLImageElement>) {
+        onClick?.(event)
+
+        if (
+          event.defaultPrevented ||
+          !openLinksInWorkspace ||
+          typeof src !== "string" ||
+          !openMarkdownTargetInWorkspace(src, "image")
+        ) {
+          return
+        }
+
+        event.preventDefault()
+      }
+
+      return (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          {...imageProps}
+          src={src}
+          alt={alt ?? ""}
+          className={cn(
+            "cursor-zoom-in",
+            typeof imageProps.className === "string" && imageProps.className
+          )}
+          onClick={handleClick}
+        />
       )
     },
     code: function CodeComponent({ className, children, ...props }) {
@@ -306,21 +410,23 @@ function createMarkdownComponents(autoPreviewHtml: boolean): Partial<Components>
 
 const MemoizedMarkdownBlock = memo(
   function MarkdownBlock({
-    content,
-    autoPreviewHtml,
-    components,
-  }: {
-    content: string
-    autoPreviewHtml: boolean
-    components?: Partial<Components>
-  }) {
-    const markdownComponents = useMemo(
-      () => ({
-        ...createMarkdownComponents(autoPreviewHtml),
-        ...components,
-      }),
-      [autoPreviewHtml, components]
-    )
+  content,
+  autoPreviewHtml,
+  openLinksInWorkspace,
+  components,
+}: {
+  content: string
+  autoPreviewHtml: boolean
+  openLinksInWorkspace: boolean
+  components?: Partial<Components>
+}) {
+  const markdownComponents = useMemo(
+    () => ({
+      ...createMarkdownComponents(autoPreviewHtml, openLinksInWorkspace),
+      ...components,
+    }),
+    [autoPreviewHtml, components, openLinksInWorkspace]
+  )
 
     return (
       <ReactMarkdown
@@ -335,6 +441,7 @@ const MemoizedMarkdownBlock = memo(
     return (
       prevProps.content === nextProps.content &&
       prevProps.autoPreviewHtml === nextProps.autoPreviewHtml &&
+      prevProps.openLinksInWorkspace === nextProps.openLinksInWorkspace &&
       prevProps.components === nextProps.components
     )
   }
@@ -347,6 +454,7 @@ function MarkdownComponent({
   id,
   className,
   autoPreviewHtml = true,
+  openLinksInWorkspace = false,
   components,
 }: MarkdownProps) {
   const generatedId = useId()
@@ -360,6 +468,7 @@ function MarkdownComponent({
           key={`${blockId}-block-${index}`}
           content={block}
           autoPreviewHtml={autoPreviewHtml && isCompleteHtmlFenceBlock(block)}
+          openLinksInWorkspace={openLinksInWorkspace}
           components={components}
         />
       ))}

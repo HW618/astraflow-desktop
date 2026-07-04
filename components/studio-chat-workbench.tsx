@@ -23,8 +23,29 @@ import {
   RiThumbDownLine,
   RiThumbUpLine,
 } from "@remixicon/react"
-import { Eye, FolderGit2, GitBranch, Globe, Hand, Zap } from "lucide-react"
+import {
+  Archive,
+  Eye,
+  File,
+  FileImage,
+  FileSpreadsheet,
+  Folder,
+  FolderGit2,
+  GitBranch,
+  Globe,
+  Hand,
+  Maximize2,
+  MessageSquare,
+  Minimize2,
+  MoreVertical,
+  PanelBottom,
+  PanelRight,
+  SquareTerminal,
+  Zap,
+} from "lucide-react"
 import { toast } from "sonner"
+import type { FitAddon as XTermFitAddon } from "@xterm/addon-fit"
+import type { Terminal as XTermTerminal } from "@xterm/xterm"
 
 import { AgentRuntimeIcon } from "@/components/agent-runtime-icons"
 import {
@@ -76,6 +97,7 @@ import {
   CodeBlockCode,
   CodeBlockGroup,
 } from "@/components/prompt-kit/code-block"
+import { Markdown } from "@/components/prompt-kit/markdown"
 import { Shimmer } from "@/components/ai-elements/shimmer"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -126,6 +148,10 @@ import {
   STUDIO_LOCAL_PROJECTS_CHANGED_EVENT,
   STUDIO_SESSIONS_CHANGED_EVENT,
 } from "@/lib/studio-session-events"
+import {
+  STUDIO_OPEN_MARKDOWN_TARGET_EVENT,
+  type StudioOpenMarkdownTargetDetail,
+} from "@/lib/studio-markdown-open"
 import { cn, createClientId } from "@/lib/utils"
 
 type StudioChatWorkbenchProps = {
@@ -140,8 +166,136 @@ type StudioPermissionStatus = StudioPermissionPart["status"]
 
 type PendingAttachment = StudioAttachment & { id: string }
 
+type StudioTerminalTab = {
+  id: string
+  cwd: string | null
+  sequence: number
+  title: string
+  resolvedCwd?: string
+}
+
+type StudioRightPanelMode =
+  | "launcher"
+  | "files"
+  | "side-chat"
+  | "browser"
+  | "browser-settings"
+  | "terminal"
+
+type StudioBrowserTab = {
+  id: string
+  title: string
+  address: string
+  url: string
+}
+
+type StudioWorkspaceBrowserTab = StudioBrowserTab & {
+  kind: "browser"
+}
+
+type StudioWorkspaceFileTab = {
+  id: string
+  kind: "files"
+  title: string
+  entry: AstraFlowSidePanelDirectoryEntry | null
+}
+
+type StudioWorkspaceTerminalTab = StudioTerminalTab & {
+  kind: "terminal"
+}
+
+type StudioWorkspaceSideChatTab = {
+  id: string
+  kind: "side-chat"
+  title: string
+}
+
+type StudioWorkspaceTab =
+  | StudioWorkspaceBrowserTab
+  | StudioWorkspaceFileTab
+  | StudioWorkspaceTerminalTab
+  | StudioWorkspaceSideChatTab
+
+type StudioSidePanelFilePreview =
+  | {
+      kind: "text"
+      entry: AstraFlowSidePanelDirectoryEntry
+      file: AstraFlowSidePanelTextFile
+    }
+  | {
+      kind: "image"
+      entry: AstraFlowSidePanelDirectoryEntry
+      file: AstraFlowSidePanelDataUrlFile
+    }
+  | {
+      kind: "unsupported"
+      entry: AstraFlowSidePanelDirectoryEntry
+      error?: string
+    }
+
+type StudioSideChatMessage = {
+  id: string
+  role: "assistant" | "user"
+  content: string
+}
+
 const MAX_ATTACHMENTS = 6
 const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024
+const TERMINAL_PANEL_OPEN_STORAGE_KEY = "astraflow.studio.terminal-panel-open"
+const TERMINAL_PANEL_HEIGHT_STORAGE_KEY =
+  "astraflow.studio.terminal-panel-height"
+const TERMINAL_PANEL_DEFAULT_HEIGHT = 320
+const TERMINAL_PANEL_MIN_HEIGHT = 220
+const TERMINAL_PANEL_MAX_HEIGHT_RATIO = 0.58
+const RIGHT_PANEL_OPEN_STORAGE_KEY = "astraflow.studio.right-panel-open"
+const RIGHT_PANEL_MODE_STORAGE_KEY = "astraflow.studio.right-panel-mode"
+const RIGHT_PANEL_WIDTH_STORAGE_KEY = "astraflow.studio.right-panel-width.v2"
+const RIGHT_PANEL_DEFAULT_WIDTH = 360
+const RIGHT_PANEL_MIN_WIDTH = 300
+const RIGHT_PANEL_MAX_WIDTH = 460
+const COMPOSER_ICON_ONLY_WIDTH = 650
+const TEXT_FILE_EXTENSIONS = new Set([
+  "",
+  "c",
+  "conf",
+  "cpp",
+  "cs",
+  "css",
+  "csv",
+  "env",
+  "go",
+  "h",
+  "html",
+  "java",
+  "js",
+  "json",
+  "jsx",
+  "log",
+  "md",
+  "mjs",
+  "py",
+  "rb",
+  "rs",
+  "sh",
+  "sql",
+  "toml",
+  "ts",
+  "tsx",
+  "txt",
+  "xml",
+  "yaml",
+  "yml",
+])
+const IMAGE_FILE_EXTENSIONS = new Set([
+  "avif",
+  "gif",
+  "ico",
+  "jpeg",
+  "jpg",
+  "png",
+  "svg",
+  "webp",
+])
 
 function readFileAsDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
@@ -166,6 +320,472 @@ function formatAttachmentSize(bytes: number | null | undefined) {
   }
 
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function readStoredBoolean(key: string, fallback: boolean) {
+  if (typeof window === "undefined") {
+    return fallback
+  }
+
+  const stored = window.localStorage.getItem(key)
+
+  if (stored === "true") {
+    return true
+  }
+
+  if (stored === "false") {
+    return false
+  }
+
+  return fallback
+}
+
+function readStoredPanelHeight() {
+  if (typeof window === "undefined") {
+    return TERMINAL_PANEL_DEFAULT_HEIGHT
+  }
+
+  return clampTerminalPanelHeight(
+    Number(window.localStorage.getItem(TERMINAL_PANEL_HEIGHT_STORAGE_KEY))
+  )
+}
+
+function clampTerminalPanelHeight(value: number) {
+  const viewportMax =
+    typeof window === "undefined"
+      ? TERMINAL_PANEL_DEFAULT_HEIGHT
+      : Math.max(
+          TERMINAL_PANEL_MIN_HEIGHT,
+          Math.round(window.innerHeight * TERMINAL_PANEL_MAX_HEIGHT_RATIO)
+        )
+
+  if (!Number.isFinite(value)) {
+    return TERMINAL_PANEL_DEFAULT_HEIGHT
+  }
+
+  return Math.min(viewportMax, Math.max(TERMINAL_PANEL_MIN_HEIGHT, value))
+}
+
+function isStudioRightPanelMode(
+  value: string | null
+): value is StudioRightPanelMode {
+  return (
+    value === "launcher" ||
+    value === "files" ||
+    value === "side-chat" ||
+    value === "browser" ||
+    value === "browser-settings" ||
+    value === "terminal"
+  )
+}
+
+function readStoredRightPanelMode(): StudioRightPanelMode {
+  if (typeof window === "undefined") {
+    return "launcher"
+  }
+
+  const stored = window.localStorage.getItem(RIGHT_PANEL_MODE_STORAGE_KEY)
+
+  return isStudioRightPanelMode(stored) ? stored : "launcher"
+}
+
+function clampRightPanelWidth(value: number) {
+  if (!Number.isFinite(value)) {
+    return RIGHT_PANEL_DEFAULT_WIDTH
+  }
+
+  const viewportMax =
+    typeof window === "undefined"
+      ? RIGHT_PANEL_MAX_WIDTH
+      : Math.min(
+          RIGHT_PANEL_MAX_WIDTH,
+          Math.max(RIGHT_PANEL_MIN_WIDTH, window.innerWidth - 520)
+        )
+
+  return Math.min(viewportMax, Math.max(RIGHT_PANEL_MIN_WIDTH, value))
+}
+
+function readStoredRightPanelWidth() {
+  if (typeof window === "undefined") {
+    return RIGHT_PANEL_DEFAULT_WIDTH
+  }
+
+  return clampRightPanelWidth(
+    Number(window.localStorage.getItem(RIGHT_PANEL_WIDTH_STORAGE_KEY))
+  )
+}
+
+function useElementWidth<T extends HTMLElement>() {
+  const ref = React.useRef<T | null>(null)
+  const [width, setWidth] = React.useState(0)
+
+  React.useLayoutEffect(() => {
+    const element = ref.current
+
+    if (!element) {
+      return
+    }
+    const currentElement = element
+
+    function updateWidth() {
+      setWidth(Math.round(currentElement.getBoundingClientRect().width))
+    }
+
+    updateWidth()
+
+    const resizeObserver = new ResizeObserver(updateWidth)
+    resizeObserver.observe(currentElement)
+
+    return () => resizeObserver.disconnect()
+  }, [])
+
+  return [ref, width] as const
+}
+
+function getPathTail(path: string | null | undefined) {
+  const normalized = path?.replace(/\/+$/, "").trim()
+
+  if (!normalized) {
+    return ""
+  }
+
+  return normalized.split("/").filter(Boolean).at(-1) ?? normalized
+}
+
+function createStudioTerminalTab(
+  project: StudioLocalProjectWithGitInfo | null,
+  fallbackTitle: string,
+  sequence = 1
+): StudioTerminalTab {
+  const cwd = project?.path ?? null
+  const title = project?.name || getPathTail(cwd) || fallbackTitle
+
+  return {
+    id: createClientId(),
+    cwd,
+    sequence,
+    title: formatTerminalTabTitle(title, sequence),
+  }
+}
+
+function formatTerminalTabTitle(title: string, sequence: number) {
+  return sequence > 1 ? `${title} ${sequence}` : title
+}
+
+function formatSidePanelFileSize(bytes: number | null | undefined) {
+  if (typeof bytes !== "number") {
+    return ""
+  }
+
+  if (bytes < 1024) {
+    return `${bytes} B`
+  }
+
+  if (bytes < 1024 * 1024) {
+    return `${Math.round(bytes / 1024)} KB`
+  }
+
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function isLikelyTextEntry(entry: AstraFlowSidePanelDirectoryEntry) {
+  if (entry.kind !== "file") {
+    return false
+  }
+
+  return TEXT_FILE_EXTENSIONS.has(entry.extension)
+}
+
+function isImageEntry(entry: AstraFlowSidePanelDirectoryEntry) {
+  return entry.kind === "file" && IMAGE_FILE_EXTENSIONS.has(entry.extension)
+}
+
+function isPreviewableSidePanelEntry(entry: AstraFlowSidePanelDirectoryEntry) {
+  return isLikelyTextEntry(entry) || isImageEntry(entry)
+}
+
+function inferCodeLanguage(entry: AstraFlowSidePanelDirectoryEntry) {
+  const extension = entry.extension.toLowerCase()
+  const lowerName = entry.name.toLowerCase()
+
+  if (lowerName === "dockerfile") {
+    return "dockerfile"
+  }
+
+  if (lowerName === ".env" || extension === "env") {
+    return "dotenv"
+  }
+
+  const aliases: Record<string, string> = {
+    cjs: "javascript",
+    h: "c",
+    hpp: "cpp",
+    js: "javascript",
+    jsonl: "json",
+    jsx: "jsx",
+    md: "markdown",
+    mjs: "javascript",
+    py: "python",
+    rb: "ruby",
+    rs: "rust",
+    sh: "shellscript",
+    ts: "typescript",
+    tsx: "tsx",
+    yml: "yaml",
+  }
+
+  return aliases[extension] ?? (extension || "plaintext")
+}
+
+function parseMarkdownFrontmatter(content: string) {
+  const normalized = content.replace(/^\uFEFF/, "")
+  const lines = normalized.split(/\r?\n/)
+
+  if (lines[0]?.trim() !== "---") {
+    return { body: content, metadata: [] as Array<[string, string]> }
+  }
+
+  const endIndex = lines.findIndex((line, index) => {
+    return index > 0 && line.trim() === "---"
+  })
+
+  if (endIndex < 0) {
+    return { body: content, metadata: [] as Array<[string, string]> }
+  }
+
+  const metadata = parseSimpleYamlMetadata(lines.slice(1, endIndex).join("\n"))
+  const body = lines.slice(endIndex + 1).join("\n").replace(/^\s+/, "")
+
+  return { body, metadata }
+}
+
+function parseSimpleYamlMetadata(yaml: string): Array<[string, string]> {
+  const metadata: Array<[string, string]> = []
+  let currentKey = ""
+
+  for (const line of yaml.split(/\r?\n/)) {
+    if (!line.trim() || line.trimStart().startsWith("#")) {
+      continue
+    }
+
+    const keyValueMatch = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/)
+
+    if (keyValueMatch) {
+      currentKey = keyValueMatch[1]
+      const value = cleanYamlScalar(keyValueMatch[2])
+
+      metadata.push([currentKey, value])
+      continue
+    }
+
+    const listItemMatch = line.match(/^\s*-\s*(.+)$/)
+
+    if (listItemMatch && currentKey) {
+      const lastItem = metadata.at(-1)
+      const value = cleanYamlScalar(listItemMatch[1])
+
+      if (lastItem?.[0] === currentKey) {
+        lastItem[1] = lastItem[1] ? `${lastItem[1]}, ${value}` : value
+      }
+    }
+  }
+
+  return metadata.filter(([, value]) => value.trim().length > 0)
+}
+
+function cleanYamlScalar(value: string) {
+  return value.trim().replace(/^['"]|['"]$/g, "")
+}
+
+function formatFileBreadcrumb(path: string | null | undefined) {
+  const tail = getPathTail(path)
+
+  return tail || "~"
+}
+
+function normalizeBrowserUrl(value: string) {
+  const trimmed = value.trim()
+
+  if (!trimmed) {
+    return ""
+  }
+
+  if (
+    trimmed.startsWith("http://") ||
+    trimmed.startsWith("https://") ||
+    trimmed.startsWith("file://")
+  ) {
+    return trimmed
+  }
+
+  if (trimmed.includes(".") || trimmed.includes(":")) {
+    return `https://${trimmed}`
+  }
+
+  return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`
+}
+
+function createStudioBrowserTab(): StudioBrowserTab {
+  return {
+    id: createClientId(),
+    title: "新选项卡",
+    address: "",
+    url: "",
+  }
+}
+
+function createWorkspaceBrowserTab(): StudioWorkspaceBrowserTab {
+  return {
+    ...createStudioBrowserTab(),
+    kind: "browser",
+  }
+}
+
+function createWorkspaceFileTab(
+  entry: AstraFlowSidePanelDirectoryEntry | null,
+  fallbackTitle: string
+): StudioWorkspaceFileTab {
+  return {
+    id: createClientId(),
+    kind: "files",
+    title: entry?.name ?? fallbackTitle,
+    entry,
+  }
+}
+
+function createWorkspaceTerminalTab(
+  project: StudioLocalProjectWithGitInfo | null,
+  fallbackTitle: string,
+  sequence: number
+): StudioWorkspaceTerminalTab {
+  return {
+    ...createStudioTerminalTab(project, fallbackTitle, sequence),
+    kind: "terminal",
+  }
+}
+
+function createWorkspaceSideChatTab(
+  title: string
+): StudioWorkspaceSideChatTab {
+  return {
+    id: createClientId(),
+    kind: "side-chat",
+    title,
+  }
+}
+
+function getWorkspaceTabMode(tab: StudioWorkspaceTab): StudioRightPanelMode {
+  return tab.kind
+}
+
+function getWorkspaceTabTitle(tab: StudioWorkspaceTab) {
+  if (tab.kind === "files") {
+    return tab.entry?.name ?? tab.title
+  }
+
+  return tab.title
+}
+
+function createSidePanelEntryFromPath(
+  path: string
+): AstraFlowSidePanelDirectoryEntry {
+  const normalizedPath = path
+  const name = normalizedPath.split(/[\\/]/).filter(Boolean).at(-1) ?? path
+  const extension = name.includes(".")
+    ? (name.split(".").at(-1)?.toLowerCase() ?? "")
+    : ""
+
+  return {
+    name,
+    path: normalizedPath,
+    kind: "file",
+    extension,
+    size: 0,
+    modifiedAt: Date.now(),
+  }
+}
+
+function getMarkdownTargetFilePath(href: string) {
+  const trimmedHref = href.trim()
+
+  if (!trimmedHref) {
+    return null
+  }
+
+  if (trimmedHref.startsWith("file://")) {
+    try {
+      return decodeURIComponent(new URL(trimmedHref).pathname)
+    } catch {
+      return null
+    }
+  }
+
+  if (trimmedHref.startsWith("/") || trimmedHref.startsWith("~/")) {
+    return trimmedHref
+  }
+
+  return null
+}
+
+function getMarkdownTargetBrowserUrl(href: string) {
+  const trimmedHref = href.trim()
+
+  if (!trimmedHref) {
+    return null
+  }
+
+  try {
+    const url = new URL(trimmedHref)
+
+    return ["http:", "https:"].includes(url.protocol) ? url.toString() : null
+  } catch {
+    return null
+  }
+}
+
+function useCloseTabCommand(handler: () => void, active = true) {
+  const handlerRef = React.useRef(handler)
+
+  React.useEffect(() => {
+    handlerRef.current = handler
+  }, [handler])
+
+  React.useEffect(() => {
+    if (!active) {
+      return
+    }
+
+    const disposeDesktopListener =
+      window.astraflowDesktop?.onCloseTabCommand?.(() => {
+        handlerRef.current()
+      })
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "w") {
+        event.preventDefault()
+        handlerRef.current()
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown, true)
+
+    return () => {
+      disposeDesktopListener?.()
+      window.removeEventListener("keydown", handleKeyDown, true)
+    }
+  }, [active])
+}
+
+function getBrowserTabTitle(url: string) {
+  if (!url) {
+    return "新选项卡"
+  }
+
+  try {
+    return new URL(url).hostname.replace(/^www\./, "") || "浏览器"
+  } catch {
+    return "浏览器"
+  }
 }
 
 function getAttachmentRenderKey(attachment: StudioAttachment) {
@@ -226,6 +846,127 @@ const chatModelListeners = new Set<() => void>()
 const chatRuntimeListeners = new Set<() => void>()
 const chatEnvironmentListeners = new Set<() => void>()
 const chatReasoningEffortListeners = new Set<() => void>()
+const terminalPanelOpenListeners = new Set<() => void>()
+const rightPanelListeners = new Set<() => void>()
+let rightPanelHydrated = false
+
+function getStoredTerminalPanelOpen() {
+  return readStoredBoolean(TERMINAL_PANEL_OPEN_STORAGE_KEY, false)
+}
+
+function setStoredTerminalPanelOpen(open: boolean) {
+  window.localStorage.setItem(TERMINAL_PANEL_OPEN_STORAGE_KEY, String(open))
+  terminalPanelOpenListeners.forEach((listener) => listener())
+}
+
+function subscribeTerminalPanelOpen(listener: () => void) {
+  terminalPanelOpenListeners.add(listener)
+  window.addEventListener("storage", listener)
+
+  return () => {
+    terminalPanelOpenListeners.delete(listener)
+    window.removeEventListener("storage", listener)
+  }
+}
+
+function useTerminalPanelOpen() {
+  const open = React.useSyncExternalStore(
+    subscribeTerminalPanelOpen,
+    getStoredTerminalPanelOpen,
+    () => false
+  )
+
+  return [open, setStoredTerminalPanelOpen] as const
+}
+
+function notifyRightPanelListeners() {
+  rightPanelListeners.forEach((listener) => listener())
+}
+
+function subscribeRightPanel(listener: () => void) {
+  rightPanelListeners.add(listener)
+  window.addEventListener("storage", listener)
+
+  if (!rightPanelHydrated) {
+    queueMicrotask(() => {
+      rightPanelHydrated = true
+      notifyRightPanelListeners()
+    })
+  }
+
+  return () => {
+    rightPanelListeners.delete(listener)
+    window.removeEventListener("storage", listener)
+  }
+}
+
+function getStoredRightPanelOpen() {
+  return readStoredBoolean(RIGHT_PANEL_OPEN_STORAGE_KEY, false)
+}
+
+function setStoredRightPanelOpen(open: boolean) {
+  rightPanelHydrated = true
+  window.localStorage.setItem(RIGHT_PANEL_OPEN_STORAGE_KEY, String(open))
+  notifyRightPanelListeners()
+}
+
+function setStoredRightPanelMode(mode: StudioRightPanelMode) {
+  rightPanelHydrated = true
+  window.localStorage.setItem(RIGHT_PANEL_MODE_STORAGE_KEY, mode)
+  notifyRightPanelListeners()
+}
+
+function setStoredRightPanelWidth(width: number) {
+  const nextWidth = clampRightPanelWidth(width)
+
+  rightPanelHydrated = true
+  window.localStorage.setItem(RIGHT_PANEL_WIDTH_STORAGE_KEY, String(nextWidth))
+  notifyRightPanelListeners()
+}
+
+function getHydratedRightPanelOpen() {
+  return rightPanelHydrated ? getStoredRightPanelOpen() : false
+}
+
+function getHydratedRightPanelMode() {
+  return rightPanelHydrated ? readStoredRightPanelMode() : "launcher"
+}
+
+function getHydratedRightPanelWidth() {
+  return rightPanelHydrated
+    ? readStoredRightPanelWidth()
+    : RIGHT_PANEL_DEFAULT_WIDTH
+}
+
+function useRightPanelOpen() {
+  const open = React.useSyncExternalStore(
+    subscribeRightPanel,
+    getHydratedRightPanelOpen,
+    () => false
+  )
+
+  return [open, setStoredRightPanelOpen] as const
+}
+
+function useRightPanelMode() {
+  const mode = React.useSyncExternalStore(
+    subscribeRightPanel,
+    getHydratedRightPanelMode,
+    () => "launcher" as StudioRightPanelMode
+  )
+
+  return [mode, setStoredRightPanelMode] as const
+}
+
+function useRightPanelWidth() {
+  const width = React.useSyncExternalStore(
+    subscribeRightPanel,
+    getHydratedRightPanelWidth,
+    () => RIGHT_PANEL_DEFAULT_WIDTH
+  )
+
+  return [width, setStoredRightPanelWidth] as const
+}
 
 function getStoredChatModel(): SupportedChatModel {
   if (typeof window === "undefined") {
@@ -873,7 +1614,7 @@ function StudioChatWorkbench({
   onSessionChange,
   onSessionsChange,
 }: StudioChatWorkbenchProps) {
-  const { t } = useI18n()
+  const { locale, t } = useI18n()
   const greetingPeriod = useStudioGreetingPeriod()
   const [input, setInput] = React.useState("")
   const [selectedModel, setSelectedModel] = useChatModel()
@@ -937,6 +1678,107 @@ function StudioChatWorkbench({
       : sessionId && loadFailed
         ? "load-failed"
         : ""
+  const selectedProject = React.useMemo(
+    () =>
+      selectedProjectId
+        ? (localProjects.find((project) => project.id === selectedProjectId) ??
+          null)
+        : null,
+    [localProjects, selectedProjectId]
+  )
+  const [terminalPanelOpen, setTerminalPanelOpen] = useTerminalPanelOpen()
+  const [rightPanelOpen, setRightPanelOpen] = useRightPanelOpen()
+  const [rightPanelMode, setRightPanelMode] = useRightPanelMode()
+  const [rightPanelWidth, setRightPanelWidth] = useRightPanelWidth()
+  const [rightPanelFocused, setRightPanelFocused] = React.useState(false)
+  const effectiveRightPanelFocused = rightPanelOpen && rightPanelFocused
+  const toggleTerminalPanel = React.useCallback(() => {
+    setTerminalPanelOpen(!getStoredTerminalPanelOpen())
+  }, [setTerminalPanelOpen])
+  const toggleRightPanel = React.useCallback(() => {
+    if (rightPanelOpen) {
+      setRightPanelFocused(false)
+    }
+
+    setRightPanelOpen(!rightPanelOpen)
+  }, [rightPanelOpen, setRightPanelOpen])
+  const openRightPanelMode = React.useCallback(
+    (mode: StudioRightPanelMode) => {
+      setRightPanelMode(mode)
+      setRightPanelOpen(true)
+    },
+    [setRightPanelMode, setRightPanelOpen]
+  )
+  React.useEffect(() => {
+    function handleWindowResize() {
+      setRightPanelWidth(readStoredRightPanelWidth())
+    }
+
+    handleWindowResize()
+    window.addEventListener("resize", handleWindowResize)
+
+    return () => window.removeEventListener("resize", handleWindowResize)
+  }, [setRightPanelWidth])
+  const handleToggleFullscreen = React.useCallback(() => {
+    if (!rightPanelOpen) {
+      setRightPanelOpen(true)
+    }
+
+    setRightPanelFocused((current) => !current)
+  }, [rightPanelOpen, setRightPanelOpen])
+  const handleRightPanelOpenChange = React.useCallback(
+    (open: boolean) => {
+      if (!open) {
+        setRightPanelFocused(false)
+      }
+
+      setRightPanelOpen(open)
+    },
+    [setRightPanelOpen]
+  )
+  const handleRightPanelFocusedChange = React.useCallback((focused: boolean) => {
+    setRightPanelFocused(focused)
+  }, [])
+
+  React.useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      const key = event.key.toLowerCase()
+      const commandKey = event.metaKey || event.ctrlKey
+
+      if (commandKey && key === "j") {
+        event.preventDefault()
+        toggleTerminalPanel()
+        return
+      }
+
+      if (commandKey && event.altKey && key === "b") {
+        event.preventDefault()
+        toggleRightPanel()
+        return
+      }
+
+      if (commandKey && key === "p") {
+        event.preventDefault()
+        openRightPanelMode("files")
+        return
+      }
+
+      if (commandKey && event.altKey && key === "s") {
+        event.preventDefault()
+        openRightPanelMode("side-chat")
+        return
+      }
+
+      if (commandKey && key === "t") {
+        event.preventDefault()
+        openRightPanelMode("browser")
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown)
+
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [openRightPanelMode, toggleRightPanel, toggleTerminalPanel])
 
   const addFiles = React.useCallback((files: FileList | null) => {
     if (!files || files.length === 0) {
@@ -1615,83 +2457,137 @@ function StudioChatWorkbench({
     }
   }
 
+  const rightPanelCopy = getStudioRightPanelCopy(locale)
+
   return (
-    <section className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-background">
-      <div className="min-h-0 flex-1">
-        {hasMessages ? (
-          <ChatContainerRoot className="h-full min-h-0">
-            <ChatContainerContent className="mx-auto flex min-h-full w-full max-w-5xl gap-6 px-8 py-10">
-              {visibleMessages.map((message) => (
-                <ChatMessageBubble
-                  key={message.id}
-                  message={message}
-                  onRetry={handleRetryMessage}
-                />
-              ))}
+    <section className="relative flex h-full min-h-0 min-w-0 flex-1 bg-background">
+      <div className="absolute top-2.5 right-3 z-30 flex items-center gap-1">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={rightPanelCopy.focusWorkspace}
+              title={rightPanelCopy.focusWorkspace}
+              className={cn(
+                "size-7 rounded-lg bg-transparent text-muted-foreground shadow-none hover:bg-muted/70 hover:text-foreground",
+                effectiveRightPanelFocused && "bg-muted text-foreground"
+              )}
+              onClick={handleToggleFullscreen}
+            >
+              {effectiveRightPanelFocused ? (
+                <Minimize2 aria-hidden className="size-3.5" />
+              ) : (
+                <Maximize2 aria-hidden className="size-3.5" />
+              )}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent align="end" side="bottom">
+            <span>{rightPanelCopy.focusWorkspace}</span>
+          </TooltipContent>
+        </Tooltip>
 
-              {isStarting && !hasStreamingMessage ? (
-                <div className="flex w-full justify-start">
-                  <Shimmer className="text-sm">{t.studioThinking}</Shimmer>
-                </div>
-              ) : null}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              data-testid="studio-terminal-panel-toggle"
+              aria-label={t.studioTerminalPanelToggle}
+              title={t.studioTerminalPanelToggle}
+              className={cn(
+                "size-7 rounded-lg bg-transparent text-muted-foreground shadow-none hover:bg-muted/70 hover:text-foreground",
+                terminalPanelOpen && "bg-muted text-foreground"
+              )}
+              onClick={toggleTerminalPanel}
+            >
+              <PanelBottom aria-hidden className="size-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent align="end" side="bottom">
+            <span>{t.studioTerminalPanelToggle}</span>
+            <span
+              data-slot="kbd"
+              className="bg-background/15 px-1.5 py-0.5 text-[11px] font-semibold text-background/80"
+            >
+              Cmd+J
+            </span>
+          </TooltipContent>
+        </Tooltip>
 
-              {error ? (
-                <p className="text-sm text-muted-foreground">
-                  {error === "chat-failed"
-                    ? t.studioChatFailed
-                    : t.studioLoadFailed}
-                </p>
-              ) : null}
-
-              <ChatContainerScrollAnchor />
-            </ChatContainerContent>
-          </ChatContainerRoot>
-        ) : (
-          <div className="flex h-full items-center justify-center px-8 pb-24">
-            <div className="flex w-full max-w-3xl flex-col items-center gap-6">
-              <h1 className="font-heading text-2xl font-semibold">
-                {t.studioChatGreeting(greetingPeriod)}
-              </h1>
-              <ChatComposer
-                value={input}
-                model={selectedModel}
-                runtimeId={resolvedRuntimeId}
-                runtimeInfos={runtimeInfos}
-                reasoningEffort={selectedReasoningEffort}
-                permissionMode={selectedPermissionMode}
-                localProjects={localProjects}
-                selectedProjectId={selectedProjectId}
-                environment={selectedEnvironment}
-                attachments={pendingAttachments}
-                onModelChange={setSelectedModel}
-                onRuntimeChange={setSelectedRuntimeId}
-                onEnvironmentChange={setSelectedEnvironment}
-                onReasoningEffortChange={setSelectedReasoningEffort}
-                onPermissionModeChange={handlePermissionModeChange}
-                onProjectChange={handleProjectChange}
-                onValueChange={setInput}
-                onAddFiles={addFiles}
-                onRemoveAttachment={removeAttachment}
-                onSubmit={handleSubmit}
-                onStop={handleStop}
-                canSubmit={canSubmit}
-                isBusy={isBusy}
-              />
-            </div>
-          </div>
-        )}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              data-testid="studio-right-panel-toggle"
+              aria-label={rightPanelCopy.toggleRightPanel}
+              title={rightPanelCopy.toggleRightPanel}
+              className={cn(
+                "size-7 rounded-lg bg-transparent text-muted-foreground shadow-none hover:bg-muted/70 hover:text-foreground",
+                rightPanelOpen && "bg-muted text-foreground"
+              )}
+              onClick={toggleRightPanel}
+            >
+              <PanelRight aria-hidden className="size-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent align="end" side="bottom">
+            <span>{rightPanelCopy.toggleRightPanel}</span>
+            <span
+              data-slot="kbd"
+              className="bg-background/15 px-1.5 py-0.5 text-[11px] font-semibold text-background/80"
+            >
+              ⌥⌘B
+            </span>
+          </TooltipContent>
+        </Tooltip>
       </div>
 
-      {hasMessages ? (
-        <div className="shrink-0 px-8 pb-5">
-          <div className="mx-auto flex w-full max-w-5xl flex-col gap-2">
-            {pendingPermissionPart ? (
-              <PendingPermissionApprovalPanel
-                part={pendingPermissionPart}
-                onDecision={handlePermissionDecision}
-              />
-            ) : (
-              <>
+      <div
+        className={cn(
+          "flex min-h-0 min-w-0 flex-1 flex-col bg-background",
+          effectiveRightPanelFocused && "hidden"
+        )}
+      >
+        <div className="min-h-0 flex-1">
+          {hasMessages ? (
+            <ChatContainerRoot className="h-full min-h-0">
+              <ChatContainerContent className="mx-auto flex min-h-full w-full max-w-5xl gap-6 px-8 py-10">
+                {visibleMessages.map((message) => (
+                  <ChatMessageBubble
+                    key={message.id}
+                    message={message}
+                    onRetry={handleRetryMessage}
+                  />
+                ))}
+
+                {isStarting && !hasStreamingMessage ? (
+                  <div className="flex w-full justify-start">
+                    <Shimmer className="text-sm">{t.studioThinking}</Shimmer>
+                  </div>
+                ) : null}
+
+                {error ? (
+                  <p className="text-sm text-muted-foreground">
+                    {error === "chat-failed"
+                      ? t.studioChatFailed
+                      : t.studioLoadFailed}
+                  </p>
+                ) : null}
+
+                <ChatContainerScrollAnchor />
+              </ChatContainerContent>
+            </ChatContainerRoot>
+          ) : (
+            <div className="flex h-full items-center justify-center px-8 pb-24">
+              <div className="flex w-full max-w-3xl flex-col items-center gap-6">
+                <h1 className="font-heading text-2xl font-semibold">
+                  {t.studioChatGreeting(greetingPeriod)}
+                </h1>
                 <ChatComposer
                   value={input}
                   model={selectedModel}
@@ -1717,16 +2613,2386 @@ function StudioChatWorkbench({
                   canSubmit={canSubmit}
                   isBusy={isBusy}
                 />
-                <p className="text-center text-xs text-muted-foreground">
-                  {t.studioDisclaimer}
-                </p>
-              </>
-            )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {hasMessages ? (
+          <div className="shrink-0 px-8 pb-5">
+            <div className="mx-auto flex w-full max-w-5xl flex-col gap-2">
+              {pendingPermissionPart ? (
+                <PendingPermissionApprovalPanel
+                  part={pendingPermissionPart}
+                  onDecision={handlePermissionDecision}
+                />
+              ) : (
+                <>
+                  <ChatComposer
+                    value={input}
+                    model={selectedModel}
+                    runtimeId={resolvedRuntimeId}
+                    runtimeInfos={runtimeInfos}
+                    reasoningEffort={selectedReasoningEffort}
+                    permissionMode={selectedPermissionMode}
+                    localProjects={localProjects}
+                    selectedProjectId={selectedProjectId}
+                    environment={selectedEnvironment}
+                    attachments={pendingAttachments}
+                    onModelChange={setSelectedModel}
+                    onRuntimeChange={setSelectedRuntimeId}
+                    onEnvironmentChange={setSelectedEnvironment}
+                    onReasoningEffortChange={setSelectedReasoningEffort}
+                    onPermissionModeChange={handlePermissionModeChange}
+                    onProjectChange={handleProjectChange}
+                    onValueChange={setInput}
+                    onAddFiles={addFiles}
+                    onRemoveAttachment={removeAttachment}
+                    onSubmit={handleSubmit}
+                    onStop={handleStop}
+                    canSubmit={canSubmit}
+                    isBusy={isBusy}
+                  />
+                  <p className="text-center text-xs text-muted-foreground">
+                    {t.studioDisclaimer}
+                  </p>
+                </>
+              )}
+            </div>
+          </div>
+        ) : null}
+
+        <StudioTerminalPanel
+          open={terminalPanelOpen}
+          project={selectedProject}
+          onOpenChange={setTerminalPanelOpen}
+        />
+      </div>
+
+      <StudioRightPanel
+        open={rightPanelOpen}
+        focused={effectiveRightPanelFocused}
+        mode={rightPanelMode}
+        width={rightPanelWidth}
+        project={selectedProject}
+        onOpenChange={handleRightPanelOpenChange}
+        onFocusedChange={handleRightPanelFocusedChange}
+        onModeChange={setRightPanelMode}
+        onWidthChange={setRightPanelWidth}
+      />
+    </section>
+  )
+}
+
+function getStudioRightPanelCopy(locale: string) {
+  if (locale === "zh") {
+    return {
+      add: "添加",
+      allowBrowser: "允许 AstraFlow 控制内置浏览器",
+      alwaysAsk: "始终询问",
+      alwaysInclude: "始终包含",
+      browser: "浏览器",
+      browserDataCleared: "浏览数据已清除",
+      browserDataFailed: "清除浏览数据失败",
+      browserMenu: "浏览器菜单",
+      browserSettings: "Browser settings",
+      browserStart: "开始浏览",
+      browserStartDescription: "输入 URL 以打开页面",
+      browserTitle: "浏览器",
+      browsingData: "浏览数据",
+      browsingDataHelp: "清除应用内浏览器中的历史记录、网站数据、缓存和下载历史记录",
+      clearAllBrowsingData: "清除所有浏览数据",
+      clearBrowsingData: "Clear browsing data",
+      desktopUnavailable: "仅桌面应用可用",
+      emptyFolder: "这个文件夹为空",
+      files: "文件",
+      filesShortcut: "⌘P",
+      filterFiles: "筛选文件...",
+      findInPage: "在页面中查找",
+      focusWorkspace: "聚焦工作区",
+      forceReload: "强制重新加载",
+      localTargetApp: "AstraFlow",
+      localUrlHelp: "本地开发站点默认打开位置",
+      localUrlTarget: "本地 URL 打开目标位置",
+      newTab: "新选项卡",
+      noPreview: "无法预览这个文件",
+      noWebsitePermissions: "尚无网站专属权限",
+      open: "打开",
+      permissions: "权限",
+      permissionsHelp: "选择是否让 AstraFlow 在打开网站前先请求批准。",
+      screenshotHelp: "截图可帮助 AstraFlow 更好地理解并处理评论，但会增加套餐用量",
+      screenshotMode: "批注截图",
+      settingsDescription:
+        "管理 AstraFlow 的浏览器。可在计算机使用设置中设置 Google Chrome",
+      showDeviceToolbar: "显示设备工具栏",
+      sideChat: "侧边聊天",
+      sideChatGreeting: "在侧边聊天里记录临时想法，不影响主对话。",
+      sideChatPlaceholder: "写一条侧边消息...",
+      sideChatShortcut: "⌥⌘S",
+      terminal: "终端",
+      toggleRightPanel: "显示/隐藏侧边栏",
+      truncated: "文件较大，已截断预览",
+      websitePermissions: "网站权限",
+      websitePermissionsHelp: "为特定网站覆盖上述默认设置",
+      zoom: "缩放",
+    }
+  }
+
+  return {
+    add: "Add",
+    allowBrowser: "Allow AstraFlow to control the in-app browser",
+    alwaysAsk: "Always ask",
+    alwaysInclude: "Always include",
+    browser: "Browser",
+    browserDataCleared: "Browsing data cleared",
+    browserDataFailed: "Failed to clear browsing data",
+    browserMenu: "Browser menu",
+    browserSettings: "Browser settings",
+    browserStart: "Start browsing",
+    browserStartDescription: "Enter a URL to open a page",
+    browserTitle: "Browser",
+    browsingData: "Browsing data",
+    browsingDataHelp:
+      "Clear history, website data, cache, and download history from the in-app browser",
+    clearAllBrowsingData: "Clear all browsing data",
+    clearBrowsingData: "Clear browsing data",
+    desktopUnavailable: "Only available in the desktop app",
+    emptyFolder: "This folder is empty",
+    files: "Files",
+    filesShortcut: "⌘P",
+    filterFiles: "Filter files...",
+    findInPage: "Find in page",
+    focusWorkspace: "Focus workspace",
+    forceReload: "Force reload",
+    localTargetApp: "AstraFlow",
+    localUrlHelp: "Default open location for local development sites",
+    localUrlTarget: "Local URL target",
+    newTab: "New tab",
+    noPreview: "This file cannot be previewed",
+    noWebsitePermissions: "No website-specific permissions",
+    open: "Open",
+    permissions: "Permissions",
+    permissionsHelp:
+      "Choose whether AstraFlow should ask before opening websites.",
+    screenshotHelp:
+      "Screenshots help AstraFlow understand and handle comments, but use more quota",
+    screenshotMode: "Comment screenshots",
+    settingsDescription:
+      "Manage AstraFlow's browser. Set Google Chrome in computer use settings",
+    showDeviceToolbar: "Show device toolbar",
+    sideChat: "Side chat",
+    sideChatGreeting:
+      "Capture temporary notes here without changing the main thread.",
+    sideChatPlaceholder: "Write a side message...",
+    sideChatShortcut: "⌥⌘S",
+    terminal: "Terminal",
+    toggleRightPanel: "Show/hide side panel",
+    truncated: "Large file truncated for preview",
+    websitePermissions: "Website permissions",
+    websitePermissionsHelp: "Override defaults for specific websites",
+    zoom: "Zoom",
+  }
+}
+
+type StudioRightPanelCopy = ReturnType<typeof getStudioRightPanelCopy>
+
+function StudioRightPanel({
+  open,
+  focused,
+  mode,
+  width,
+  project,
+  onOpenChange,
+  onFocusedChange,
+  onModeChange,
+  onWidthChange,
+}: {
+  open: boolean
+  focused: boolean
+  mode: StudioRightPanelMode
+  width: number
+  project: StudioLocalProjectWithGitInfo | null
+  onOpenChange: (open: boolean) => void
+  onFocusedChange: (focused: boolean) => void
+  onModeChange: (mode: StudioRightPanelMode) => void
+  onWidthChange: (width: number) => void
+}) {
+  const { locale, t } = useI18n()
+  const copy = React.useMemo(() => getStudioRightPanelCopy(locale), [locale])
+  const [workspaceTabs, setWorkspaceTabs] = React.useState<
+    StudioWorkspaceTab[]
+  >([])
+  const [activeWorkspaceTabId, setActiveWorkspaceTabId] = React.useState("")
+  const [nextTerminalSequence, setNextTerminalSequence] = React.useState(1)
+  const activeWorkspaceTab =
+    workspaceTabs.find((tab) => tab.id === activeWorkspaceTabId) ??
+    workspaceTabs[0] ??
+    null
+  const activeWorkspaceMode = activeWorkspaceTab
+    ? getWorkspaceTabMode(activeWorkspaceTab)
+    : mode
+  const fileTabs = workspaceTabs.filter(
+    (tab): tab is StudioWorkspaceFileTab => tab.kind === "files"
+  )
+  const terminalTabs = workspaceTabs.filter(
+    (tab): tab is StudioWorkspaceTerminalTab => tab.kind === "terminal"
+  )
+
+  const activateWorkspaceTab = React.useCallback(
+    (tab: StudioWorkspaceTab) => {
+      setActiveWorkspaceTabId(tab.id)
+      onModeChange(getWorkspaceTabMode(tab))
+    },
+    [onModeChange]
+  )
+
+  const handleOpenFileTab = React.useCallback(
+    (entry: AstraFlowSidePanelDirectoryEntry) => {
+      const existingTab = workspaceTabs.find(
+        (tab): tab is StudioWorkspaceFileTab =>
+          tab.kind === "files" && tab.entry?.path === entry.path
+      )
+
+      if (existingTab) {
+        activateWorkspaceTab(existingTab)
+        return
+      }
+
+      const reusableEmptyFileTab = workspaceTabs.find(
+        (tab): tab is StudioWorkspaceFileTab =>
+          tab.kind === "files" && tab.entry === null
+      )
+      const nextTab: StudioWorkspaceFileTab = reusableEmptyFileTab
+        ? { ...reusableEmptyFileTab, title: entry.name, entry }
+        : createWorkspaceFileTab(entry, copy.files)
+
+      setWorkspaceTabs((current) => {
+        if (reusableEmptyFileTab) {
+          return current.map((tab) =>
+            tab.id === reusableEmptyFileTab.id ? nextTab : tab
+          )
+        }
+
+        return [...current, nextTab]
+      })
+      activateWorkspaceTab(nextTab)
+    },
+    [activateWorkspaceTab, copy.files, workspaceTabs]
+  )
+
+  const handleAddWorkspaceMode = React.useCallback(
+    (nextMode: StudioRightPanelMode) => {
+      if (nextMode === "launcher" || nextMode === "browser-settings") {
+        onModeChange(nextMode)
+        return
+      }
+
+      if (nextMode === "files") {
+        const existingFileTab = workspaceTabs.find(
+          (tab): tab is StudioWorkspaceFileTab => tab.kind === "files"
+        )
+        const nextTab = existingFileTab ?? createWorkspaceFileTab(null, copy.files)
+
+        if (!existingFileTab) {
+          setWorkspaceTabs((current) => [...current, nextTab])
+        }
+
+        activateWorkspaceTab(nextTab)
+        return
+      }
+
+      if (nextMode === "browser") {
+        if (mode === "browser-settings") {
+          const existingBrowserTab =
+            activeWorkspaceTab?.kind === "browser"
+              ? activeWorkspaceTab
+              : workspaceTabs.find(
+                  (tab): tab is StudioWorkspaceBrowserTab =>
+                    tab.kind === "browser"
+                )
+
+          if (existingBrowserTab) {
+            activateWorkspaceTab(existingBrowserTab)
+            return
+          }
+        }
+
+        const nextTab = createWorkspaceBrowserTab()
+
+        setWorkspaceTabs((current) => [...current, nextTab])
+        activateWorkspaceTab(nextTab)
+        return
+      }
+
+      if (nextMode === "terminal") {
+        const nextTab = createWorkspaceTerminalTab(
+          project,
+          t.studioTerminalTab,
+          nextTerminalSequence
+        )
+
+        setNextTerminalSequence((current) => current + 1)
+        setWorkspaceTabs((current) => [...current, nextTab])
+        activateWorkspaceTab(nextTab)
+        return
+      }
+
+      const existingSideChatTab = workspaceTabs.find(
+        (tab): tab is StudioWorkspaceSideChatTab => tab.kind === "side-chat"
+      )
+      const nextTab =
+        existingSideChatTab ?? createWorkspaceSideChatTab(copy.sideChat)
+
+      if (!existingSideChatTab) {
+        setWorkspaceTabs((current) => [...current, nextTab])
+      }
+
+      activateWorkspaceTab(nextTab)
+    },
+    [
+      activateWorkspaceTab,
+      copy.files,
+      copy.sideChat,
+      activeWorkspaceTab,
+      mode,
+      nextTerminalSequence,
+      onModeChange,
+      project,
+      t.studioTerminalTab,
+      workspaceTabs,
+    ]
+  )
+
+  const handleUpdateWorkspaceTab = React.useCallback(
+    (tabId: string, updater: (tab: StudioWorkspaceTab) => StudioWorkspaceTab) => {
+      setWorkspaceTabs((current) =>
+        current.map((tab) => (tab.id === tabId ? updater(tab) : tab))
+      )
+    },
+    []
+  )
+
+  const handleCloseWorkspaceTab = React.useCallback(
+    (tabId: string) => {
+      const closingIndex = workspaceTabs.findIndex((tab) => tab.id === tabId)
+
+      if (closingIndex < 0) {
+        return
+      }
+
+      const nextTabs = workspaceTabs.filter((tab) => tab.id !== tabId)
+      const nextActiveTab =
+        activeWorkspaceTabId === tabId
+          ? (nextTabs[Math.max(0, closingIndex - 1)] ?? nextTabs[0] ?? null)
+          : (nextTabs.find((tab) => tab.id === activeWorkspaceTabId) ?? null)
+
+      setWorkspaceTabs(nextTabs)
+      setActiveWorkspaceTabId(nextActiveTab?.id ?? "")
+      onModeChange(nextActiveTab ? getWorkspaceTabMode(nextActiveTab) : "launcher")
+    },
+    [activeWorkspaceTabId, onModeChange, workspaceTabs]
+  )
+
+  useCloseTabCommand(
+    () => {
+      if (activeWorkspaceTab) {
+        handleCloseWorkspaceTab(activeWorkspaceTab.id)
+      }
+    },
+    open && Boolean(activeWorkspaceTab)
+  )
+
+  React.useEffect(() => {
+    if (!open) {
+      return
+    }
+
+    if (mode === "launcher" || mode === "browser-settings") {
+      return
+    }
+
+    if (activeWorkspaceTab && getWorkspaceTabMode(activeWorkspaceTab) === mode) {
+      return
+    }
+
+    queueMicrotask(() => handleAddWorkspaceMode(mode))
+  }, [activeWorkspaceTab, handleAddWorkspaceMode, mode, open])
+
+  const handleOpenMarkdownTarget = React.useCallback(
+    (href: string) => {
+      const filePath = getMarkdownTargetFilePath(href)
+
+      onOpenChange(true)
+
+      if (filePath) {
+        handleOpenFileTab(createSidePanelEntryFromPath(filePath))
+        return
+      }
+
+      const url = getMarkdownTargetBrowserUrl(href)
+
+      if (!url) {
+        return
+      }
+
+      const nextTab: StudioWorkspaceBrowserTab = {
+        ...createWorkspaceBrowserTab(),
+        address: url,
+        title: getBrowserTabTitle(url),
+        url,
+      }
+
+      setWorkspaceTabs((current) => [...current, nextTab])
+      activateWorkspaceTab(nextTab)
+    },
+    [activateWorkspaceTab, handleOpenFileTab, onOpenChange]
+  )
+
+  React.useEffect(() => {
+    function handleEvent(event: Event) {
+      const detail = (event as CustomEvent<StudioOpenMarkdownTargetDetail>)
+        .detail
+
+      if (detail?.href) {
+        handleOpenMarkdownTarget(detail.href)
+      }
+    }
+
+    window.addEventListener(STUDIO_OPEN_MARKDOWN_TARGET_EVENT, handleEvent)
+
+    return () =>
+      window.removeEventListener(STUDIO_OPEN_MARKDOWN_TARGET_EVENT, handleEvent)
+  }, [handleOpenMarkdownTarget])
+
+  React.useEffect(() => {
+    if (!open) {
+      return
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        if (focused) {
+          onFocusedChange(false)
+          return
+        }
+
+        onOpenChange(false)
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown)
+
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [focused, onFocusedChange, onOpenChange, open])
+
+  function handleResizePointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    event.preventDefault()
+
+    const startX = event.clientX
+    const startWidth = width
+
+    function handleMove(moveEvent: PointerEvent) {
+      onWidthChange(startWidth + startX - moveEvent.clientX)
+    }
+
+    function handleUp() {
+      window.removeEventListener("pointermove", handleMove)
+      window.removeEventListener("pointerup", handleUp)
+    }
+
+    window.addEventListener("pointermove", handleMove)
+    window.addEventListener("pointerup", handleUp)
+  }
+
+  return (
+    <aside
+      data-testid="studio-right-panel"
+      aria-hidden={!open}
+      className={cn(
+        "relative shrink-0 overflow-hidden border-l bg-background transition-[width,border-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
+        open ? "border-border" : "pointer-events-none border-transparent",
+        focused && "min-w-0 flex-1 border-l-0"
+      )}
+      style={{ width: open ? (focused ? "100%" : width) : 0 }}
+    >
+      <div
+        className={cn(
+          "relative flex h-full min-h-0 flex-col bg-background transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
+          open ? "translate-x-0 opacity-100" : "translate-x-5 opacity-0"
+        )}
+        style={{ width: focused ? "100%" : width }}
+      >
+        {!focused ? (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            className="absolute top-0 left-0 z-20 h-full w-1 cursor-col-resize bg-transparent hover:bg-primary/25"
+            onPointerDown={handleResizePointerDown}
+          />
+        ) : null}
+
+        {mode === "launcher" && workspaceTabs.length === 0 ? (
+          <StudioRightPanelLauncher copy={copy} onModeChange={onModeChange} />
+        ) : (
+          <>
+            <StudioWorkspaceTabStrip
+              activeMode={activeWorkspaceMode}
+              activeTabId={activeWorkspaceTab?.id ?? ""}
+              copy={copy}
+              tabs={workspaceTabs}
+              onAddMode={handleAddWorkspaceMode}
+              onCloseTab={handleCloseWorkspaceTab}
+              onSelectTab={(tabId) => {
+                const nextTab = workspaceTabs.find((tab) => tab.id === tabId)
+
+                if (nextTab) {
+                  activateWorkspaceTab(nextTab)
+                }
+              }}
+            />
+
+            <div className="relative min-h-0 flex-1">
+              {mode === "browser-settings" ? (
+                <StudioRightPanelBrowserSettings
+                  copy={copy}
+                  onModeChange={handleAddWorkspaceMode}
+                />
+              ) : null}
+
+              <div
+                className={cn(
+                  "absolute inset-0 min-h-0",
+                  mode === "browser-settings" ||
+                    activeWorkspaceTab?.kind !== "files"
+                    ? "hidden"
+                    : "block"
+                )}
+              >
+                <StudioRightPanelFiles
+                  activeFileTabId={
+                    activeWorkspaceTab?.kind === "files"
+                      ? activeWorkspaceTab.id
+                      : ""
+                  }
+                  copy={copy}
+                  fileTabs={fileTabs}
+                  onOpenFile={handleOpenFileTab}
+                />
+              </div>
+
+              <div
+                className={cn(
+                  "absolute inset-0 min-h-0",
+                  mode === "browser-settings" ||
+                    activeWorkspaceTab?.kind !== "browser"
+                    ? "hidden"
+                    : "block"
+                )}
+              >
+                {activeWorkspaceTab?.kind === "browser" ? (
+                  <StudioRightPanelBrowser
+                    copy={copy}
+                    tab={activeWorkspaceTab}
+                    onModeChange={handleAddWorkspaceMode}
+                    onTabChange={(updater) =>
+                      handleUpdateWorkspaceTab(activeWorkspaceTab.id, (tab) =>
+                        tab.kind === "browser" ? updater(tab) : tab
+                      )
+                    }
+                  />
+                ) : null}
+              </div>
+
+              {activeWorkspaceTab?.kind === "side-chat" ? (
+                <StudioRightPanelSideChat copy={copy} />
+              ) : null}
+
+              {terminalTabs.length > 0 ? (
+                <div
+                  className={cn(
+                    "absolute inset-0 min-h-0",
+                    mode === "browser-settings" ||
+                      activeWorkspaceTab?.kind !== "terminal"
+                      ? "hidden"
+                      : "block"
+                  )}
+                >
+                  <StudioSideTerminal
+                    active={
+                      open &&
+                      mode !== "browser-settings" &&
+                      activeWorkspaceTab?.kind === "terminal"
+                    }
+                    activeTabId={
+                      activeWorkspaceTab?.kind === "terminal"
+                        ? activeWorkspaceTab.id
+                        : ""
+                    }
+                    copy={copy}
+                    tabs={terminalTabs}
+                    onResolvedCwd={(tabId, resolvedCwd) =>
+                      handleUpdateWorkspaceTab(tabId, (tab) => {
+                        if (tab.kind !== "terminal") {
+                          return tab
+                        }
+
+                        const title =
+                          tab.cwd === null
+                            ? formatTerminalTabTitle(
+                                getPathTail(resolvedCwd) ||
+                                  t.studioTerminalTab,
+                                tab.sequence
+                              )
+                            : tab.title
+
+                        return {
+                          ...tab,
+                          resolvedCwd,
+                          title,
+                        }
+                      })
+                    }
+                  />
+                </div>
+              ) : null}
+            </div>
+          </>
+        )}
+      </div>
+    </aside>
+  )
+}
+
+function StudioRightPanelLauncher({
+  copy,
+  onModeChange,
+}: {
+  copy: StudioRightPanelCopy
+  onModeChange: (mode: StudioRightPanelMode) => void
+}) {
+  const items = getStudioRightPanelItems(copy)
+
+  return (
+    <div className="flex h-full min-h-0 flex-col px-3 pt-12 pb-5">
+      <div className="flex min-h-0 flex-1 items-center">
+        <div className="flex w-full min-w-0 flex-col gap-1.5">
+          {items.map((item) => {
+            const Icon = item.icon
+
+            return (
+              <button
+                key={item.mode}
+                type="button"
+                className="flex h-10 w-full min-w-0 items-center gap-2.5 rounded-lg bg-muted/55 px-3 text-left text-sm font-medium text-foreground transition-colors hover:bg-muted"
+                onClick={() => onModeChange(item.mode)}
+              >
+                <Icon
+                  aria-hidden
+                  className="size-4 shrink-0 text-muted-foreground"
+                />
+                <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                {item.shortcut ? (
+                  <span className="rounded-full bg-background/80 px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                    {item.shortcut}
+                  </span>
+                ) : null}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function StudioWorkspaceTabStrip({
+  activeMode,
+  activeTabId,
+  copy,
+  tabs,
+  onAddMode,
+  onCloseTab,
+  onSelectTab,
+}: {
+  activeMode: StudioRightPanelMode
+  activeTabId: string
+  copy: StudioRightPanelCopy
+  tabs: StudioWorkspaceTab[]
+  onAddMode: (mode: StudioRightPanelMode) => void
+  onCloseTab: (tabId: string) => void
+  onSelectTab: (tabId: string) => void
+}) {
+  return (
+    <div className="flex h-12 shrink-0 items-center gap-1.5 border-b px-3 pr-24">
+      <div className="flex min-w-0 flex-1 items-center gap-1">
+        <div className="min-w-0 max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div className="flex w-max items-center gap-1">
+            {tabs.map((tab) => {
+              const isSelected = tab.id === activeTabId
+
+              return (
+                <div
+                  key={tab.id}
+                  className={cn(
+                    "group flex h-8 min-w-0 max-w-48 items-center rounded-lg text-xs transition-colors",
+                    isSelected
+                      ? "bg-muted text-foreground"
+                      : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                  )}
+                  title={getWorkspaceTabTitle(tab)}
+                >
+                  <button
+                    type="button"
+                    className="flex h-full min-w-0 flex-1 items-center gap-1.5 px-2 text-left"
+                    aria-current={isSelected ? "page" : undefined}
+                    onClick={() => onSelectTab(tab.id)}
+                  >
+                    <StudioWorkspaceTabIcon tab={tab} />
+                    <span className="truncate">{getWorkspaceTabTitle(tab)}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={cn(
+                      "mr-1 grid size-5 shrink-0 place-items-center rounded-md text-muted-foreground transition-opacity hover:bg-background/80 hover:text-foreground group-hover:opacity-75 group-focus-within:opacity-75",
+                      isSelected ? "opacity-70" : "opacity-0"
+                    )}
+                    aria-label="Close tab"
+                    title="Close tab"
+                    onClick={() => onCloseTab(tab.id)}
+                  >
+                    <RiCloseLine aria-hidden className="size-3" />
+                  </button>
+                </div>
+              )
+            })}
           </div>
         </div>
+
+        <StudioRightPanelModeMenu
+          activeMode={activeMode}
+          copy={copy}
+          includeActiveMode
+          onModeChange={onAddMode}
+        />
+      </div>
+    </div>
+  )
+}
+
+function StudioWorkspaceTabIcon({ tab }: { tab: StudioWorkspaceTab }) {
+  if (tab.kind === "browser") {
+    return <Globe aria-hidden className="size-3.5 shrink-0" />
+  }
+
+  if (tab.kind === "terminal") {
+    return <SquareTerminal aria-hidden className="size-3.5 shrink-0" />
+  }
+
+  if (tab.kind === "side-chat") {
+    return <MessageSquare aria-hidden className="size-3.5 shrink-0" />
+  }
+
+  return tab.entry ? (
+    <StudioSidePanelFileIcon entry={tab.entry} />
+  ) : (
+    <RiFileTextLine aria-hidden className="size-3.5 shrink-0" />
+  )
+}
+
+function getStudioRightPanelItems(copy: StudioRightPanelCopy) {
+  return [
+    {
+      mode: "files" as const,
+      label: copy.files,
+      shortcut: copy.filesShortcut,
+      icon: Folder,
+    },
+    {
+      mode: "side-chat" as const,
+      label: copy.sideChat,
+      shortcut: copy.sideChatShortcut,
+      icon: MessageSquare,
+    },
+    {
+      mode: "browser" as const,
+      label: copy.browser,
+      shortcut: "⌘T",
+      icon: Globe,
+    },
+    {
+      mode: "terminal" as const,
+      label: copy.terminal,
+      shortcut: "",
+      icon: SquareTerminal,
+    },
+  ]
+}
+
+function StudioRightPanelModeMenu({
+  activeMode,
+  copy,
+  extraItems = [],
+  includeActiveMode = false,
+  onModeChange,
+}: {
+  activeMode: StudioRightPanelMode
+  copy: StudioRightPanelCopy
+  extraItems?: Array<{
+    key: string
+    label: string
+    icon: React.ComponentType<{ "aria-hidden"?: boolean; className?: string }>
+    shortcut?: string
+    onSelect: () => void
+  }>
+  includeActiveMode?: boolean
+  onModeChange: (mode: StudioRightPanelMode) => void
+}) {
+  const [open, setOpen] = React.useState(false)
+  const menuRef = React.useRef<HTMLDivElement | null>(null)
+  const items = getStudioRightPanelItems(copy).filter(
+    (item) => includeActiveMode || item.mode !== activeMode
+  )
+
+  React.useEffect(() => {
+    if (!open) {
+      return
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      if (!menuRef.current?.contains(event.target as Node)) {
+        setOpen(false)
+      }
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown)
+
+    return () => window.removeEventListener("pointerdown", handlePointerDown)
+  }, [open])
+
+  return (
+    <div ref={menuRef} className="relative shrink-0">
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        aria-expanded={open}
+        aria-label={copy.add}
+        title={copy.add}
+        className={cn("size-8 rounded-lg", open && "bg-muted text-foreground")}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <RiAddLine aria-hidden className="size-4" />
+      </Button>
+
+      {open ? (
+        <div className="absolute top-9 left-0 z-40 w-44 rounded-lg border bg-background p-1.5 text-sm shadow-xl">
+          {extraItems.map((item) => {
+            const Icon = item.icon
+
+            return (
+              <button
+                key={item.key}
+                type="button"
+                className="flex h-9 w-full items-center gap-2 rounded-md px-2 text-left font-medium hover:bg-muted"
+                onClick={() => {
+                  setOpen(false)
+                  item.onSelect()
+                }}
+              >
+                <Icon
+                  aria-hidden
+                  className="size-4 shrink-0 text-muted-foreground"
+                />
+                <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                {item.shortcut ? (
+                  <span className="text-xs text-muted-foreground">
+                    {item.shortcut}
+                  </span>
+                ) : null}
+              </button>
+            )
+          })}
+          {extraItems.length > 0 && items.length > 0 ? (
+            <div className="my-1 h-px bg-border" />
+          ) : null}
+          {items.map((item) => {
+            const Icon = item.icon
+
+            return (
+              <button
+                key={item.mode}
+                type="button"
+                className="flex h-9 w-full items-center gap-2 rounded-md px-2 text-left font-medium hover:bg-muted"
+                onClick={() => {
+                  setOpen(false)
+                  onModeChange(item.mode)
+                }}
+              >
+                <Icon
+                  aria-hidden
+                  className="size-4 shrink-0 text-muted-foreground"
+                />
+                <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                {item.shortcut ? (
+                  <span className="text-xs text-muted-foreground">
+                    {item.shortcut}
+                  </span>
+                ) : null}
+              </button>
+            )
+          })}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function StudioRightPanelFiles({
+  activeFileTabId,
+  copy,
+  fileTabs,
+  onOpenFile,
+}: {
+  activeFileTabId: string
+  copy: StudioRightPanelCopy
+  fileTabs: StudioWorkspaceFileTab[]
+  onOpenFile: (entry: AstraFlowSidePanelDirectoryEntry) => void
+}) {
+  const [directory, setDirectory] = React.useState<string | null>(null)
+  const [listing, setListing] =
+    React.useState<AstraFlowSidePanelDirectory | null>(null)
+  const [preview, setPreview] =
+    React.useState<StudioSidePanelFilePreview | null>(null)
+  const [query, setQuery] = React.useState("")
+  const [loading, setLoading] = React.useState(true)
+  const [previewLoading, setPreviewLoading] = React.useState(false)
+  const [error, setError] = React.useState("")
+  const previewRequestRef = React.useRef(0)
+
+  const activeFileTab =
+    fileTabs.find((tab) => tab.id === activeFileTabId) ??
+    fileTabs.find((tab) => tab.entry) ??
+    null
+  const selectedEntry =
+    activeFileTab?.entry ??
+    (activeFileTab?.entry?.path
+      ? listing?.entries.find((entry) => entry.path === activeFileTab.entry?.path)
+      : null) ??
+    null
+
+  const loadPreviewForEntry = React.useCallback(
+    async (entry: AstraFlowSidePanelDirectoryEntry) => {
+      const requestId = previewRequestRef.current + 1
+      previewRequestRef.current = requestId
+      setPreviewLoading(true)
+      setPreview(null)
+
+      try {
+        const bridge = window.astraflowDesktop
+
+        if (isImageEntry(entry)) {
+          if (!bridge?.sidePanelReadFileDataUrl) {
+            throw new Error(copy.desktopUnavailable)
+          }
+
+          const file = await bridge.sidePanelReadFileDataUrl(entry.path)
+
+          if (previewRequestRef.current === requestId) {
+            setPreview({ kind: "image", entry, file })
+          }
+          return
+        }
+
+        if (isLikelyTextEntry(entry)) {
+          if (!bridge?.sidePanelReadTextFile) {
+            throw new Error(copy.desktopUnavailable)
+          }
+
+          const file = await bridge.sidePanelReadTextFile(entry.path)
+
+          if (previewRequestRef.current === requestId) {
+            setPreview({ kind: "text", entry, file })
+          }
+          return
+        }
+
+        if (previewRequestRef.current === requestId) {
+          setPreview({ kind: "unsupported", entry })
+        }
+      } catch (previewError) {
+        if (previewRequestRef.current === requestId) {
+          setPreview({
+            kind: "unsupported",
+            entry,
+            error:
+              previewError instanceof Error
+                ? previewError.message
+                : copy.noPreview,
+          })
+        }
+      } finally {
+        if (previewRequestRef.current === requestId) {
+          setPreviewLoading(false)
+        }
+      }
+    },
+    [copy.desktopUnavailable, copy.noPreview]
+  )
+
+  React.useEffect(() => {
+    if (!selectedEntry) {
+      return
+    }
+
+    queueMicrotask(() => {
+      void loadPreviewForEntry(selectedEntry)
+    })
+  }, [loadPreviewForEntry, selectedEntry])
+
+  React.useEffect(() => {
+    let disposed = false
+
+    async function loadDirectory() {
+      const bridge = window.astraflowDesktop
+
+      if (!bridge?.sidePanelListDirectory) {
+        setError(copy.desktopUnavailable)
+        setLoading(false)
+        return
+      }
+
+      setLoading(true)
+      setError("")
+
+      try {
+        const nextListing = await bridge.sidePanelListDirectory(directory)
+
+        if (disposed) {
+          return
+        }
+
+        setListing(nextListing)
+
+        const firstPreviewable =
+          nextListing.entries.find(isPreviewableSidePanelEntry) ??
+          nextListing.entries.find((entry) => entry.kind === "file") ??
+          null
+
+        if (firstPreviewable && fileTabs.length === 0) {
+          onOpenFile(firstPreviewable)
+        } else if (!firstPreviewable) {
+          setPreview(null)
+        }
+      } catch (loadError) {
+        if (!disposed) {
+          setError(
+            loadError instanceof Error ? loadError.message : copy.desktopUnavailable
+          )
+          setListing(null)
+          setPreview(null)
+        }
+      } finally {
+        if (!disposed) {
+          setLoading(false)
+        }
+      }
+    }
+
+    void loadDirectory()
+
+    return () => {
+      disposed = true
+    }
+  }, [
+    copy.desktopUnavailable,
+    directory,
+    fileTabs.length,
+    loadPreviewForEntry,
+    onOpenFile,
+  ])
+
+  function handleSelectEntry(entry: AstraFlowSidePanelDirectoryEntry) {
+    if (entry.kind === "directory") {
+      setDirectory(entry.path)
+      return
+    }
+
+    onOpenFile(entry)
+  }
+
+  function handleOpenSelected() {
+    const target = selectedEntry?.path ?? listing?.cwd
+
+    if (target) {
+      void window.astraflowDesktop?.sidePanelShowItem(target)
+    }
+  }
+
+  const filteredEntries = (listing?.entries ?? []).filter((entry) =>
+    entry.name.toLowerCase().includes(query.trim().toLowerCase())
+  )
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex h-11 shrink-0 items-center gap-2 border-b px-3">
+        <div className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+          <button
+            type="button"
+            className="hover:text-foreground"
+            onClick={() => setDirectory(null)}
+          >
+            {formatFileBreadcrumb(listing?.cwd)}
+          </button>
+          {selectedEntry ? (
+            <>
+              <span className="px-2 text-muted-foreground/60">›</span>
+              <span className="font-medium text-foreground">
+                {selectedEntry.name}
+              </span>
+            </>
+          ) : null}
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          className="size-8 rounded-lg"
+          aria-label={copy.open}
+          title={copy.open}
+          onClick={handleOpenSelected}
+        >
+          <RiExternalLinkLine aria-hidden className="size-3.5" />
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 gap-1.5 rounded-lg px-2 text-xs"
+          onClick={handleOpenSelected}
+        >
+          <Folder aria-hidden className="size-3.5" />
+          {copy.open}
+        </Button>
+      </div>
+
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_minmax(190px,42%)]">
+        <div className="min-h-0 overflow-auto border-r bg-background">
+          {loading && !listing ? (
+            <div className="p-8 text-sm text-muted-foreground">Loading...</div>
+          ) : error ? (
+            <div className="p-8 text-sm text-muted-foreground">{error}</div>
+          ) : !selectedEntry ? (
+            <div className="flex h-full items-center justify-center p-8 text-center text-sm text-muted-foreground">
+              {listing?.entries.length ? copy.noPreview : copy.emptyFolder}
+            </div>
+          ) : previewLoading ? (
+            <div className="p-8 text-sm text-muted-foreground">Loading...</div>
+          ) : preview ? (
+            <StudioSidePanelPreview preview={preview} copy={copy} />
+          ) : (
+            <div className="flex h-full items-center justify-center p-8 text-center text-sm text-muted-foreground">
+              {listing?.entries.length ? copy.noPreview : copy.emptyFolder}
+            </div>
+          )}
+        </div>
+
+        <div className="flex min-h-0 flex-col bg-background p-3">
+          <label className="relative shrink-0">
+            <RiSearchLine
+              aria-hidden
+              className="absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground"
+            />
+            <input
+              value={query}
+              placeholder={copy.filterFiles}
+              className="h-9 w-full rounded-lg border bg-background pr-2.5 pl-8 text-xs outline-none transition-colors focus:border-ring"
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          </label>
+
+          <div className="mt-3 min-h-0 flex-1 overflow-y-auto">
+            {filteredEntries.map((entry) => {
+              const isSelected = selectedEntry?.path === entry.path
+
+              return (
+                <button
+                  key={entry.path}
+                  type="button"
+                  className={cn(
+                    "flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-xs transition-colors",
+                    isSelected
+                      ? "bg-muted text-foreground"
+                      : "text-foreground hover:bg-muted/60"
+                  )}
+                  onClick={() => void handleSelectEntry(entry)}
+                >
+                  <StudioSidePanelFileIcon entry={entry} />
+                  <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+                  {entry.kind === "file" && entry.size ? (
+                    <span className="hidden text-[10px] text-muted-foreground xl:inline">
+                      {formatSidePanelFileSize(entry.size)}
+                    </span>
+                  ) : null}
+                </button>
+              )
+            })}
+            {!loading && filteredEntries.length === 0 ? (
+              <p className="px-2 py-4 text-xs text-muted-foreground">
+                {copy.emptyFolder}
+              </p>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function StudioSidePanelPreview({
+  preview,
+  copy,
+}: {
+  preview: StudioSidePanelFilePreview
+  copy: StudioRightPanelCopy
+}) {
+  if (preview.kind === "image") {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <div className="flex min-h-0 flex-1 items-center justify-center bg-muted/20 p-5">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={preview.file.dataUrl}
+            alt={preview.entry.name}
+            className="max-h-full max-w-full rounded-md object-contain shadow-sm"
+          />
+        </div>
+        <div className="flex h-9 shrink-0 items-center justify-between gap-2 border-t px-3 text-xs text-muted-foreground">
+          <span className="min-w-0 truncate text-foreground">
+            {preview.entry.name}
+          </span>
+          <span className="shrink-0">
+            {formatSidePanelFileSize(preview.file.size)}
+          </span>
+        </div>
+      </div>
+    )
+  }
+
+  if (preview.kind === "text") {
+    return (
+      <StudioTextFilePreview
+        entry={preview.entry}
+        file={preview.file}
+        copy={copy}
+      />
+    )
+  }
+
+  return (
+    <div className="flex h-full items-center justify-center p-8 text-center text-sm text-muted-foreground">
+      {preview.error || copy.noPreview}
+    </div>
+  )
+}
+
+function StudioTextFilePreview({
+  entry,
+  file,
+  copy,
+}: {
+  entry: AstraFlowSidePanelDirectoryEntry
+  file: AstraFlowSidePanelTextFile
+  copy: StudioRightPanelCopy
+}) {
+  const isMarkdown = entry.extension === "md" || entry.name.endsWith(".md")
+
+  if (isMarkdown) {
+    return <StudioMarkdownFilePreview file={file} copy={copy} />
+  }
+
+  return (
+    <div className="min-h-full bg-background">
+      <CodeBlock className="min-w-max rounded-none border-0 bg-transparent">
+        <CodeBlockCode
+          code={file.content}
+          language={inferCodeLanguage(entry)}
+          className="text-[12px] leading-5 [&>pre]:min-h-full [&>pre]:px-4 [&>pre]:py-4"
+        />
+      </CodeBlock>
+      {file.truncated ? (
+        <p className="border-t px-4 py-3 text-xs text-muted-foreground">
+          {copy.truncated}
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
+function StudioMarkdownFilePreview({
+  file,
+  copy,
+}: {
+  file: AstraFlowSidePanelTextFile
+  copy: StudioRightPanelCopy
+}) {
+  const parsed = React.useMemo(
+    () => parseMarkdownFrontmatter(file.content),
+    [file.content]
+  )
+  const title =
+    parsed.metadata.find(([key]) => ["name", "title"].includes(key))?.[1] ??
+    file.name
+  const description =
+    parsed.metadata.find(([key]) => key === "description")?.[1] ?? ""
+  const secondaryMetadata = parsed.metadata.filter(
+    ([key]) => !["name", "title", "description"].includes(key)
+  )
+
+  return (
+    <div className="mx-auto min-h-full max-w-3xl px-6 py-5">
+      {parsed.metadata.length > 0 ? (
+        <section className="mb-5 rounded-lg border bg-muted/20 p-4">
+          <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+          {description ? (
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              {description}
+            </p>
+          ) : null}
+          {secondaryMetadata.length > 0 ? (
+            <div className="mt-3 grid gap-1.5 text-xs sm:grid-cols-2">
+              {secondaryMetadata.map(([key, value]) => (
+                <div
+                  key={key}
+                  className="flex min-w-0 items-start gap-2 rounded-md bg-background/80 px-2 py-1.5"
+                >
+                  <span className="shrink-0 font-medium text-muted-foreground">
+                    {key}
+                  </span>
+                  <span className="min-w-0 break-words text-foreground">
+                    {value}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </section>
       ) : null}
 
+      <Markdown className="prose prose-sm max-w-none dark:prose-invert prose-headings:font-semibold prose-headings:text-foreground prose-a:text-primary prose-code:rounded-sm prose-code:bg-muted prose-code:px-1 prose-code:py-0.5">
+        {parsed.body || file.content}
+      </Markdown>
+
+      {file.truncated ? (
+        <p className="mt-4 border-t pt-3 text-xs text-muted-foreground">
+          {copy.truncated}
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
+function StudioSidePanelFileIcon({
+  entry,
+}: {
+  entry: AstraFlowSidePanelDirectoryEntry
+}) {
+  if (entry.kind === "directory") {
+    return (
+      <Folder aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+    )
+  }
+
+  if (IMAGE_FILE_EXTENSIONS.has(entry.extension)) {
+    return <FileImage aria-hidden className="size-4 shrink-0 text-rose-500" />
+  }
+
+  if (["csv", "tsv", "xlsx", "xls"].includes(entry.extension)) {
+    return (
+      <FileSpreadsheet
+        aria-hidden
+        className="size-4 shrink-0 text-cyan-600"
+      />
+    )
+  }
+
+  if (["zip", "tar", "gz", "dmg"].includes(entry.extension)) {
+    return <Archive aria-hidden className="size-4 shrink-0 text-amber-600" />
+  }
+
+  return <File aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+}
+
+function StudioRightPanelSideChat({
+  copy,
+}: {
+  copy: StudioRightPanelCopy
+}) {
+  const [messages, setMessages] = React.useState<StudioSideChatMessage[]>([
+    {
+      id: "welcome",
+      role: "assistant",
+      content: copy.sideChatGreeting,
+    },
+  ])
+  const [draft, setDraft] = React.useState("")
+
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+
+    const content = draft.trim()
+
+    if (!content) {
+      return
+    }
+
+    setMessages((current) => [
+      ...current,
+      {
+        id: createClientId(),
+        role: "user",
+        content,
+      },
+    ])
+    setDraft("")
+  }
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+        <div className="flex flex-col gap-2">
+          {messages.map((message) => (
+            <div
+              key={message.id}
+              className={cn(
+                "max-w-[88%] rounded-xl px-3 py-2 text-xs leading-5",
+                message.role === "user"
+                  ? "self-end bg-foreground text-background"
+                  : "self-start bg-muted text-foreground"
+              )}
+            >
+              {message.content}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <form
+        className="shrink-0 border-t p-3"
+        onSubmit={handleSubmit}
+      >
+        <div className="flex items-center gap-2 rounded-xl border bg-background p-1.5">
+          <input
+            value={draft}
+            placeholder={copy.sideChatPlaceholder}
+            className="min-w-0 flex-1 bg-transparent px-2 text-xs outline-none"
+            onChange={(event) => setDraft(event.target.value)}
+          />
+          <Button type="submit" size="icon-sm" disabled={!draft.trim()}>
+            <RiArrowUpLine aria-hidden className="size-4" />
+          </Button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
+function StudioRightPanelBrowser({
+  copy,
+  tab,
+  onModeChange,
+  onTabChange,
+}: {
+  copy: StudioRightPanelCopy
+  onModeChange: (mode: StudioRightPanelMode) => void
+  tab: StudioWorkspaceBrowserTab
+  onTabChange: (
+    updater: (tab: StudioWorkspaceBrowserTab) => StudioWorkspaceBrowserTab
+  ) => void
+}) {
+  const [menuOpen, setMenuOpen] = React.useState(false)
+  const [zoom, setZoom] = React.useState(100)
+  const activeTabUrl = tab.url
+
+  const updateActiveTab = React.useCallback(
+    (updater: (tab: StudioWorkspaceBrowserTab) => StudioWorkspaceBrowserTab) => {
+      onTabChange(updater)
+    },
+    [onTabChange]
+  )
+
+  function handleAddressSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+
+    const url = normalizeBrowserUrl(tab.address)
+
+    updateActiveTab((currentTab) => ({
+      ...currentTab,
+      title: getBrowserTabTitle(url),
+      url,
+    }))
+  }
+
+  React.useEffect(() => {
+    if (!activeTabUrl) {
+      return
+    }
+
+    let disposed = false
+
+    fetch(`/api/studio/browser-title?url=${encodeURIComponent(activeTabUrl)}`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload: { ok?: boolean; title?: string } | null) => {
+        const title = payload?.ok ? payload.title?.trim() : ""
+
+        if (!title || disposed) {
+          return
+        }
+
+        updateActiveTab((currentTab) =>
+          currentTab.title !== title ? { ...currentTab, title } : currentTab
+        )
+      })
+      .catch(() => {
+        // Cross-origin pages can still render; keep the hostname fallback.
+      })
+
+    return () => {
+      disposed = true
+    }
+  }, [activeTabUrl, updateActiveTab])
+
+  function handleBrowserFrameLoad(
+    event: React.SyntheticEvent<HTMLIFrameElement>
+  ) {
+    try {
+      const title = event.currentTarget.contentDocument?.title?.trim()
+
+      if (!title) {
+        return
+      }
+
+      updateActiveTab((currentTab) =>
+        currentTab.title !== title ? { ...currentTab, title } : currentTab
+      )
+    } catch {
+      // Remote pages usually disallow frame document access; title lookup falls
+      // back to the server route above.
+    }
+  }
+
+  async function handleClearData() {
+    try {
+      await window.astraflowDesktop?.browserClearData?.()
+      toast.success(copy.browserDataCleared)
+      setMenuOpen(false)
+    } catch {
+      toast.error(copy.browserDataFailed)
+    }
+  }
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <form
+        className="flex h-10 shrink-0 items-center gap-1 border-b px-3"
+        onSubmit={handleAddressSubmit}
+      >
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          className="size-7 rounded-md"
+          disabled
+        >
+          <RiArrowLeftSLine aria-hidden className="size-3.5" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          className="size-7 rounded-md"
+          disabled
+        >
+          <RiArrowRightSLine aria-hidden className="size-3.5" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          className="size-7 rounded-md"
+          onClick={() => {
+            if (tab.url) {
+              updateActiveTab((currentTab) => ({ ...currentTab, url: "" }))
+              requestAnimationFrame(() => {
+                updateActiveTab((currentTab) => ({
+                  ...currentTab,
+                  url: normalizeBrowserUrl(currentTab.address),
+                }))
+              })
+            }
+          }}
+        >
+          <RiRefreshLine aria-hidden className="size-3.5" />
+        </Button>
+        <input
+          value={tab.address}
+          placeholder="输入 URL"
+          className="h-7 min-w-0 flex-1 rounded-md bg-transparent px-2 text-center text-[11px] font-medium text-foreground outline-none placeholder:text-muted-foreground"
+          title={tab.title || tab.address || copy.browser}
+          onChange={(event) =>
+            updateActiveTab((currentTab) => ({
+              ...currentTab,
+              address: event.target.value,
+            }))
+          }
+        />
+        <div className="relative">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label={copy.browserMenu}
+            className={cn("size-7 rounded-md", menuOpen && "bg-muted")}
+            onClick={() => setMenuOpen((current) => !current)}
+          >
+            <MoreVertical aria-hidden className="size-3.5" />
+          </Button>
+
+          {menuOpen ? (
+            <div className="absolute top-9 right-0 z-40 w-[13rem] max-w-[calc(100vw-2rem)] rounded-lg border bg-background p-1.5 text-[11px] shadow-xl">
+              <button
+                type="button"
+                className="flex h-7 w-full items-center justify-between rounded-md px-2 text-left hover:bg-muted"
+                onClick={() => void handleClearData()}
+              >
+                <span>{copy.clearBrowsingData}</span>
+                <RiArrowRightSLine aria-hidden className="size-3.5 text-muted-foreground" />
+              </button>
+              <div className="my-1 h-px bg-border" />
+              <div className="flex h-7 items-center justify-between px-2">
+                <span className="font-medium">{copy.zoom}</span>
+                <div className="flex items-center overflow-hidden rounded-md border bg-muted/40">
+                  <button
+                    type="button"
+                    className="grid size-6 place-items-center text-muted-foreground hover:text-foreground"
+                    onClick={() => setZoom((value) => Math.max(50, value - 10))}
+                  >
+                    −
+                  </button>
+                  <span className="w-10 text-center font-medium">{zoom}%</span>
+                  <button
+                    type="button"
+                    className="grid size-6 place-items-center text-muted-foreground hover:text-foreground"
+                    onClick={() => setZoom((value) => Math.min(200, value + 10))}
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+              <div className="my-1 h-px bg-border" />
+              {[copy.forceReload, copy.findInPage, copy.showDeviceToolbar].map(
+                (label) => (
+                  <button
+                    key={label}
+                    type="button"
+                    className="flex h-7 w-full items-center rounded-md px-2 text-left text-muted-foreground"
+                    disabled
+                  >
+                    {label}
+                  </button>
+                )
+              )}
+              <div className="my-1 h-px bg-border" />
+              <button
+                type="button"
+                className="flex h-7 w-full items-center rounded-md px-2 text-left hover:bg-muted"
+                onClick={() => {
+                  setMenuOpen(false)
+                  onModeChange("browser-settings")
+                }}
+              >
+                {copy.browserSettings}
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </form>
+
+      <div className="min-h-0 flex-1 bg-background">
+        {tab.url ? (
+          <iframe
+            key={tab.url}
+            title={tab.title}
+            src={tab.url}
+            className="size-full border-0 bg-background"
+            style={{ zoom: `${zoom}%` }}
+            onLoad={handleBrowserFrameLoad}
+          />
+        ) : (
+          <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
+            <Globe aria-hidden className="size-10 text-muted-foreground/80" />
+            <div>
+              <h3 className="text-sm font-semibold">{copy.browserStart}</h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {copy.browserStartDescription}
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function StudioRightPanelBrowserSettings({
+  copy,
+  onModeChange,
+}: {
+  copy: StudioRightPanelCopy
+  onModeChange: (mode: StudioRightPanelMode) => void
+}) {
+  const [browserEnabled, setBrowserEnabled] = React.useState(() =>
+    readStoredBoolean("astraflow.studio.browser-enabled", true)
+  )
+
+  function toggleBrowserEnabled() {
+    const nextValue = !browserEnabled
+
+    window.localStorage.setItem(
+      "astraflow.studio.browser-enabled",
+      String(nextValue)
+    )
+    setBrowserEnabled(nextValue)
+  }
+
+  return (
+    <div className="h-full min-h-0 overflow-x-hidden overflow-y-auto px-3 pt-12 pb-5">
+      <div className="w-full min-w-0">
+        <button
+          type="button"
+          className="mb-3 inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground hover:text-foreground"
+          onClick={() => onModeChange("browser")}
+        >
+          <RiArrowLeftSLine aria-hidden className="size-3" />
+          {copy.browser}
+        </button>
+
+        <h2 className="text-base font-semibold tracking-normal">
+          {copy.browserTitle}
+        </h2>
+        <p className="mt-1 text-[11px] leading-4 text-muted-foreground [overflow-wrap:anywhere]">
+          {copy.settingsDescription}
+        </p>
+
+        <div className="mt-4 rounded-md border bg-background p-2.5">
+          <div className="flex items-center gap-2">
+            <div className="grid size-7 shrink-0 place-items-center rounded-md border">
+              <Globe aria-hidden className="size-3.5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h3 className="text-[11px] font-semibold">{copy.browser}</h3>
+              <p className="mt-0.5 text-[10px] leading-3.5 text-muted-foreground [overflow-wrap:anywhere]">
+                {copy.allowBrowser}
+              </p>
+            </div>
+            <button
+              type="button"
+              aria-pressed={browserEnabled}
+              className={cn(
+                "relative h-5 w-9 shrink-0 rounded-full transition-colors",
+                browserEnabled ? "bg-blue-500" : "bg-muted"
+              )}
+              onClick={toggleBrowserEnabled}
+            >
+              <span
+                className={cn(
+                  "absolute top-0.5 size-4 rounded-full bg-background shadow transition-transform",
+                  browserEnabled ? "left-[18px]" : "left-0.5"
+                )}
+              />
+            </button>
+          </div>
+        </div>
+
+        <StudioBrowserSettingsSection title="常规">
+          <StudioBrowserSettingsRow
+            title={copy.localUrlTarget}
+            description={copy.localUrlHelp}
+            value={copy.localTargetApp}
+          />
+          <StudioBrowserSettingsRow
+            title={copy.browsingData}
+            description={copy.browsingDataHelp}
+            value={copy.clearAllBrowsingData}
+          />
+          <StudioBrowserSettingsRow
+            title={copy.screenshotMode}
+            description={copy.screenshotHelp}
+            value={copy.alwaysInclude}
+          />
+        </StudioBrowserSettingsSection>
+
+        <StudioBrowserSettingsSection title={copy.permissions}>
+          <StudioBrowserSettingsRow
+            title="审批"
+            description={copy.permissionsHelp}
+            value={copy.alwaysAsk}
+          />
+        </StudioBrowserSettingsSection>
+
+        <div className="mt-5 flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <h3 className="text-xs font-semibold">
+              {copy.websitePermissions}
+            </h3>
+            <p className="mt-0.5 text-[10px] leading-3.5 text-muted-foreground [overflow-wrap:anywhere]">
+              {copy.websitePermissionsHelp}
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            className="h-6 shrink-0 gap-1 rounded-md px-2 text-[10px]"
+          >
+            <RiAddLine aria-hidden className="size-3" />
+            {copy.add}
+          </Button>
+        </div>
+        <div className="mt-2.5 rounded-md border p-3 text-center text-[10px] font-medium text-muted-foreground">
+          {copy.noWebsitePermissions}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function StudioBrowserSettingsSection({
+  title,
+  children,
+}: {
+  title: string
+  children: React.ReactNode
+}) {
+  return (
+    <section className="mt-5">
+      <h3 className="mb-1.5 text-xs font-semibold">{title}</h3>
+      <div className="overflow-hidden rounded-md border bg-background">
+        {children}
+      </div>
     </section>
+  )
+}
+
+function StudioBrowserSettingsRow({
+  title,
+  description,
+  value,
+}: {
+  title: string
+  description: string
+  value: string
+}) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5 border-b px-2.5 py-2.5 last:border-b-0">
+      <div className="min-w-0">
+        <h4 className="text-[11px] font-semibold [overflow-wrap:anywhere]">
+          {title}
+        </h4>
+        <p className="mt-0.5 text-[10px] leading-3.5 text-muted-foreground [overflow-wrap:anywhere]">
+          {description}
+        </p>
+      </div>
+      <button
+        type="button"
+        className="flex h-7 w-full min-w-0 items-center justify-between gap-2 rounded-md bg-muted px-2 text-left text-[11px] font-semibold"
+      >
+        <span className="min-w-0 truncate">{value}</span>
+        <RiArrowDownSLine
+          aria-hidden
+          className="size-3 shrink-0 text-muted-foreground"
+        />
+      </button>
+    </div>
+  )
+}
+
+function StudioSideTerminal({
+  active,
+  copy,
+  activeTabId,
+  tabs,
+  onResolvedCwd,
+}: {
+  active: boolean
+  copy: StudioRightPanelCopy
+  activeTabId: string
+  tabs: StudioWorkspaceTerminalTab[]
+  onResolvedCwd: (tabId: string, resolvedCwd: string) => void
+}) {
+  const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0]
+
+  return (
+    <div
+      aria-label={copy.terminal}
+      className="relative h-full min-h-0 bg-background"
+    >
+      {tabs.map((tab) => (
+        <StudioTerminalSurface
+          key={tab.id}
+          active={active && tab.id === activeTab?.id}
+          cwd={tab.cwd}
+          fitEnabled={active && tab.id === activeTab?.id}
+          onResolvedCwd={(resolvedCwd) => onResolvedCwd(tab.id, resolvedCwd)}
+        />
+      ))}
+    </div>
+  )
+}
+
+function StudioTerminalPanel({
+  open,
+  project,
+  onOpenChange,
+}: {
+  open: boolean
+  project: StudioLocalProjectWithGitInfo | null
+  onOpenChange: (open: boolean) => void
+}) {
+  const { t } = useI18n()
+  const [height, setHeight] = React.useState(readStoredPanelHeight)
+  const [terminalState, setTerminalState] = React.useState(() => {
+    const tab = createStudioTerminalTab(project, t.studioTerminalTab)
+
+    return {
+      tabs: [tab],
+      activeTabId: tab.id,
+      nextTabSequence: 2,
+    }
+  })
+  const { activeTabId, tabs } = terminalState
+  const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0]
+
+  React.useEffect(() => {
+    window.localStorage.setItem(TERMINAL_PANEL_HEIGHT_STORAGE_KEY, String(height))
+  }, [height])
+
+  function handleResizePointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    event.preventDefault()
+
+    const startY = event.clientY
+    const startHeight = height
+
+    function handleMove(moveEvent: PointerEvent) {
+      setHeight(clampTerminalPanelHeight(startHeight + startY - moveEvent.clientY))
+    }
+
+    function handleUp() {
+      window.removeEventListener("pointermove", handleMove)
+      window.removeEventListener("pointerup", handleUp)
+    }
+
+    window.addEventListener("pointermove", handleMove)
+    window.addEventListener("pointerup", handleUp)
+  }
+
+  function handleAddTerminal() {
+    setTerminalState((current) => {
+      const tab = createStudioTerminalTab(
+        project,
+        t.studioTerminalTab,
+        current.nextTabSequence
+      )
+
+      return {
+        tabs: [...current.tabs, tab],
+        activeTabId: tab.id,
+        nextTabSequence: current.nextTabSequence + 1,
+      }
+    })
+  }
+
+  function handleCloseTab(tabId: string) {
+    setTerminalState((current) => {
+      if (current.tabs.length <= 1) {
+        return current
+      }
+
+      const closingIndex = current.tabs.findIndex((tab) => tab.id === tabId)
+      const nextTabs = current.tabs.filter((tab) => tab.id !== tabId)
+      const nextActiveTabId =
+        current.activeTabId === tabId
+          ? (nextTabs[Math.max(0, closingIndex - 1)]?.id ??
+            nextTabs[0]?.id ??
+            current.activeTabId)
+          : current.activeTabId
+
+      return {
+        tabs: nextTabs,
+        activeTabId: nextActiveTabId,
+        nextTabSequence: current.nextTabSequence,
+      }
+    })
+  }
+
+  function handleResolvedCwd(tabId: string, resolvedCwd: string) {
+    setTerminalState((current) => ({
+      ...current,
+      tabs: current.tabs.map((tab) => {
+        if (tab.id !== tabId) {
+          return tab
+        }
+
+        const title =
+          tab.cwd === null
+            ? formatTerminalTabTitle(
+                getPathTail(resolvedCwd) || t.studioTerminalTab,
+                tab.sequence
+              )
+            : tab.title
+
+        return {
+          ...tab,
+          resolvedCwd,
+          title,
+        }
+      }),
+    }))
+  }
+
+  return (
+    <div
+      data-testid="studio-terminal-panel"
+      aria-hidden={!open}
+      className={cn(
+        "shrink-0 overflow-hidden border-t bg-background transition-[height,border-color] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
+        open ? "border-border" : "pointer-events-none border-transparent"
+      )}
+      style={{ height: open ? height : 0 }}
+    >
+      <div
+        className={cn(
+          "h-full transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none",
+          open ? "translate-y-0 opacity-100" : "translate-y-5 opacity-0"
+        )}
+      >
+        <div
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label={t.studioTerminalPanelResize}
+          className="h-1 cursor-row-resize bg-transparent hover:bg-primary/25"
+          onPointerDown={handleResizePointerDown}
+        />
+
+        <div className="flex h-8 items-center justify-between px-3">
+          <div className="flex min-w-0 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {tabs.map((tab) => {
+              const isActive = tab.id === activeTab?.id
+              const tabTitle = tab.resolvedCwd ?? tab.cwd ?? t.studioTerminalHome
+
+              return (
+                <div
+                  key={tab.id}
+                  className={cn(
+                    "group flex h-7 min-w-0 max-w-56 items-center rounded-lg text-xs leading-none transition-colors",
+                    isActive
+                      ? "bg-muted text-foreground"
+                      : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                  )}
+                >
+                  <button
+                    type="button"
+                    className="flex h-full min-w-0 flex-1 items-center gap-1.5 px-2 text-left"
+                    title={tabTitle}
+                    aria-current={isActive ? "page" : undefined}
+                    onClick={() =>
+                      setTerminalState((current) => ({
+                        ...current,
+                        activeTabId: tab.id,
+                      }))
+                    }
+                  >
+                    <SquareTerminal
+                      aria-hidden
+                      className="size-3.5 shrink-0 stroke-[2.1]"
+                    />
+                    <span className="truncate">{tab.title}</span>
+                  </button>
+
+                  {tabs.length > 1 ? (
+                    <button
+                      type="button"
+                      className={cn(
+                        "mr-1 grid size-5 shrink-0 place-items-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-background/80 hover:text-foreground group-hover:opacity-75 group-focus-within:opacity-75"
+                      )}
+                      aria-label={t.studioTerminalCloseTab}
+                      title={t.studioTerminalCloseTab}
+                      onClick={() => handleCloseTab(tab.id)}
+                    >
+                      <RiCloseLine aria-hidden className="size-3" />
+                    </button>
+                  ) : null}
+                </div>
+              )
+            })}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              className="size-7 rounded-lg text-muted-foreground hover:text-foreground"
+              aria-label={t.studioTerminalNew}
+              title={t.studioTerminalNew}
+              onClick={handleAddTerminal}
+            >
+              <RiAddLine aria-hidden className="size-4" />
+            </Button>
+          </div>
+
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className="size-7 rounded-lg text-muted-foreground hover:text-foreground"
+            aria-label={t.studioTerminalPanelClose}
+            title={t.studioTerminalPanelClose}
+            onClick={() => onOpenChange(false)}
+          >
+            <RiCloseLine aria-hidden className="size-4" />
+          </Button>
+        </div>
+
+        <div className="relative h-[calc(100%-2.25rem)] min-h-0 bg-background">
+          {tabs.map((tab) => (
+            <StudioTerminalSurface
+              key={tab.id}
+              active={tab.id === activeTab?.id}
+              cwd={tab.cwd}
+              fitEnabled={open && tab.id === activeTab?.id}
+              onResolvedCwd={(resolvedCwd) =>
+                handleResolvedCwd(tab.id, resolvedCwd)
+              }
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function StudioTerminalSurface({
+  active,
+  cwd,
+  fitEnabled,
+  onResolvedCwd,
+}: {
+  active: boolean
+  cwd: string | null
+  fitEnabled: boolean
+  onResolvedCwd: (cwd: string) => void
+}) {
+  const { t } = useI18n()
+  const containerRef = React.useRef<HTMLDivElement | null>(null)
+  const terminalRef = React.useRef<XTermTerminal | null>(null)
+  const fitAddonRef = React.useRef<XTermFitAddon | null>(null)
+  const sessionIdRef = React.useRef<string | null>(null)
+  const onResolvedCwdRef = React.useRef(onResolvedCwd)
+  const fitEnabledRef = React.useRef(fitEnabled)
+
+  React.useEffect(() => {
+    onResolvedCwdRef.current = onResolvedCwd
+  }, [onResolvedCwd])
+
+  React.useEffect(() => {
+    fitEnabledRef.current = fitEnabled
+  }, [fitEnabled])
+
+  const fitAndResize = React.useCallback(() => {
+    const container = containerRef.current
+    const terminal = terminalRef.current
+    const fitAddon = fitAddonRef.current
+
+    if (
+      !fitEnabledRef.current ||
+      !container ||
+      !terminal ||
+      !fitAddon ||
+      container.offsetParent === null ||
+      container.clientWidth < 16 ||
+      container.clientHeight < 16
+    ) {
+      return
+    }
+
+    try {
+      fitAddon.fit()
+    } catch {
+      return
+    }
+
+    const sessionId = sessionIdRef.current
+
+    if (sessionId) {
+      void window.astraflowDesktop?.terminalResize(
+        sessionId,
+        terminal.cols,
+        terminal.rows
+      )
+    }
+  }, [])
+
+  React.useEffect(() => {
+    if (!fitEnabled) {
+      return
+    }
+
+    const frame = requestAnimationFrame(fitAndResize)
+
+    return () => cancelAnimationFrame(frame)
+  }, [fitAndResize, fitEnabled])
+
+  React.useEffect(() => {
+    let disposed = false
+    let removeDataListener: (() => void) | null = null
+    let removeExitListener: (() => void) | null = null
+    let dataSubscription: { dispose: () => void } | null = null
+    let resizeObserver: ResizeObserver | null = null
+
+    async function bootTerminal() {
+      const container = containerRef.current
+
+      if (!container) {
+        return
+      }
+
+      const [{ Terminal }, { FitAddon }] = await Promise.all([
+        import("@xterm/xterm"),
+        import("@xterm/addon-fit"),
+      ])
+
+      if (disposed || !containerRef.current) {
+        return
+      }
+
+      const terminal = new Terminal({
+        cursorBlink: true,
+        convertEol: true,
+        fontFamily:
+          "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+        fontSize: 11,
+        lineHeight: 1.18,
+        scrollback: 10_000,
+        theme: {
+          background: "#ffffff",
+          foreground: "#24292f",
+          cursor: "#24292f",
+          black: "#24292f",
+          blue: "#4f8df7",
+          brightBlack: "#8a9099",
+          brightBlue: "#4f8df7",
+          brightCyan: "#4f8df7",
+          brightGreen: "#2f9e44",
+          brightRed: "#d1242f",
+          brightYellow: "#9a6700",
+          cyan: "#4f8df7",
+          green: "#2f9e44",
+          red: "#d1242f",
+          selectionBackground: "#d9e4ff",
+          yellow: "#9a6700",
+        },
+      })
+      const fitAddon = new FitAddon()
+
+      terminal.loadAddon(fitAddon)
+      terminal.open(container)
+      terminalRef.current = terminal
+      fitAddonRef.current = fitAddon
+
+      fitAndResize()
+
+      requestAnimationFrame(() => {
+        if (disposed) {
+          return
+        }
+
+        fitAndResize()
+      })
+
+      if (!window.astraflowDesktop?.terminalCreate) {
+        terminal.writeln(t.studioTerminalDesktopUnavailable)
+        terminal.write(`\r\n${cwd ?? "~"}\r\n> `)
+        return
+      }
+
+      const created = await window.astraflowDesktop.terminalCreate({
+        cwd,
+        cols: terminal.cols,
+        rows: terminal.rows,
+      })
+
+      if (disposed) {
+        await window.astraflowDesktop.terminalClose(created.id)
+        return
+      }
+
+      sessionIdRef.current = created.id
+      onResolvedCwdRef.current(created.cwd)
+
+      removeDataListener = window.astraflowDesktop.onTerminalData((payload) => {
+        if (payload.id === sessionIdRef.current) {
+          terminal.write(payload.data)
+        }
+      })
+      removeExitListener = window.astraflowDesktop.onTerminalExit((payload) => {
+        if (payload.id === sessionIdRef.current) {
+          terminal.writeln("")
+          terminal.writeln(t.studioTerminalExited(payload.exitCode))
+        }
+      })
+      dataSubscription = terminal.onData((data) => {
+        const sessionId = sessionIdRef.current
+
+        if (sessionId) {
+          void window.astraflowDesktop?.terminalWrite(sessionId, data)
+        }
+      })
+      resizeObserver = new ResizeObserver(() => {
+        fitAndResize()
+      })
+      resizeObserver.observe(container)
+    }
+
+    void bootTerminal()
+
+    return () => {
+      disposed = true
+      const sessionId = sessionIdRef.current
+
+      if (sessionId) {
+        void window.astraflowDesktop?.terminalClose(sessionId)
+      }
+
+      sessionIdRef.current = null
+      removeDataListener?.()
+      removeExitListener?.()
+      dataSubscription?.dispose()
+      resizeObserver?.disconnect()
+      terminalRef.current?.dispose()
+      terminalRef.current = null
+      fitAddonRef.current = null
+    }
+  }, [cwd, fitAndResize, t])
+
+  return (
+    <div
+      className={cn(
+        "absolute inset-0 min-h-0 bg-background px-3 py-1",
+        !active && "hidden"
+      )}
+    >
+      <div
+        ref={containerRef}
+        className="size-full overflow-hidden bg-background font-mono text-[11px]"
+      />
+    </div>
   )
 }
 
@@ -1947,11 +5213,11 @@ function ChatComposerPluginsButton() {
         type="button"
         variant="ghost"
         size="sm"
-        className="h-8 rounded-full px-2.5 text-sm font-medium"
+        className="h-7 rounded-full px-2 text-xs font-medium"
         onClick={() => setOpen(true)}
       >
         <span>{t.studioComposerPlugins}</span>
-        <span className="ml-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-foreground/10 px-1 text-[10px] leading-none font-semibold text-foreground/75 ring-1 ring-foreground/10">
+        <span className="ml-0.5 inline-flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-foreground/10 px-1 text-[9px] leading-none font-semibold text-foreground/75 ring-1 ring-foreground/10">
           {enabledCount}
         </span>
       </Button>
@@ -2016,8 +5282,11 @@ function ChatComposer({
 }: ChatComposerProps) {
   const { t } = useI18n()
   const [isTextareaFocused, setIsTextareaFocused] = React.useState(false)
+  const [composerRef, composerWidth] = useElementWidth<HTMLDivElement>()
   const fileInputRef = React.useRef<HTMLInputElement>(null)
   const showCustomCaret = isTextareaFocused && value.length === 0
+  const iconOnlyControls =
+    composerWidth > 0 && composerWidth < COMPOSER_ICON_ONLY_WIDTH
   const reasoningLabelByValue: Record<ChatReasoningEffort, string> = {
     none: t.studioReasoningNone,
     minimal: t.studioReasoningMinimal,
@@ -2131,6 +5400,7 @@ function ChatComposer({
 
   return (
     <div
+      ref={composerRef}
       data-tour-id="studio-composer"
       className="flex w-full flex-col overflow-hidden rounded-[1.875rem] bg-muted/40 p-0.5 shadow-lg shadow-foreground/5"
     >
@@ -2202,9 +5472,9 @@ function ChatComposer({
           />
         </div>
 
-        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-1.5">
           <div
-            className="flex shrink-0 items-center gap-2"
+            className="flex shrink-0 items-center gap-1.5"
             onClick={(event) => event.stopPropagation()}
           >
             <input
@@ -2223,7 +5493,7 @@ function ChatComposer({
                 variant="ghost"
                 size="icon-sm"
                 disabled={isBusy}
-                className="size-8 rounded-full p-0 [&_svg]:size-5"
+                className="size-7 rounded-full p-0 [&_svg]:size-4"
                 onClick={() => fileInputRef.current?.click()}
               >
                 <RiAddLine aria-hidden />
@@ -2240,12 +5510,23 @@ function ChatComposer({
                 <SelectTrigger
                   data-tour-id="studio-composer-permission"
                   size="sm"
-                  className="h-8 max-w-44 rounded-full border-transparent bg-transparent px-2.5 text-sm shadow-none hover:bg-muted/60 sm:max-w-48"
+                  className={cn(
+                    "h-7 max-w-40 rounded-full border-transparent bg-transparent px-2 text-xs shadow-none hover:bg-muted/60 sm:max-w-44",
+                    iconOnlyControls &&
+                      "w-7 max-w-7 justify-center gap-0 px-0 [&>svg:last-child]:hidden"
+                  )}
                   aria-label={t.studioPermissionMode}
                   title={permissionModeOption.description}
                 >
-                  <PermissionModeIcon aria-hidden className="size-4" />
-                  <span className="truncate">{permissionModeOption.label}</span>
+                  <PermissionModeIcon aria-hidden className="size-3.5" />
+                  <span
+                    className={cn(
+                      "truncate",
+                      iconOnlyControls && "sr-only"
+                    )}
+                  >
+                    {permissionModeOption.label}
+                  </span>
                 </SelectTrigger>
                 <SelectContent position="popper" side="top" align="start">
                   <SelectGroup>
@@ -2279,7 +5560,7 @@ function ChatComposer({
           </div>
 
           <PromptInputActions
-            className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2"
+            className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1.5"
             onClick={(event) => event.stopPropagation()}
           >
             <Select
@@ -2290,12 +5571,18 @@ function ChatComposer({
               <SelectTrigger
                 data-tour-id="studio-composer-runtime"
                 size="sm"
-                className="h-8 max-w-44 rounded-full bg-background px-3 text-sm sm:max-w-52"
+                className={cn(
+                  "h-7 max-w-40 rounded-full bg-background px-2.5 text-xs sm:max-w-48",
+                  iconOnlyControls &&
+                    "w-7 max-w-7 justify-center gap-0 px-0 [&>svg:last-child]:hidden"
+                )}
                 aria-label={t.studioAgentRuntime}
                 title={runtimeDescription}
               >
-                <AgentRuntimeIcon runtimeId={runtimeId} />
-                <span className="truncate">
+                <AgentRuntimeIcon runtimeId={runtimeId} className="size-3.5" />
+                <span
+                  className={cn("truncate", iconOnlyControls && "sr-only")}
+                >
                   {getChatRuntimeLabel(runtimeId, runtimeInfos)}
                 </span>
               </SelectTrigger>
@@ -2338,7 +5625,7 @@ function ChatComposer({
               <SelectTrigger
                 data-tour-id="studio-composer-model"
                 size="sm"
-                className="h-8 max-w-40 rounded-full bg-background px-3 text-sm sm:max-w-48"
+                className="h-7 max-w-36 rounded-full bg-background px-2.5 text-xs sm:max-w-44"
                 aria-label={t.studioChatModel}
                 title={t.studioChatModelDescription}
               >
@@ -2371,7 +5658,11 @@ function ChatComposer({
             >
               <SelectTrigger
                 size="sm"
-                className="h-8 rounded-full bg-background px-3 text-sm"
+                className={cn(
+                  "h-7 rounded-full bg-background px-2.5 text-xs",
+                  iconOnlyControls &&
+                    "w-7 max-w-7 justify-center gap-0 px-0 [&>svg:last-child]:hidden"
+                )}
                 aria-label={t.studioReasoningEffort}
                 title={
                   reasoningOptions.find(
@@ -2379,8 +5670,10 @@ function ChatComposer({
                   )?.description
                 }
               >
-                <RiBrainLine aria-hidden className="size-4" />
-                <span>{reasoningEffortLabel}</span>
+                <RiBrainLine aria-hidden className="size-3.5" />
+                <span className={cn(iconOnlyControls && "sr-only")}>
+                  {reasoningEffortLabel}
+                </span>
               </SelectTrigger>
               <SelectContent position="popper" side="top" align="end">
                 <SelectGroup>
@@ -2403,7 +5696,7 @@ function ChatComposer({
             <Button
               type="button"
               size="icon-sm"
-              className="size-8 rounded-full bg-foreground p-0 text-background hover:bg-foreground/85 [&_svg]:size-4"
+              className="size-7 rounded-full bg-foreground p-0 text-background hover:bg-foreground/85 [&_svg]:size-3.5"
               disabled={!canSubmit && !isBusy}
               aria-label={isBusy ? t.studioStop : t.studioSend}
               onClick={(event) => {
@@ -2425,7 +5718,7 @@ function ChatComposer({
         </div>
       </PromptInput>
 
-      <div className="flex w-full min-w-0 items-center gap-1 px-2 py-1.5 text-sm text-muted-foreground">
+      <div className="flex w-full min-w-0 items-center gap-1 px-2 py-1.5 text-xs text-muted-foreground">
         <Select
           value={selectedProjectValue}
           onValueChange={handleProjectValueChange}
@@ -2434,7 +5727,7 @@ function ChatComposer({
           <SelectTrigger
             data-tour-id="studio-composer-project"
             size="sm"
-            className="h-7 w-fit max-w-56 rounded-lg border-transparent bg-transparent px-2 text-sm shadow-none hover:bg-muted/70"
+            className="h-6 w-fit max-w-52 rounded-lg border-transparent bg-transparent px-2 text-xs shadow-none hover:bg-muted/70"
             aria-label={t.studioLocalProjectSelect}
             title={
               selectedProject
@@ -2442,7 +5735,7 @@ function ChatComposer({
                 : t.studioLocalProjectNoneDescription
             }
           >
-            <FolderGit2 aria-hidden className="size-4" />
+            <FolderGit2 aria-hidden className="size-3.5" />
             <span
               className={cn(
                 "truncate",
@@ -2515,7 +5808,7 @@ function ChatComposer({
           <SelectTrigger
             data-tour-id="studio-composer-environment"
             size="sm"
-            className="h-7 w-fit rounded-lg border-transparent bg-transparent px-2 text-sm shadow-none hover:bg-muted/70"
+            className="h-6 w-fit rounded-lg border-transparent bg-transparent px-2 text-xs shadow-none hover:bg-muted/70"
             aria-label={t.studioProjectEnvironment}
             title={
               runtimeEnvironment === "remote"
@@ -2523,7 +5816,7 @@ function ChatComposer({
                 : t.studioLocalProjectLocalDescription
             }
           >
-            <Globe aria-hidden className="size-4" />
+            <Globe aria-hidden className="size-3.5" />
             <span>
               {runtimeEnvironment === "remote"
                 ? t.studioLocalProjectRemote

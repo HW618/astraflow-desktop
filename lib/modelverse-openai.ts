@@ -58,6 +58,7 @@ Communication style:
 - For simple questions, answer directly.
 - For implementation plans, give the key steps and tradeoffs.
 - For completed work, summarize what changed and what remains.
+- When referencing URLs, local files, saved HTML previews, generated images, screenshots, or other viewable artifacts, format them as Markdown links or images using the exact URL or absolute local path. AstraFlow opens those targets in the right workspace by default.
 - Do not use emojis unless the user asks.`
 
 export function getStoredModelverseApiKey() {

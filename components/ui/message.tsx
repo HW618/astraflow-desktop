@@ -55,6 +55,7 @@ const MessageContent = ({
   children,
   markdown = false,
   className,
+  openLinksInWorkspace,
   ...props
 }: MessageContentProps) => {
   const classNames = cn(
@@ -63,7 +64,11 @@ const MessageContent = ({
   )
 
   return markdown ? (
-    <Markdown className={classNames} {...props}>
+    <Markdown
+      className={classNames}
+      openLinksInWorkspace={openLinksInWorkspace ?? true}
+      {...props}
+    >
       {children as string}
     </Markdown>
   ) : (

@@ -6,20 +6,32 @@ const {
   ipcMain,
   safeStorage,
   shell,
+  session,
   utilityProcess,
 } = require("electron")
 const {
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } = require("node:fs")
 const { execFile, spawn } = require("node:child_process")
 const { randomBytes } = require("node:crypto")
 const { get } = require("node:http")
 const { createServer } = require("node:net")
-const { join, normalize, resolve } = require("node:path")
+const { homedir } = require("node:os")
+const {
+  basename,
+  dirname,
+  extname,
+  join,
+  normalize,
+  resolve,
+} = require("node:path")
+const pty = require("node-pty")
 const { parseDn } = require("builder-util-runtime")
 
 const APP_NAME = "AstraFlow"
@@ -29,6 +41,8 @@ const SMOKE_TIMEOUT_MS = 30_000
 const CODEBOX_GITHUB_OAUTH_CLIENT_ID = "Ov23li4imZRAMlx9enez"
 const PENDING_UPDATE_INSTALLERS_FILE = "pending-update-installers.json"
 const SECRET_KEY_FILE = "studio-secret.key"
+const SIDE_PANEL_TEXT_FILE_LIMIT_BYTES = 2 * 1024 * 1024
+const SIDE_PANEL_DATA_URL_FILE_LIMIT_BYTES = 50 * 1024 * 1024
 const WINDOWS_SIGNATURE_CHAIN_ERROR_PATTERN =
   /certificate chain|trusted root|0x800b010a|cert_e_chaining|证书链|受信任的根/i
 const WINDOWS_SIGNATURE_RECOVERABLE_STATUSES = new Set([1, 4])
@@ -43,6 +57,7 @@ let isQuitting = false
 let lastServerOutput = ""
 let autoUpdater = null
 let updateInstallPromise = null
+const terminalSessions = new Map()
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 
@@ -459,6 +474,15 @@ function attachNavigationGuards(window) {
     event.preventDefault()
     void openExternalUrl(url)
   })
+
+  window.webContents.on("before-input-event", (event, input) => {
+    const key = String(input.key ?? "").toLowerCase()
+
+    if ((input.meta || input.control) && key === "w") {
+      event.preventDefault()
+      window.webContents.send("astraflow:close-active-tab")
+    }
+  })
 }
 
 function createMainWindow(url, { show = true } = {}) {
@@ -518,6 +542,271 @@ function createMainWindow(url, { show = true } = {}) {
 
   void window.loadURL(url)
   return window
+}
+
+function getDefaultShell() {
+  if (process.platform === "win32") {
+    return process.env.ComSpec || "powershell.exe"
+  }
+
+  return process.env.SHELL || "/bin/zsh"
+}
+
+function getDefaultShellArgs() {
+  if (process.platform === "win32") {
+    return []
+  }
+
+  return ["-l"]
+}
+
+function resolveTerminalCwd(cwd) {
+  if (typeof cwd !== "string" || !cwd.trim()) {
+    return homedir()
+  }
+
+  try {
+    const resolved = resolve(cwd)
+
+    if (existsSync(resolved) && statSync(resolved).isDirectory()) {
+      return resolved
+    }
+  } catch {
+    // Fall back to the user's home directory for malformed or inaccessible cwd.
+  }
+
+  return homedir()
+}
+
+function createTerminalSession(event, options = {}) {
+  const id = randomBytes(12).toString("hex")
+  const cols = Math.max(20, Math.min(400, Number(options.cols) || 80))
+  const rows = Math.max(6, Math.min(160, Number(options.rows) || 24))
+  const cwd = resolveTerminalCwd(options.cwd)
+  const shellPath = getDefaultShell()
+  const shellArgs = getDefaultShellArgs()
+  const webContents = event.sender
+
+  const terminal = pty.spawn(shellPath, shellArgs, {
+    name: "xterm-256color",
+    cols,
+    rows,
+    cwd,
+    env: sanitizeProcessEnv({
+      ...process.env,
+      TERM: "xterm-256color",
+      COLORTERM: "truecolor",
+      ASTRAFLOW_TERMINAL: "1",
+    }),
+  })
+
+  terminalSessions.set(id, {
+    terminal,
+    webContents,
+  })
+
+  terminal.onData((data) => {
+    if (!webContents.isDestroyed()) {
+      webContents.send("astraflow:terminal-data", { id, data })
+    }
+  })
+
+  terminal.onExit(({ exitCode, signal }) => {
+    terminalSessions.delete(id)
+
+    if (!webContents.isDestroyed()) {
+      webContents.send("astraflow:terminal-exit", { id, exitCode, signal })
+    }
+  })
+
+  return { id, cwd }
+}
+
+function closeTerminalSession(id) {
+  const session = terminalSessions.get(id)
+
+  if (!session) {
+    return false
+  }
+
+  terminalSessions.delete(id)
+  session.terminal.kill()
+  return true
+}
+
+function closeAllTerminalSessions() {
+  for (const id of terminalSessions.keys()) {
+    closeTerminalSession(id)
+  }
+}
+
+function getDefaultSidePanelDirectory() {
+  const downloadsPath = join(homedir(), "Downloads")
+
+  try {
+    if (existsSync(downloadsPath) && statSync(downloadsPath).isDirectory()) {
+      return downloadsPath
+    }
+  } catch {
+    // Fall back to home below.
+  }
+
+  return homedir()
+}
+
+function resolveSidePanelDirectory(directory) {
+  if (typeof directory !== "string" || !directory.trim()) {
+    return getDefaultSidePanelDirectory()
+  }
+
+  try {
+    const resolved = resolve(directory)
+
+    if (existsSync(resolved) && statSync(resolved).isDirectory()) {
+      return resolved
+    }
+  } catch {
+    // Fall back to the default directory for malformed or inaccessible paths.
+  }
+
+  return getDefaultSidePanelDirectory()
+}
+
+function mapSidePanelDirectoryEntry(parentPath, entry) {
+  const path = join(parentPath, entry.name)
+
+  try {
+    const stats = statSync(path)
+
+    return {
+      name: entry.name,
+      path,
+      kind: stats.isDirectory() ? "directory" : "file",
+      extension: stats.isDirectory()
+        ? ""
+        : extname(entry.name).replace(/^\./, "").toLowerCase(),
+      size: stats.isDirectory() ? null : stats.size,
+      modifiedAt: stats.mtimeMs,
+    }
+  } catch {
+    return null
+  }
+}
+
+function listSidePanelDirectory(directory) {
+  const cwd = resolveSidePanelDirectory(directory)
+  const parent = dirname(cwd)
+  const entries = readdirSync(cwd, { withFileTypes: true })
+    .filter((entry) => !entry.name.startsWith("."))
+    .map((entry) => mapSidePanelDirectoryEntry(cwd, entry))
+    .filter(Boolean)
+    .sort((left, right) => {
+      if (left.kind !== right.kind) {
+        return left.kind === "directory" ? -1 : 1
+      }
+
+      return left.name.localeCompare(right.name, undefined, {
+        numeric: true,
+        sensitivity: "base",
+      })
+    })
+
+  return {
+    cwd,
+    name: basename(cwd) || cwd,
+    parent: parent !== cwd ? parent : null,
+    entries,
+  }
+}
+
+function readSidePanelTextFile(filePath) {
+  if (typeof filePath !== "string" || !filePath.trim()) {
+    throw new Error("File path is required.")
+  }
+
+  const resolved = resolve(filePath)
+  const stats = statSync(resolved)
+
+  if (!stats.isFile()) {
+    throw new Error("Selected path is not a file.")
+  }
+
+  const bytes = readFileSync(resolved)
+  const truncated = bytes.length > SIDE_PANEL_TEXT_FILE_LIMIT_BYTES
+  const content = bytes
+    .subarray(0, SIDE_PANEL_TEXT_FILE_LIMIT_BYTES)
+    .toString("utf8")
+
+  return {
+    path: resolved,
+    name: basename(resolved),
+    directory: dirname(resolved),
+    size: stats.size,
+    modifiedAt: stats.mtimeMs,
+    content,
+    truncated,
+  }
+}
+
+function getSidePanelMimeType(filePath) {
+  const extension = extname(filePath).replace(/^\./, "").toLowerCase()
+  const mimeTypes = {
+    avif: "image/avif",
+    gif: "image/gif",
+    ico: "image/x-icon",
+    jpeg: "image/jpeg",
+    jpg: "image/jpeg",
+    png: "image/png",
+    svg: "image/svg+xml",
+    webp: "image/webp",
+  }
+
+  return mimeTypes[extension] ?? "application/octet-stream"
+}
+
+function readSidePanelDataUrlFile(filePath) {
+  if (typeof filePath !== "string" || !filePath.trim()) {
+    throw new Error("File path is required.")
+  }
+
+  const resolved = resolve(filePath)
+  const stats = statSync(resolved)
+
+  if (!stats.isFile()) {
+    throw new Error("Selected path is not a file.")
+  }
+
+  if (stats.size > SIDE_PANEL_DATA_URL_FILE_LIMIT_BYTES) {
+    throw new Error("Selected file is too large to preview.")
+  }
+
+  const mimeType = getSidePanelMimeType(resolved)
+  const data = readFileSync(resolved).toString("base64")
+
+  return {
+    path: resolved,
+    name: basename(resolved),
+    directory: dirname(resolved),
+    size: stats.size,
+    modifiedAt: stats.mtimeMs,
+    mimeType,
+    dataUrl: `data:${mimeType};base64,${data}`,
+  }
+}
+
+function showSidePanelPathInFolder(path) {
+  if (typeof path !== "string" || !path.trim()) {
+    return false
+  }
+
+  shell.showItemInFolder(resolve(path))
+  return true
+}
+
+async function clearSidePanelBrowserData() {
+  await session.defaultSession.clearStorageData()
+  await session.defaultSession.clearCache()
+  return true
 }
 
 function preparePowerShellExec(command, timeout = 20_000) {
@@ -879,6 +1168,57 @@ function setupAppIpc() {
 
     return result.filePaths[0] ?? null
   })
+  ipcMain.handle("astraflow:side-panel-list-directory", (_event, directory) =>
+    listSidePanelDirectory(directory)
+  )
+  ipcMain.handle("astraflow:side-panel-read-text-file", (_event, filePath) =>
+    readSidePanelTextFile(filePath)
+  )
+  ipcMain.handle(
+    "astraflow:side-panel-read-file-data-url",
+    (_event, filePath) => readSidePanelDataUrlFile(filePath)
+  )
+  ipcMain.handle("astraflow:side-panel-show-item", (_event, path) =>
+    showSidePanelPathInFolder(path)
+  )
+  ipcMain.handle("astraflow:browser-clear-data", async () =>
+    clearSidePanelBrowserData()
+  )
+  ipcMain.handle("astraflow:terminal-create", (event, options) =>
+    createTerminalSession(event, options)
+  )
+  ipcMain.handle("astraflow:terminal-write", (_event, id, data) => {
+    const session = terminalSessions.get(id)
+
+    if (!session || typeof data !== "string") {
+      return false
+    }
+
+    session.terminal.write(data)
+    return true
+  })
+  ipcMain.handle("astraflow:terminal-resize", (_event, id, cols, rows) => {
+    const session = terminalSessions.get(id)
+    const nextCols = Number(cols)
+    const nextRows = Number(rows)
+
+    if (
+      !session ||
+      !Number.isFinite(nextCols) ||
+      !Number.isFinite(nextRows)
+    ) {
+      return false
+    }
+
+    session.terminal.resize(
+      Math.max(20, Math.min(400, Math.round(nextCols))),
+      Math.max(6, Math.min(160, Math.round(nextRows)))
+    )
+    return true
+  })
+  ipcMain.handle("astraflow:terminal-close", (_event, id) =>
+    closeTerminalSession(id)
+  )
 }
 
 function stopNextServer() {
@@ -966,6 +1306,7 @@ app.on("second-instance", () => {
 
 app.on("before-quit", () => {
   isQuitting = true
+  closeAllTerminalSessions()
   stopNextServer()
 })
 
