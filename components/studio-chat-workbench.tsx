@@ -14,6 +14,7 @@ import {
   RiExternalLinkLine,
   RiFileCopyLine,
   RiFileTextLine,
+  RiInformationLine,
   RiRefreshLine,
   RiSearchLine,
   RiStopFill,
@@ -76,6 +77,11 @@ import {
 import { Shimmer } from "@/components/ai-elements/shimmer"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { useI18n } from "@/components/i18n-provider"
 import { SkillsMarketPage } from "@/components/skills-market-page"
 import {
@@ -1702,6 +1708,103 @@ type ChatComposerProps = {
   isBusy: boolean
 }
 
+function OptionInfoTooltip({ description }: { description: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          aria-label={description}
+          className="ml-auto mr-4 inline-flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground/65 transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          onClick={(event) => event.stopPropagation()}
+          onPointerDown={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+          }}
+          tabIndex={0}
+        >
+          <RiInformationLine aria-hidden className="size-3.5" />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent
+        side="right"
+        align="center"
+        sideOffset={8}
+        className="max-w-56 whitespace-normal text-left leading-5"
+      >
+        {description}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+function SelectOptionRow({
+  description,
+  icon,
+  label,
+  meta,
+}: {
+  description: string
+  icon?: React.ReactNode
+  label: string
+  meta?: string
+}) {
+  return (
+    <span className="flex w-full min-w-0 items-center gap-2">
+      {icon}
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {meta ? (
+        <span className="max-w-40 truncate text-xs font-normal text-muted-foreground">
+          {meta}
+        </span>
+      ) : null}
+      <OptionInfoTooltip description={description} />
+    </span>
+  )
+}
+
+function getRuntimeGuideDescription(
+  runtimeId: string,
+  fallback: string,
+  t: ReturnType<typeof useI18n>["t"]
+) {
+  switch (runtimeId) {
+    case DEFAULT_CHAT_RUNTIME_ID:
+      return t.studioAgentRuntimeAstraflowDescription
+    case "codex":
+      return t.studioAgentRuntimeCodexDescription
+    case "claude-code":
+      return t.studioAgentRuntimeClaudeCodeDescription
+    case "opencode":
+      return t.studioAgentRuntimeOpenCodeDescription
+    default:
+      return fallback || t.studioAgentRuntimeDescription
+  }
+}
+
+function getReasoningEffortDescription(
+  effort: ChatReasoningEffort,
+  t: ReturnType<typeof useI18n>["t"]
+) {
+  switch (effort) {
+    case "none":
+      return t.studioReasoningNoneDescription
+    case "enabled":
+      return t.studioReasoningEnabledDescription
+    case "minimal":
+      return t.studioReasoningMinimalDescription
+    case "low":
+      return t.studioReasoningLowDescription
+    case "medium":
+      return t.studioReasoningMediumDescription
+    case "high":
+      return t.studioReasoningHighDescription
+    case "xhigh":
+      return t.studioReasoningXHighDescription
+    case "max":
+      return t.studioReasoningMaxDescription
+  }
+}
+
 function FileAttachmentChip({
   attachment,
   compact = false,
@@ -1886,10 +1989,26 @@ function ChatComposer({
     value: StudioPermissionMode
     label: string
     icon: typeof Zap
+    description: string
   }> = [
-    { value: "auto", label: permissionLabelByValue.auto, icon: Zap },
-    { value: "ask", label: permissionLabelByValue.ask, icon: Hand },
-    { value: "readonly", label: permissionLabelByValue.readonly, icon: Eye },
+    {
+      value: "auto",
+      label: permissionLabelByValue.auto,
+      icon: Zap,
+      description: t.studioPermissionAutoDescription,
+    },
+    {
+      value: "ask",
+      label: permissionLabelByValue.ask,
+      icon: Hand,
+      description: t.studioPermissionAskDescription,
+    },
+    {
+      value: "readonly",
+      label: permissionLabelByValue.readonly,
+      icon: Eye,
+      description: t.studioPermissionReadonlyDescription,
+    },
   ]
   const permissionModeOption =
     permissionOptions.find((option) => option.value === permissionMode) ??
@@ -1902,6 +2021,7 @@ function ChatComposer({
   const reasoningOptions = getChatReasoningEfforts(model).map((effort) => ({
     value: effort,
     label: reasoningLabelByValue[effort],
+    description: getReasoningEffortDescription(effort, t),
   }))
   const reasoningEffortLabel =
     reasoningOptions.find((option) => option.value === resolvedReasoningEffort)
@@ -1920,6 +2040,11 @@ function ChatComposer({
   // The AstraFlow Agent can run in the remote sandbox or on this machine;
   // other runtimes (Codex, Claude Code, ...) always run locally.
   const runtimeEnvironment = isAstraflowRuntime ? environment : "local"
+  const runtimeDescription = getRuntimeGuideDescription(
+    runtimeId,
+    selectedRuntimeInfo.description,
+    t
+  )
 
   function handleEnvironmentChange(nextValue: string) {
     if (nextValue === runtimeEnvironment) {
@@ -2065,6 +2190,7 @@ function ChatComposer({
                   size="sm"
                   className="h-8 max-w-44 rounded-full border-transparent bg-transparent px-2.5 text-sm shadow-none hover:bg-muted/60 sm:max-w-48"
                   aria-label={t.studioPermissionMode}
+                  title={permissionModeOption.description}
                 >
                   <PermissionModeIcon aria-hidden className="size-4" />
                   <span className="truncate">{permissionModeOption.label}</span>
@@ -2075,14 +2201,21 @@ function ChatComposer({
                       const Icon = option.icon
 
                       return (
-                        <SelectItem key={option.value} value={option.value}>
-                          <span className="flex min-w-0 items-center gap-2">
-                            <Icon
-                              aria-hidden
-                              className="size-4 text-muted-foreground"
-                            />
-                            <span className="truncate">{option.label}</span>
-                          </span>
+                        <SelectItem
+                          key={option.value}
+                          value={option.value}
+                          className="pr-10"
+                        >
+                          <SelectOptionRow
+                            description={option.description}
+                            icon={
+                              <Icon
+                                aria-hidden
+                                className="size-4 text-muted-foreground"
+                              />
+                            }
+                            label={option.label}
+                          />
                         </SelectItem>
                       )
                     })}
@@ -2106,7 +2239,7 @@ function ChatComposer({
                 size="sm"
                 className="h-8 max-w-44 rounded-full bg-background px-3 text-sm sm:max-w-52"
                 aria-label={t.studioAgentRuntime}
-                title={selectedRuntimeInfo.description || t.studioAgentRuntime}
+                title={runtimeDescription}
               >
                 <AgentRuntimeIcon runtimeId={runtimeId} />
                 <span className="truncate">
@@ -2120,25 +2253,22 @@ function ChatComposer({
                       key={runtime.id}
                       value={runtime.id}
                       textValue={runtime.label}
-                      title={runtime.description || undefined}
-                      className="items-start"
+                      title={getRuntimeGuideDescription(
+                        runtime.id,
+                        runtime.description,
+                        t
+                      )}
+                      className="pr-10"
                     >
-                      <span className="flex min-w-0 items-start gap-2">
-                        <AgentRuntimeIcon
-                          runtimeId={runtime.id}
-                          className="mt-0.5"
-                        />
-                        <span className="flex min-w-0 flex-col items-start gap-0.5">
-                          <span className="max-w-64 truncate">
-                            {runtime.label}
-                          </span>
-                          {runtime.description ? (
-                            <span className="max-w-64 truncate text-xs font-normal text-muted-foreground">
-                              {runtime.description}
-                            </span>
-                          ) : null}
-                        </span>
-                      </span>
+                      <SelectOptionRow
+                        description={getRuntimeGuideDescription(
+                          runtime.id,
+                          runtime.description,
+                          t
+                        )}
+                        icon={<AgentRuntimeIcon runtimeId={runtime.id} />}
+                        label={runtime.label}
+                      />
                     </SelectItem>
                   ))}
                 </SelectGroup>
@@ -2156,14 +2286,22 @@ function ChatComposer({
                 size="sm"
                 className="h-8 max-w-40 rounded-full bg-background px-3 text-sm sm:max-w-48"
                 aria-label={t.studioChatModel}
+                title={t.studioChatModelDescription}
               >
                 <span className="truncate">{getChatModelLabel(model)}</span>
               </SelectTrigger>
               <SelectContent position="popper" side="top" align="end">
                 <SelectGroup>
                   {CHAT_MODEL_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
+                    <SelectItem
+                      key={option.value}
+                      value={option.value}
+                      className="pr-10"
+                    >
+                      <SelectOptionRow
+                        description={t.studioChatModelDescription}
+                        label={option.label}
+                      />
                     </SelectItem>
                   ))}
                 </SelectGroup>
@@ -2181,6 +2319,11 @@ function ChatComposer({
                 size="sm"
                 className="h-8 rounded-full bg-background px-3 text-sm"
                 aria-label={t.studioReasoningEffort}
+                title={
+                  reasoningOptions.find(
+                    (option) => option.value === resolvedReasoningEffort
+                  )?.description
+                }
               >
                 <RiBrainLine aria-hidden className="size-4" />
                 <span>{reasoningEffortLabel}</span>
@@ -2188,8 +2331,15 @@ function ChatComposer({
               <SelectContent position="popper" side="top" align="end">
                 <SelectGroup>
                   {reasoningOptions.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
+                    <SelectItem
+                      key={option.value}
+                      value={option.value}
+                      className="pr-10"
+                    >
+                      <SelectOptionRow
+                        description={option.description}
+                        label={option.label}
+                      />
                     </SelectItem>
                   ))}
                 </SelectGroup>
@@ -2231,7 +2381,11 @@ function ChatComposer({
             size="sm"
             className="h-7 w-fit max-w-56 rounded-lg border-transparent bg-transparent px-2 text-sm shadow-none hover:bg-muted/70"
             aria-label={t.studioLocalProjectSelect}
-            title={selectedProject?.path || t.studioLocalProjectSelect}
+            title={
+              selectedProject
+                ? t.studioLocalProjectBoundDescription(selectedProject.path)
+                : t.studioLocalProjectNoneDescription
+            }
           >
             <FolderGit2 aria-hidden className="size-4" />
             <span
@@ -2247,8 +2401,17 @@ function ChatComposer({
           </SelectTrigger>
           <SelectContent position="popper" side="top" align="start">
             <SelectGroup>
-              <SelectItem value={PROJECT_NONE_VALUE}>
-                {t.studioLocalProjectNone}
+              <SelectItem value={PROJECT_NONE_VALUE} className="pr-10">
+                <SelectOptionRow
+                  description={t.studioLocalProjectNoneDescription}
+                  icon={
+                    <FolderGit2
+                      aria-hidden
+                      className="size-4 text-muted-foreground"
+                    />
+                  }
+                  label={t.studioLocalProjectNone}
+                />
               </SelectItem>
               {localProjects.length > 0 ? (
                 localProjects.map((project) => (
@@ -2257,30 +2420,27 @@ function ChatComposer({
                     value={project.id}
                     textValue={project.name}
                     title={project.path}
-                    className="items-start"
+                    className="pr-10"
                   >
-                    <span className="flex min-w-0 items-start gap-2">
-                      <FolderGit2
-                        aria-hidden
-                        className="mt-0.5 size-4 text-muted-foreground"
-                      />
-                      <span className="flex min-w-0 flex-col items-start gap-0.5">
-                        <span className="max-w-64 truncate">
-                          {project.name}
-                        </span>
-                        <span className="max-w-64 truncate text-xs font-normal text-muted-foreground">
-                          {[
-                            t.studioLocalProjectLocal,
-                            project.git.branch,
-                            project.git.isDirty
-                              ? t.studioLocalProjectDirty
-                              : null,
-                          ]
-                            .filter(Boolean)
-                            .join(" · ")}
-                        </span>
-                      </span>
-                    </span>
+                    <SelectOptionRow
+                      description={t.studioLocalProjectBoundDescription(
+                        project.path
+                      )}
+                      icon={
+                        <FolderGit2
+                          aria-hidden
+                          className="size-4 text-muted-foreground"
+                        />
+                      }
+                      label={project.name}
+                      meta={[
+                        t.studioLocalProjectLocal,
+                        project.git.branch,
+                        project.git.isDirty ? t.studioLocalProjectDirty : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    />
                   </SelectItem>
                 ))
               ) : (
@@ -2301,6 +2461,11 @@ function ChatComposer({
             size="sm"
             className="h-7 w-fit rounded-lg border-transparent bg-transparent px-2 text-sm shadow-none hover:bg-muted/70"
             aria-label={t.studioProjectEnvironment}
+            title={
+              runtimeEnvironment === "remote"
+                ? t.studioLocalProjectRemoteDescription
+                : t.studioLocalProjectLocalDescription
+            }
           >
             <Globe aria-hidden className="size-4" />
             <span>
@@ -2311,11 +2476,37 @@ function ChatComposer({
           </SelectTrigger>
           <SelectContent position="popper" side="top" align="start">
             <SelectGroup>
-              <SelectItem value="remote" disabled={!hasAstraflowRuntime}>
-                {t.studioLocalProjectRemote}
+              <SelectItem
+                value="remote"
+                disabled={!hasAstraflowRuntime}
+                className="pr-10"
+              >
+                <SelectOptionRow
+                  description={t.studioLocalProjectRemoteDescription}
+                  icon={
+                    <Globe
+                      aria-hidden
+                      className="size-4 text-muted-foreground"
+                    />
+                  }
+                  label={t.studioLocalProjectRemote}
+                />
               </SelectItem>
-              <SelectItem value="local" disabled={!isAstraflowRuntime}>
-                {t.studioLocalProjectLocal}
+              <SelectItem
+                value="local"
+                disabled={!isAstraflowRuntime}
+                className="pr-10"
+              >
+                <SelectOptionRow
+                  description={t.studioLocalProjectLocalDescription}
+                  icon={
+                    <Globe
+                      aria-hidden
+                      className="size-4 text-muted-foreground"
+                    />
+                  }
+                  label={t.studioLocalProjectLocal}
+                />
               </SelectItem>
             </SelectGroup>
           </SelectContent>

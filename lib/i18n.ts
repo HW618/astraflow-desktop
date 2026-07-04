@@ -443,11 +443,28 @@ const en = {
     }
   },
   studioChatModel: "Model",
+  studioChatModelDescription:
+    "Model selection applies to AstraFlow Agent. Codex, Claude Code, and OpenCode use their own local CLI configuration.",
   studioAgentRuntime: "Agent",
+  studioAgentRuntimeDescription: "Run the conversation with this agent.",
+  studioAgentRuntimeAstraflowDescription:
+    "Built-in AstraFlow agent with ModelVerse models, skills, MCP tools, and local or remote sandbox execution.",
+  studioAgentRuntimeCodexDescription:
+    "Runs your local Codex through ACP and uses the local Codex login and ~/.codex configuration.",
+  studioAgentRuntimeClaudeCodeDescription:
+    "Runs your local Claude Code through ACP and uses the local Claude Code login and settings.",
+  studioAgentRuntimeOpenCodeDescription:
+    "Runs your local OpenCode through ACP and uses the local OpenCode configuration.",
   studioPermissionMode: "Permissions",
   studioPermissionAuto: "Auto allow",
+  studioPermissionAutoDescription:
+    "Allow retrieval-style tools automatically and ask before commands, edits, or other risky actions.",
   studioPermissionAsk: "Ask first",
+  studioPermissionAskDescription:
+    "Ask before tools that can run commands, edit files, or change local state.",
   studioPermissionReadonly: "Read only",
+  studioPermissionReadonlyDescription:
+    "Block mutating tools and keep the agent limited to read-only help.",
   studioLocalProjects: "Projects",
   studioLocalProjectAdd: "Add project",
   studioLocalProjectAddTitle: "Add local project",
@@ -478,8 +495,16 @@ const en = {
   studioLocalProjectNoSessions: "No conversations yet",
   studioLocalProjectSelect: "Choose project",
   studioLocalProjectNone: "Do not use project",
+  studioLocalProjectNoneDescription:
+    "Do not bind a local folder to this chat. Local runs use their default workspace context.",
+  studioLocalProjectBoundDescription: (path: string) =>
+    `Use ${path} as the working project for this chat.`,
   studioLocalProjectLocal: "Local",
+  studioLocalProjectLocalDescription:
+    "Run on this machine. AstraFlow Agent uses the selected project or default local workspace; external agents use their own CLI config.",
   studioLocalProjectRemote: "Remote",
+  studioLocalProjectRemoteDescription:
+    "Run AstraFlow Agent in the remote sandbox. Selecting this switches to AstraFlow Agent when needed.",
   studioProjectEnvironment: "Environment",
   studioLocalProjectDirty: "dirty",
   studioLocalProjectBindFailed: "Failed to update project.",
@@ -487,13 +512,29 @@ const en = {
   studioLocalProjectEmpty: "No local projects",
   studioReasoningEffort: "Thinking mode",
   studioReasoningNone: "No thinking",
+  studioReasoningNoneDescription:
+    "Skip extra reasoning for faster, simpler responses.",
   studioReasoningEnabled: "Thinking",
+  studioReasoningEnabledDescription:
+    "Use the model's default reasoning behavior when the selected model supports it.",
   studioReasoningMinimal: "Minimal",
+  studioReasoningMinimalDescription:
+    "Use the smallest reasoning budget for quick lightweight tasks.",
   studioReasoningLow: "Low",
+  studioReasoningLowDescription:
+    "Use a small reasoning budget for straightforward tasks.",
   studioReasoningMedium: "Medium",
+  studioReasoningMediumDescription:
+    "Balance speed and reasoning depth for normal work.",
   studioReasoningHigh: "High",
+  studioReasoningHighDescription:
+    "Spend more reasoning on complex planning, coding, or debugging.",
   studioReasoningXHigh: "XHigh",
+  studioReasoningXHighDescription:
+    "Use a very large reasoning budget for difficult multi-step work.",
   studioReasoningMax: "Max",
+  studioReasoningMaxDescription:
+    "Use the largest available reasoning budget for the hardest tasks.",
   studioPromptPlaceholder: "Ask anything",
   studioComposerPlugins: "Plugins",
   studioComposerPluginsTitle: "Chat plugins",
@@ -1216,11 +1257,28 @@ const zh: Dictionary = {
     }
   },
   studioChatModel: "模型",
+  studioChatModelDescription:
+    "模型选择会用于 AstraFlow Agent；Codex、Claude Code、OpenCode 使用各自本机 CLI 配置。",
   studioAgentRuntime: "智能体",
+  studioAgentRuntimeDescription: "使用这个智能体运行当前对话。",
+  studioAgentRuntimeAstraflowDescription:
+    "AstraFlow 内置智能体，使用 ModelVerse 模型，支持技能、MCP 工具，以及本地或远程沙箱执行。",
+  studioAgentRuntimeCodexDescription:
+    "通过 ACP 调用本机 Codex，使用本机 Codex 登录状态和 ~/.codex 配置。",
+  studioAgentRuntimeClaudeCodeDescription:
+    "通过 ACP 调用本机 Claude Code，使用本机 Claude Code 登录状态和配置。",
+  studioAgentRuntimeOpenCodeDescription:
+    "通过 ACP 调用本机 OpenCode，使用本机 OpenCode 配置。",
   studioPermissionMode: "权限",
   studioPermissionAuto: "自动允许",
+  studioPermissionAutoDescription:
+    "自动允许读取、搜索等检索类工具；命令执行、文件修改等高风险操作仍会请求批准。",
   studioPermissionAsk: "请求批准",
+  studioPermissionAskDescription:
+    "命令执行、文件修改或会改变本机状态的工具调用前都会先询问。",
   studioPermissionReadonly: "只读",
+  studioPermissionReadonlyDescription:
+    "阻止会修改状态的工具，让智能体只进行只读辅助。",
   studioLocalProjects: "项目",
   studioLocalProjectAdd: "添加项目",
   studioLocalProjectAddTitle: "添加本地项目",
@@ -1249,8 +1307,16 @@ const zh: Dictionary = {
   studioLocalProjectNoSessions: "暂无对话",
   studioLocalProjectSelect: "选择项目",
   studioLocalProjectNone: "不使用项目",
+  studioLocalProjectNoneDescription:
+    "不把本地目录绑定到这次对话。本地运行会使用默认工作区上下文。",
+  studioLocalProjectBoundDescription: (path: string) =>
+    `将 ${path} 作为这次对话的工作项目。`,
   studioLocalProjectLocal: "本地",
+  studioLocalProjectLocalDescription:
+    "在这台机器上运行。AstraFlow Agent 使用所选项目或默认本地工作区；外部智能体使用自己的 CLI 配置。",
   studioLocalProjectRemote: "远程",
+  studioLocalProjectRemoteDescription:
+    "在远程沙箱中运行 AstraFlow Agent。需要时会自动切换到 AstraFlow Agent。",
   studioProjectEnvironment: "环境",
   studioLocalProjectDirty: "有改动",
   studioLocalProjectBindFailed: "更新项目失败。",
@@ -1258,13 +1324,28 @@ const zh: Dictionary = {
   studioLocalProjectEmpty: "暂无本地项目",
   studioReasoningEffort: "思考档位",
   studioReasoningNone: "不思考",
+  studioReasoningNoneDescription: "跳过额外推理，更快返回简单结果。",
   studioReasoningEnabled: "思考",
+  studioReasoningEnabledDescription:
+    "在模型支持时使用默认推理行为。",
   studioReasoningMinimal: "极低",
+  studioReasoningMinimalDescription:
+    "使用最小推理预算，适合轻量快速任务。",
   studioReasoningLow: "低",
+  studioReasoningLowDescription:
+    "使用较小推理预算，适合直接明确的任务。",
   studioReasoningMedium: "中",
+  studioReasoningMediumDescription:
+    "在速度和推理深度之间保持平衡，适合日常工作。",
   studioReasoningHigh: "高",
+  studioReasoningHighDescription:
+    "投入更多推理，适合复杂规划、编码或调试。",
   studioReasoningXHigh: "超高",
+  studioReasoningXHighDescription:
+    "使用很高推理预算，适合困难的多步骤任务。",
   studioReasoningMax: "最大",
+  studioReasoningMaxDescription:
+    "使用当前可用的最大推理预算，适合最困难的任务。",
   studioPromptPlaceholder: "有问题，尽管问",
   studioComposerPlugins: "插件",
   studioComposerPluginsTitle: "聊天插件",
