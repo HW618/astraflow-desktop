@@ -85,6 +85,7 @@ import {
   type ChatReasoningEffort,
   type SupportedChatModel,
 } from "@/lib/chat-models"
+import type { AgentRuntimeInfo } from "@/lib/agent/runtime"
 import {
   getMcpToolDisplayName,
   isMcpToolName,
@@ -150,9 +151,23 @@ type ApiResponse<T> =
     }
 
 const CHAT_MODEL_STORAGE_KEY = "astraflow:chat-model"
+const CHAT_RUNTIME_STORAGE_KEY = "astraflow:chat-runtime"
 const CHAT_REASONING_EFFORT_STORAGE_KEY = "astraflow:chat-reasoning-effort"
+const DEFAULT_CHAT_RUNTIME_ID = "langchain"
+
+type ChatRuntimeOption = Pick<
+  AgentRuntimeInfo,
+  "id" | "label" | "description"
+>
+
+const FALLBACK_CHAT_RUNTIME_INFO: ChatRuntimeOption = {
+  id: DEFAULT_CHAT_RUNTIME_ID,
+  label: "AstraFlow Agent",
+  description: "Built-in LangChain agent",
+}
 
 const chatModelListeners = new Set<() => void>()
+const chatRuntimeListeners = new Set<() => void>()
 const chatReasoningEffortListeners = new Set<() => void>()
 
 function getStoredChatModel(): SupportedChatModel {
@@ -195,6 +210,43 @@ function useChatModel() {
   )
 
   return [model, setStoredChatModel] as const
+}
+
+function getStoredChatRuntime() {
+  if (typeof window === "undefined") {
+    return DEFAULT_CHAT_RUNTIME_ID
+  }
+
+  const stored = window.localStorage
+    .getItem(CHAT_RUNTIME_STORAGE_KEY)
+    ?.trim()
+
+  return stored || DEFAULT_CHAT_RUNTIME_ID
+}
+
+function setStoredChatRuntime(runtimeId: string) {
+  window.localStorage.setItem(CHAT_RUNTIME_STORAGE_KEY, runtimeId)
+  chatRuntimeListeners.forEach((listener) => listener())
+}
+
+function subscribeChatRuntime(listener: () => void) {
+  chatRuntimeListeners.add(listener)
+  window.addEventListener("storage", listener)
+
+  return () => {
+    chatRuntimeListeners.delete(listener)
+    window.removeEventListener("storage", listener)
+  }
+}
+
+function useChatRuntime() {
+  const runtimeId = React.useSyncExternalStore(
+    subscribeChatRuntime,
+    getStoredChatRuntime,
+    () => DEFAULT_CHAT_RUNTIME_ID
+  )
+
+  return [runtimeId, setStoredChatRuntime] as const
 }
 
 function getStoredChatReasoningEffort(
@@ -308,6 +360,48 @@ function getChatModelLabel(model: SupportedChatModel) {
   )
 }
 
+function normalizeChatRuntimeInfos(runtimes: AgentRuntimeInfo[]) {
+  const seenRuntimeIds = new Set<string>()
+  const normalized = runtimes.reduce<ChatRuntimeOption[]>((options, runtime) => {
+    if (seenRuntimeIds.has(runtime.id)) {
+      return options
+    }
+
+    seenRuntimeIds.add(runtime.id)
+    options.push({
+      id: runtime.id,
+      label: runtime.label,
+      description: runtime.description,
+    })
+    return options
+  }, [])
+
+  if (!seenRuntimeIds.has(DEFAULT_CHAT_RUNTIME_ID)) {
+    return [FALLBACK_CHAT_RUNTIME_INFO, ...normalized]
+  }
+
+  return normalized.length > 0 ? normalized : [FALLBACK_CHAT_RUNTIME_INFO]
+}
+
+function resolveChatRuntimeId(
+  runtimeId: string,
+  runtimeInfos: ChatRuntimeOption[]
+) {
+  return runtimeInfos.some((runtime) => runtime.id === runtimeId)
+    ? runtimeId
+    : DEFAULT_CHAT_RUNTIME_ID
+}
+
+function getChatRuntimeLabel(
+  runtimeId: string,
+  runtimeInfos: ChatRuntimeOption[]
+) {
+  return (
+    runtimeInfos.find((runtime) => runtime.id === runtimeId)?.label ??
+    FALLBACK_CHAT_RUNTIME_INFO.label
+  )
+}
+
 async function readJson<T>(response: Response) {
   const data = (await response.json()) as ApiResponse<T>
 
@@ -316,6 +410,14 @@ async function readJson<T>(response: Response) {
   }
 
   return data.data
+}
+
+async function listAgentRuntimes() {
+  const response = await fetch("/api/studio/agent-runtimes", {
+    cache: "no-store",
+  })
+
+  return normalizeChatRuntimeInfos(await readJson<AgentRuntimeInfo[]>(response))
 }
 
 async function createSession(title: string) {
@@ -396,11 +498,13 @@ async function startAssistantRunRequest({
   sessionId,
   model,
   reasoningEffort,
+  runtimeId,
   retryMessageId,
 }: {
   sessionId: string
   model: SupportedChatModel
   reasoningEffort: ChatReasoningEffort
+  runtimeId: string
   retryMessageId?: string
 }) {
   const response = await fetch("/api/studio/chat", {
@@ -410,6 +514,7 @@ async function startAssistantRunRequest({
       sessionId,
       model,
       reasoningEffort,
+      runtimeId,
       retryMessageId,
     }),
   })
@@ -584,8 +689,12 @@ function StudioChatWorkbench({
   const greetingPeriod = useStudioGreetingPeriod()
   const [input, setInput] = React.useState("")
   const [selectedModel, setSelectedModel] = useChatModel()
+  const [selectedRuntimeId, setSelectedRuntimeId] = useChatRuntime()
   const [selectedReasoningEffort, setSelectedReasoningEffort] =
     useChatReasoningEffort(selectedModel)
+  const [runtimeInfos, setRuntimeInfos] = React.useState<ChatRuntimeOption[]>(
+    () => [FALLBACK_CHAT_RUNTIME_INFO]
+  )
   const [messages, setMessages] = React.useState<StudioMessage[]>([])
   const [pendingAttachments, setPendingAttachments] = React.useState<
     PendingAttachment[]
@@ -601,6 +710,10 @@ function StudioChatWorkbench({
   const sessionIdRef = React.useRef(sessionId)
 
   const visibleMessages = sessionId ? messages : []
+  const resolvedRuntimeId = resolveChatRuntimeId(
+    selectedRuntimeId,
+    runtimeInfos
+  )
   const isStarting = sessionId ? startingSessionIds.has(sessionId) : false
   const hasStreamingMessage = visibleMessages.some(
     (message) => message.role === "assistant" && message.status === "streaming"
@@ -656,6 +769,26 @@ function StudioChatWorkbench({
   React.useEffect(() => {
     sessionIdRef.current = sessionId
   }, [sessionId])
+
+  React.useEffect(() => {
+    let cancelled = false
+
+    void listAgentRuntimes()
+      .then((nextRuntimeInfos) => {
+        if (!cancelled) {
+          setRuntimeInfos(nextRuntimeInfos)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRuntimeInfos([FALLBACK_CHAT_RUNTIME_INFO])
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const reloadMessages = React.useCallback(async (activeSessionId: string) => {
     const nextMessages = activeSessionId
@@ -837,6 +970,7 @@ function StudioChatWorkbench({
       activeSessionId: string,
       model: SupportedChatModel,
       reasoningEffort: ChatReasoningEffort,
+      runtimeId: string,
       options: {
         retryMessageId?: string
       } = {}
@@ -857,6 +991,7 @@ function StudioChatWorkbench({
         sessionId: activeSessionId,
         model,
         reasoningEffort,
+        runtimeId,
         retryMessageId: options.retryMessageId,
       })
         .then(async () => {
@@ -914,12 +1049,19 @@ function StudioChatWorkbench({
         return
       }
 
-      startAssistantRun(sessionId, selectedModel, selectedReasoningEffort, {
-        retryMessageId: message.id,
-      })
+      startAssistantRun(
+        sessionId,
+        selectedModel,
+        selectedReasoningEffort,
+        resolvedRuntimeId,
+        {
+          retryMessageId: message.id,
+        }
+      )
     },
     [
       isBusy,
+      resolvedRuntimeId,
       selectedModel,
       selectedReasoningEffort,
       sessionId,
@@ -978,7 +1120,12 @@ function StudioChatWorkbench({
           })
       }
 
-      startAssistantRun(activeSessionId, selectedModel, selectedReasoningEffort)
+      startAssistantRun(
+        activeSessionId,
+        selectedModel,
+        selectedReasoningEffort,
+        resolvedRuntimeId
+      )
     } catch {
       if (sessionId) {
         setChatErrors((current) => ({ ...current, [sessionId]: true }))
@@ -1034,9 +1181,12 @@ function StudioChatWorkbench({
               <ChatComposer
                 value={input}
                 model={selectedModel}
+                runtimeId={resolvedRuntimeId}
+                runtimeInfos={runtimeInfos}
                 reasoningEffort={selectedReasoningEffort}
                 attachments={pendingAttachments}
                 onModelChange={setSelectedModel}
+                onRuntimeChange={setSelectedRuntimeId}
                 onReasoningEffortChange={setSelectedReasoningEffort}
                 onValueChange={setInput}
                 onAddFiles={addFiles}
@@ -1057,9 +1207,12 @@ function StudioChatWorkbench({
             <ChatComposer
               value={input}
               model={selectedModel}
+              runtimeId={resolvedRuntimeId}
+              runtimeInfos={runtimeInfos}
               reasoningEffort={selectedReasoningEffort}
               attachments={pendingAttachments}
               onModelChange={setSelectedModel}
+              onRuntimeChange={setSelectedRuntimeId}
               onReasoningEffortChange={setSelectedReasoningEffort}
               onValueChange={setInput}
               onAddFiles={addFiles}
@@ -1082,9 +1235,12 @@ function StudioChatWorkbench({
 type ChatComposerProps = {
   value: string
   model: SupportedChatModel
+  runtimeId: string
+  runtimeInfos: ChatRuntimeOption[]
   reasoningEffort: ChatReasoningEffort
   attachments: PendingAttachment[]
   onModelChange: (model: SupportedChatModel) => void
+  onRuntimeChange: (runtimeId: string) => void
   onReasoningEffortChange: (effort: ChatReasoningEffort) => void
   onValueChange: (value: string) => void
   onAddFiles: (files: FileList | null) => void
@@ -1234,9 +1390,12 @@ function ChatComposerPluginsButton() {
 function ChatComposer({
   value,
   model,
+  runtimeId,
+  runtimeInfos,
   reasoningEffort,
   attachments,
   onModelChange,
+  onRuntimeChange,
   onReasoningEffortChange,
   onValueChange,
   onAddFiles,
@@ -1271,6 +1430,9 @@ function ChatComposer({
   const reasoningEffortLabel =
     reasoningOptions.find((option) => option.value === resolvedReasoningEffort)
       ?.label ?? reasoningLabelByValue[resolvedReasoningEffort]
+  const selectedRuntimeInfo =
+    runtimeInfos.find((runtime) => runtime.id === runtimeId) ??
+    FALLBACK_CHAT_RUNTIME_INFO
 
   const handlePaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const files = event.clipboardData?.files
@@ -1385,6 +1547,47 @@ function ChatComposer({
           className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2"
           onClick={(event) => event.stopPropagation()}
         >
+          <Select
+            value={runtimeId}
+            onValueChange={onRuntimeChange}
+            disabled={isBusy}
+          >
+            <SelectTrigger
+              size="sm"
+              className="h-8 max-w-44 rounded-full bg-background px-3 text-sm sm:max-w-52"
+              aria-label={t.studioAgentRuntime}
+              title={selectedRuntimeInfo.description || t.studioAgentRuntime}
+            >
+              <span className="truncate">
+                {getChatRuntimeLabel(runtimeId, runtimeInfos)}
+              </span>
+            </SelectTrigger>
+            <SelectContent position="popper" side="top" align="end">
+              <SelectGroup>
+                {runtimeInfos.map((runtime) => (
+                  <SelectItem
+                    key={runtime.id}
+                    value={runtime.id}
+                    textValue={runtime.label}
+                    title={runtime.description || undefined}
+                    className="items-start"
+                  >
+                    <span className="flex min-w-0 flex-col items-start gap-0.5">
+                      <span className="max-w-64 truncate">
+                        {runtime.label}
+                      </span>
+                      {runtime.description ? (
+                        <span className="max-w-64 truncate text-xs font-normal text-muted-foreground">
+                          {runtime.description}
+                        </span>
+                      ) : null}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+
           <Select
             value={model}
             onValueChange={(nextValue) =>
@@ -1578,6 +1781,67 @@ function AssistantReasoning({
         {content}
       </ReasoningContent>
     </Reasoning>
+  )
+}
+
+function AssistantPlan({
+  todos,
+}: {
+  todos: Extract<StudioMessagePart, { type: "plan" }>["todos"]
+}) {
+  if (todos.length === 0) {
+    return null
+  }
+
+  return (
+    <div
+      className={cn(
+        assistantTraceContainerClassName,
+        "rounded-xl border border-border/70 bg-muted/30 px-3 py-2 text-sm text-foreground"
+      )}
+    >
+      <ul className="flex flex-col gap-1.5">
+        {todos.map((todo, index) => (
+          <li
+            key={`${todo.status}-${index}-${todo.text}`}
+            className={cn(
+              "flex min-w-0 items-start gap-2",
+              todo.status === "completed" && "text-muted-foreground",
+              todo.status === "in_progress" && "text-primary"
+            )}
+          >
+            <span
+              className={cn(
+                "mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-[4px] border",
+                todo.status === "completed" &&
+                  "border-primary bg-primary text-primary-foreground",
+                todo.status === "in_progress" &&
+                  "border-primary bg-primary/10 text-primary",
+                todo.status === "pending" && "border-border bg-background"
+              )}
+            >
+              {todo.status === "completed" ? (
+                <RiCheckLine aria-hidden className="size-3" />
+              ) : todo.status === "in_progress" ? (
+                <span
+                  aria-hidden
+                  className="size-1.5 rounded-full bg-primary"
+                />
+              ) : null}
+            </span>
+            <span
+              className={cn(
+                "min-w-0 leading-5",
+                todo.status === "completed" &&
+                  "line-through decoration-muted-foreground/70"
+              )}
+            >
+              {todo.text}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
   )
 }
 
@@ -2574,6 +2838,10 @@ const AssistantContentParts = React.memo(function AssistantContentParts({
               }
             />
           )
+        }
+
+        if (part.type === "plan") {
+          return <AssistantPlan key={`plan-${index}`} todos={part.todos} />
         }
 
         if (!part.content.trim()) {

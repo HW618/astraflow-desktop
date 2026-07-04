@@ -548,7 +548,11 @@ function createSnapshotAccumulator() {
       ...snapshot,
       activities: completedActivities,
       parts: snapshot.parts.filter((part) => {
-        if (part.type === "text" || part.type === "reasoning") {
+        if (
+          part.type === "text" ||
+          part.type === "reasoning" ||
+          part.type === "plan"
+        ) {
           return true
         }
 
