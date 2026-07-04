@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 
+import { requireAuthenticatedRequest } from "@/lib/app-auth"
 import {
   clearStudioExaApiKey,
   getStudioExaApiKey,
@@ -42,11 +43,10 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  if (!requireOAuth()) {
-    return NextResponse.json(
-      { ok: false, message: "UCloud OAuth is required." },
-      { status: 401 }
-    )
+  const authError = await requireAuthenticatedRequest(request)
+
+  if (authError) {
+    return authError
   }
 
   const parsed = saveExaApiKeySchema.safeParse(await request.json())

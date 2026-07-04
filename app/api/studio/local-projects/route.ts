@@ -4,7 +4,7 @@ import { basename, isAbsolute } from "node:path"
 import { NextResponse } from "next/server"
 import { z } from "zod"
 
-import { getAppAuthState } from "@/lib/app-auth"
+import { requireAuthenticatedRequest } from "@/lib/app-auth"
 import {
   countStudioPermissionRules,
   createStudioLocalProject,
@@ -30,19 +30,6 @@ const deleteLocalProjectSchema = z.object({
   id: z.string().trim().min(1),
   action: z.enum(["delete", "clearPermissionRules"]).default("delete"),
 })
-
-async function requireAuthenticatedRequest() {
-  const auth = await getAppAuthState()
-
-  if (!auth.authenticated) {
-    return NextResponse.json(
-      { ok: false, error: "Login is required." },
-      { status: 401 }
-    )
-  }
-
-  return null
-}
 
 function execGit(path: string, args: string[]) {
   return new Promise<string>((resolve, reject) => {
@@ -115,7 +102,7 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const authError = await requireAuthenticatedRequest()
+  const authError = await requireAuthenticatedRequest(request)
 
   if (authError) {
     return authError
@@ -169,7 +156,7 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  const authError = await requireAuthenticatedRequest()
+  const authError = await requireAuthenticatedRequest(request)
 
   if (authError) {
     return authError

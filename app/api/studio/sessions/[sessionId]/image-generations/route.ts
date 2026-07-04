@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { randomUUID } from "node:crypto"
 import { z } from "zod"
 
-import { getAppAuthState } from "@/lib/app-auth"
+import { requireAuthenticatedRequest } from "@/lib/app-auth"
 import {
   getImageModelEndpoint,
   getImageModelConstantForRequest,
@@ -715,13 +715,10 @@ export async function GET(_request: Request, context: RouteContext) {
 }
 
 export async function POST(request: Request, context: RouteContext) {
-  const auth = await getAppAuthState()
+  const authError = await requireAuthenticatedRequest(request)
 
-  if (!auth.authenticated) {
-    return NextResponse.json(
-      { ok: false, error: "Login is required." },
-      { status: 401 }
-    )
+  if (authError) {
+    return authError
   }
 
   const { sessionId } = await context.params

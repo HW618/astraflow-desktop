@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 
+import { requireAuthenticatedRequest } from "@/lib/app-auth"
 import {
   getSelectedUCloudProjectId,
   getStudioModelverseApiKey,
@@ -80,6 +81,12 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const authError = await requireAuthenticatedRequest(request)
+
+  if (authError) {
+    return authError
+  }
+
   const credentials = await getUCloudCredentials()
 
   if (!credentials) {

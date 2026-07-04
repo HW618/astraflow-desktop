@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 
-import { getAppAuthState } from "@/lib/app-auth"
+import { requireAuthenticatedRequest } from "@/lib/app-auth"
 import { generateChatTitle } from "@/lib/modelverse-openai"
 import { getStudioSession, updateStudioSessionTitle } from "@/lib/studio-db"
 
@@ -16,13 +16,10 @@ type RouteContext = {
 }
 
 export async function POST(request: Request, context: RouteContext) {
-  const auth = await getAppAuthState()
+  const authError = await requireAuthenticatedRequest(request)
 
-  if (!auth.authenticated) {
-    return NextResponse.json(
-      { ok: false, error: "Login is required." },
-      { status: 401 }
-    )
+  if (authError) {
+    return authError
   }
 
   const { sessionId } = await context.params

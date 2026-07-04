@@ -2,7 +2,7 @@ import { stat } from "node:fs/promises"
 import { NextResponse } from "next/server"
 import { z } from "zod"
 
-import { getAppAuthState } from "@/lib/app-auth"
+import { requireAuthenticatedRequest } from "@/lib/app-auth"
 import { openFolder } from "@/lib/open-folder"
 import { getStudioLocalProject, touchStudioLocalProject } from "@/lib/studio-db"
 
@@ -12,21 +12,8 @@ const openLocalProjectSchema = z.object({
   id: z.string().trim().min(1),
 })
 
-async function requireAuthenticatedRequest() {
-  const auth = await getAppAuthState()
-
-  if (!auth.authenticated) {
-    return NextResponse.json(
-      { ok: false, error: "Login is required." },
-      { status: 401 }
-    )
-  }
-
-  return null
-}
-
 export async function POST(request: Request) {
-  const authError = await requireAuthenticatedRequest()
+  const authError = await requireAuthenticatedRequest(request)
 
   if (authError) {
     return authError

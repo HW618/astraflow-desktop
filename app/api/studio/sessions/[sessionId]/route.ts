@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 
+import { requireAuthenticatedRequest } from "@/lib/app-auth"
 import {
   deleteStudioSession,
   getStudioLocalProject,
@@ -31,6 +32,12 @@ type RouteContext = {
 }
 
 export async function PATCH(request: Request, context: RouteContext) {
+  const authError = await requireAuthenticatedRequest(request)
+
+  if (authError) {
+    return authError
+  }
+
   const { sessionId } = await context.params
 
   if (!getStudioSession(sessionId)) {
@@ -76,7 +83,13 @@ export async function PATCH(request: Request, context: RouteContext) {
   return NextResponse.json({ ok: true, data: session })
 }
 
-export async function DELETE(_request: Request, context: RouteContext) {
+export async function DELETE(request: Request, context: RouteContext) {
+  const authError = await requireAuthenticatedRequest(request)
+
+  if (authError) {
+    return authError
+  }
+
   const { sessionId } = await context.params
 
   if (!getStudioSession(sessionId)) {

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 
-import { getAppAuthState } from "@/lib/app-auth"
+import { requireAuthenticatedRequest } from "@/lib/app-auth"
 import {
   getStudioImageOutput,
   saveStudioImageOutputStorage,
@@ -17,13 +17,10 @@ type RouteContext = {
 }
 
 export async function POST(_request: Request, context: RouteContext) {
-  const auth = await getAppAuthState()
+  const authError = await requireAuthenticatedRequest(_request)
 
-  if (!auth.authenticated) {
-    return NextResponse.json(
-      { ok: false, error: "Login is required." },
-      { status: 401 }
-    )
+  if (authError) {
+    return authError
   }
 
   const { outputId } = await context.params

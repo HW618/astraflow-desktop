@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 
-import { getAppAuthState } from "@/lib/app-auth"
+import { requireAuthenticatedRequest } from "@/lib/app-auth"
 import { resolvePermission } from "@/lib/agent/permission-broker"
 
 export const runtime = "nodejs"
@@ -12,21 +12,8 @@ const permissionDecisionSchema = z.object({
   optionId: z.string().trim().min(1),
 })
 
-async function requireAuthenticatedRequest() {
-  const auth = await getAppAuthState()
-
-  if (!auth.authenticated) {
-    return NextResponse.json(
-      { ok: false, error: "Login is required." },
-      { status: 401 }
-    )
-  }
-
-  return null
-}
-
 export async function POST(request: Request) {
-  const authError = await requireAuthenticatedRequest()
+  const authError = await requireAuthenticatedRequest(request)
 
   if (authError) {
     return authError

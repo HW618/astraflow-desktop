@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { randomUUID } from "node:crypto"
 import { z } from "zod"
 
+import { requireAuthenticatedRequest } from "@/lib/app-auth"
 import {
   createStudioSessionFile,
   createStudioMessage,
@@ -199,9 +200,15 @@ function processAttachments({
   return { attachments: processedAttachments, files }
 }
 
-export async function GET(_request: Request, context: RouteContext) {
+export async function GET(request: Request, context: RouteContext) {
+  const authError = await requireAuthenticatedRequest()
+
+  if (authError) {
+    return authError
+  }
+
   const { sessionId } = await context.params
-  const url = new URL(_request.url)
+  const url = new URL(request.url)
   const versionGroupId = url.searchParams.get("versionGroupId")?.trim()
 
   if (!getStudioSession(sessionId)) {
@@ -220,6 +227,12 @@ export async function GET(_request: Request, context: RouteContext) {
 }
 
 export async function POST(request: Request, context: RouteContext) {
+  const authError = await requireAuthenticatedRequest(request)
+
+  if (authError) {
+    return authError
+  }
+
   const { sessionId } = await context.params
 
   if (!getStudioSession(sessionId)) {
