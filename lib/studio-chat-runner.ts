@@ -6,6 +6,7 @@ import {
 } from "@langchain/core/messages"
 
 import "@/lib/agent/adapters/langchain-runtime"
+import "@/lib/agent/adapters/deepagents-runtime"
 import {
   cancelAgentRun,
   getAgentRun,

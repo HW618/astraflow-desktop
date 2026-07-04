@@ -384,6 +384,34 @@ function createSnapshotAccumulator() {
     }
   }
 
+  function upsertPlanPart(
+    todos: Extract<AgentEvent, { type: "plan_update" }>["todos"]
+  ) {
+    markReasoningDone()
+
+    const existingIndex = snapshot.parts.findIndex(
+      (part) => part.type === "plan"
+    )
+    const part: StudioMessagePart = {
+      id: existingIndex >= 0 ? snapshot.parts[existingIndex].id : randomUUID(),
+      type: "plan",
+      content: "",
+      todos,
+    }
+
+    snapshot = {
+      ...snapshot,
+      parts:
+        existingIndex >= 0
+          ? snapshot.parts.map((candidate, index) =>
+              index === existingIndex ? part : candidate
+            )
+          : [...snapshot.parts, part],
+    }
+
+    return true
+  }
+
   function handleEvent(event: AgentEvent) {
     switch (event.type) {
       case "reasoning_delta":
@@ -483,10 +511,7 @@ function createSnapshotAccumulator() {
         return true
       }
       case "plan_update":
-        debugIgnoredAgentEvent("plan_update_ignored", {
-          todoCount: event.todos.length,
-        })
-        return false
+        return upsertPlanPart(event.todos)
       case "subagent_start":
         debugIgnoredAgentEvent("subagent_start_ignored", {
           taskId: event.taskId,
@@ -548,7 +573,11 @@ function createSnapshotAccumulator() {
       ...snapshot,
       activities: completedActivities,
       parts: snapshot.parts.filter((part) => {
-        if (part.type === "text" || part.type === "reasoning") {
+        if (
+          part.type === "text" ||
+          part.type === "reasoning" ||
+          part.type === "plan"
+        ) {
           return true
         }
 
