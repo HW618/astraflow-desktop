@@ -32,7 +32,10 @@ function getWorkspaceRoot() {
 }
 
 export function ensureAcpWorkspace(sessionId: string) {
-  const workspace = join(getWorkspaceRoot(), safeFileName(sessionId))
+  const workspace = join(
+    /* turbopackIgnore: true */ getWorkspaceRoot(),
+    safeFileName(sessionId)
+  )
 
   mkdirSync(/* turbopackIgnore: true */ workspace, { recursive: true })
 

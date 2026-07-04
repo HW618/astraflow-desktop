@@ -661,7 +661,20 @@ function getDeepAgentsRuntimeInfo() {
 }
 
 export const deepAgentsRuntime: AgentRuntime = {
-  info: getDeepAgentsRuntimeInfo(),
+  info: {
+    id: "deepagents",
+    label: "Deep Agent",
+    description: "深度智能体：规划、子智能体、沙箱文件系统",
+    capabilities: {
+      hitl: true,
+      resume: false,
+      subagents: true,
+      plan: true,
+      sandbox: false,
+      mcp: true,
+      skills: true,
+    },
+  },
   getInfo: getDeepAgentsRuntimeInfo,
   startRun(input) {
     return streamDeepAgentsRun(input)

@@ -339,7 +339,9 @@ async function resolveSafeWriteParent(
   assertPathInsideWorkspace(workspaceRealPath, parentPath)
 
   const existingAncestor = await findExistingAncestor(parentPath)
-  const existingAncestorRealPath = await realpath(existingAncestor)
+  const existingAncestorRealPath = await realpath(
+    /* turbopackIgnore: true */ existingAncestor
+  )
 
   assertPathInsideWorkspace(workspaceRealPath, existingAncestorRealPath)
 
