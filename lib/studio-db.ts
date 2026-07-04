@@ -861,6 +861,8 @@ function reconcileInterruptedRuns(database: Database.Database) {
   // Streaming state only lives in an in-memory map (see studio-chat-runner),
   // so any message still marked as streaming when the process starts is a
   // leftover from a crash or forced shutdown and can never resume.
+  cancelInterruptedRunPendingPermissionParts(database)
+
   database
     .prepare(
       `
@@ -870,6 +872,92 @@ function reconcileInterruptedRuns(database: Database.Database) {
       `
     )
     .run()
+}
+
+type InterruptedRunMessagePartsRow = {
+  id: string
+  parts: string | null
+}
+
+function cancelInterruptedRunPendingPermissionParts(
+  database: Database.Database
+) {
+  const rows = database
+    .prepare(
+      `
+        SELECT id, parts
+        FROM studio_messages
+        WHERE status = 'streaming'
+          AND parts IS NOT NULL
+      `
+    )
+    .all() as InterruptedRunMessagePartsRow[]
+
+  if (rows.length === 0) {
+    return
+  }
+
+  const updateParts = database.prepare(
+    `
+      UPDATE studio_messages
+      SET parts = ?
+      WHERE id = ?
+    `
+  )
+
+  const updateTransaction = database.transaction(
+    (messages: InterruptedRunMessagePartsRow[]) => {
+      for (const message of messages) {
+        const nextParts = serializeCancelledPendingPermissionParts(
+          message.parts
+        )
+
+        if (nextParts !== null) {
+          updateParts.run(nextParts, message.id)
+        }
+      }
+    }
+  )
+
+  updateTransaction(rows)
+}
+
+function serializeCancelledPendingPermissionParts(raw: string | null) {
+  if (!raw) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown
+
+    if (!Array.isArray(parsed)) {
+      return null
+    }
+
+    let changed = false
+    const parts = parsed.map((part) => {
+      if (typeof part !== "object" || part === null || Array.isArray(part)) {
+        return part
+      }
+
+      const record = part as Record<string, unknown>
+
+      if (record.type !== "permission" || record.status !== "pending") {
+        return part
+      }
+
+      changed = true
+
+      return {
+        ...record,
+        status: "cancelled",
+      }
+    })
+
+    return changed ? JSON.stringify(parts) : null
+  } catch {
+    return null
+  }
 }
 
 function initializeSchema(database: Database.Database) {

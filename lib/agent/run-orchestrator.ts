@@ -21,6 +21,7 @@ import type { AgentRunInput, AgentRuntime } from "@/lib/agent/runtime"
 const STUDIO_CHAT_DEBUG = process.env.ASTRAFLOW_STUDIO_CHAT_DEBUG === "1"
 const LIVE_SNAPSHOT_INTERVAL_MS = 150
 const SNAPSHOT_PERSIST_INTERVAL_MS = 350
+const ABORT_WATCHDOG_TIMEOUT_MS = 30_000
 const COMPLETED_RUN_RETENTION_MS = 5 * 60_000
 
 type ChatStreamSnapshot = {
@@ -32,12 +33,17 @@ type ChatStreamSnapshot = {
 }
 
 type StudioChatRunRecord = StudioChatRunSnapshot & {
+  abortWatchdogTimer: ReturnType<typeof setTimeout> | null
   abortController: AbortController
   cleanupTimer: ReturnType<typeof setTimeout> | null
+  finalizeStoppedSnapshot: (() => ChatStreamSnapshot) | null
+  forceFinalized: boolean
   latestSnapshot: ChatStreamSnapshot
   liveMessageBase: ReturnType<typeof getStudioMessage>
   livePublishTimer: ReturnType<typeof setTimeout> | null
   lastLivePublishedAt: number
+  persistSnapshot:
+    ((status?: StudioMessageStatus, force?: boolean) => void) | null
   promise: Promise<void> | null
 }
 
@@ -181,21 +187,38 @@ function setRunStatus(
   record.updatedAt = nowIso()
 }
 
+function clearAbortWatchdog(record: StudioChatRunRecord) {
+  if (!record.abortWatchdogTimer) {
+    return
+  }
+
+  clearTimeout(record.abortWatchdogTimer)
+  record.abortWatchdogTimer = null
+}
+
+function removeRunRecord(record: StudioChatRunRecord) {
+  const runs = getStudioChatRuns()
+
+  if (runs.get(record.sessionId)?.runId === record.runId) {
+    runs.delete(record.sessionId)
+  }
+}
+
 function scheduleRunCleanup(record: StudioChatRunRecord) {
   if (record.cleanupTimer) {
     clearTimeout(record.cleanupTimer)
   }
 
   record.cleanupTimer = setTimeout(() => {
+    clearAbortWatchdog(record)
+
     if (record.livePublishTimer) {
       clearTimeout(record.livePublishTimer)
       record.livePublishTimer = null
     }
 
-    const runs = getStudioChatRuns()
-
-    if (runs.get(record.sessionId)?.runId === record.runId) {
-      runs.delete(record.sessionId)
+    if (record.promise === null) {
+      removeRunRecord(record)
     }
   }, COMPLETED_RUN_RETENTION_MS)
 }
@@ -239,6 +262,107 @@ function createInitialSnapshot(): ChatStreamSnapshot {
     reasoningContent: "",
     reasoningDurationMs: null,
   }
+}
+
+function toStoppedSnapshot(snapshot: ChatStreamSnapshot): ChatStreamSnapshot {
+  const completedActivities = snapshot.activities.filter(
+    (activity) => activity.status !== "running"
+  )
+  const completedActivityIds = new Set(
+    completedActivities.map((activity) => activity.id)
+  )
+
+  const parts = snapshot.parts
+    .map((part) =>
+      part.type === "permission" && part.status === "pending"
+        ? { ...part, status: "cancelled" as const }
+        : part
+    )
+    .filter((part) => {
+      if (
+        part.type === "text" ||
+        part.type === "reasoning" ||
+        part.type === "plan" ||
+        part.type === "permission"
+      ) {
+        return true
+      }
+
+      return completedActivityIds.has(part.activity.id)
+    })
+
+  return {
+    ...snapshot,
+    activities: completedActivities,
+    parts,
+  }
+}
+
+function finalizeStoppedSnapshot(record: StudioChatRunRecord) {
+  const snapshot =
+    record.finalizeStoppedSnapshot?.() ??
+    toStoppedSnapshot(record.latestSnapshot)
+
+  record.latestSnapshot = snapshot
+
+  return snapshot
+}
+
+function persistRunSnapshot(
+  record: StudioChatRunRecord,
+  status: StudioMessageStatus,
+  force = false
+) {
+  if (record.persistSnapshot) {
+    record.persistSnapshot(status, force)
+    return
+  }
+
+  persistAssistantSnapshot({
+    assistantMessageId: record.assistantMessageId,
+    sessionId: record.sessionId,
+    snapshot: record.latestSnapshot,
+    status,
+  })
+  scheduleRunLiveSnapshot(record, force)
+}
+
+function forceFinalizeAbortedRun(record: StudioChatRunRecord) {
+  record.abortWatchdogTimer = null
+
+  if (
+    record.forceFinalized ||
+    record.promise === null ||
+    !record.abortController.signal.aborted
+  ) {
+    return
+  }
+
+  finalizeStoppedSnapshot(record)
+  setRunStatus(record, "cancelled")
+  persistRunSnapshot(record, "complete", true)
+  record.forceFinalized = true
+  record.promise = null
+  record.persistSnapshot = null
+  record.finalizeStoppedSnapshot = null
+
+  if (record.cleanupTimer) {
+    clearTimeout(record.cleanupTimer)
+    record.cleanupTimer = null
+  }
+
+  removeRunRecord(record)
+}
+
+function scheduleAbortWatchdog(record: StudioChatRunRecord) {
+  if (record.abortWatchdogTimer || record.promise === null) {
+    return
+  }
+
+  record.abortWatchdogTimer = setTimeout(
+    () => forceFinalizeAbortedRun(record),
+    ABORT_WATCHDOG_TIMEOUT_MS
+  )
 }
 
 function createSnapshotAccumulator() {
@@ -767,9 +891,13 @@ async function executeAgentRun({
   let lastPersistAt = 0
 
   const persistSnapshot = (
-    status: StudioMessageStatus = "streaming",
+    status: StudioMessageStatus = getLiveMessageStatus(record),
     force = false
   ) => {
+    if (record.forceFinalized) {
+      return
+    }
+
     record.latestSnapshot = accumulator.getSnapshot()
 
     const timestamp = Date.now()
@@ -789,6 +917,9 @@ async function executeAgentRun({
     scheduleRunLiveSnapshot(record, force)
   }
 
+  record.persistSnapshot = persistSnapshot
+  record.finalizeStoppedSnapshot = () => accumulator.finalizeStopped()
+
   try {
     setRunStatus(record, "running")
     persistSnapshot("streaming", true)
@@ -801,32 +932,59 @@ async function executeAgentRun({
       reasoningEffort,
       signal: record.abortController.signal,
     })) {
+      if (record.forceFinalized) {
+        return
+      }
+
+      if (record.abortController.signal.aborted) {
+        continue
+      }
+
+      if (event.type === "error") {
+        record.error = event.message
+        record.updatedAt = nowIso()
+        persistSnapshot("error", true)
+        continue
+      }
+
       if (accumulator.handleEvent(event)) {
         persistSnapshot()
       }
     }
 
+    if (record.forceFinalized) {
+      return
+    }
+
     if (record.abortController.signal.aborted) {
+      clearAbortWatchdog(record)
       accumulator.finalizeStopped()
       setRunStatus(record, "cancelled")
       persistSnapshot("complete", true)
       return
     }
 
+    clearAbortWatchdog(record)
     accumulator.completeReasoning()
     setRunStatus(record, "complete")
     persistSnapshot("complete", true)
   } catch (error) {
+    if (record.forceFinalized) {
+      return
+    }
+
     const message =
       error instanceof Error ? error.message : "Chat request failed."
 
     if (isAbortLikeError(error, record.abortController.signal)) {
+      clearAbortWatchdog(record)
       accumulator.finalizeStopped()
       setRunStatus(record, "cancelled")
       persistSnapshot("complete", true)
       return
     }
 
+    clearAbortWatchdog(record)
     console.error("[studio-chat] run_failed", error)
     accumulator.finalizeFailed(message)
     setRunStatus(record, "error", message)
@@ -843,12 +1001,19 @@ export function getAgentRun(sessionId: string) {
 export function cancelAgentRun(sessionId: string) {
   const record = getStudioChatRuns().get(sessionId)
 
-  if (!record || record.status === "complete" || record.status === "error") {
+  if (
+    !record ||
+    (record.promise === null &&
+      (record.status === "complete" || record.status === "error"))
+  ) {
     return null
   }
 
   record.abortController.abort()
+  scheduleAbortWatchdog(record)
+  finalizeStoppedSnapshot(record)
   setRunStatus(record, "cancelled")
+  persistRunSnapshot(record, "complete", true)
 
   return toRunSnapshot(record)
 }
@@ -898,11 +1063,20 @@ export function startAgentRun({
 }) {
   const existing = getStudioChatRuns().get(sessionId)
 
+  if (existing && existing.promise !== null) {
+    return toRunSnapshot(existing)
+  }
+
   if (
     existing &&
     (existing.status === "queued" || existing.status === "running")
   ) {
     return toRunSnapshot(existing)
+  }
+
+  if (existing?.cleanupTimer) {
+    clearTimeout(existing.cleanupTimer)
+    existing.cleanupTimer = null
   }
 
   if (!getStudioSession(sessionId)) {
@@ -927,12 +1101,16 @@ export function startAgentRun({
     error: null,
     startedAt: timestamp,
     updatedAt: timestamp,
+    abortWatchdogTimer: null,
     abortController: new AbortController(),
     cleanupTimer: null,
+    finalizeStoppedSnapshot: null,
+    forceFinalized: false,
     latestSnapshot: createInitialSnapshot(),
     liveMessageBase: assistantMessage,
     livePublishTimer: null,
     lastLivePublishedAt: 0,
+    persistSnapshot: null,
     promise: null,
   }
 
@@ -947,7 +1125,14 @@ export function startAgentRun({
     runtime,
     sessionId,
   }).finally(() => {
-    scheduleRunCleanup(record)
+    clearAbortWatchdog(record)
+    record.promise = null
+    record.persistSnapshot = null
+    record.finalizeStoppedSnapshot = null
+
+    if (!record.forceFinalized) {
+      scheduleRunCleanup(record)
+    }
   })
 
   return toRunSnapshot(record)
