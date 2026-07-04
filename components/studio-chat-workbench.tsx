@@ -21,7 +21,7 @@ import {
   RiThumbDownLine,
   RiThumbUpLine,
 } from "@remixicon/react"
-import { FolderGit2 } from "lucide-react"
+import { Eye, FolderGit2, Hand, Zap } from "lucide-react"
 import { toast } from "sonner"
 
 import { AgentRuntimeIcon } from "@/components/agent-runtime-icons"
@@ -74,6 +74,7 @@ import {
   CodeBlockGroup,
 } from "@/components/prompt-kit/code-block"
 import { Shimmer } from "@/components/ai-elements/shimmer"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { useI18n } from "@/components/i18n-provider"
 import { SkillsMarketPage } from "@/components/skills-market-page"
@@ -104,6 +105,8 @@ import type {
   StudioChatRunLiveSnapshot,
   StudioChatRunSnapshot,
   StudioLocalProjectWithGitInfo,
+  StudioPermissionMode,
+  StudioPermissionOption,
   StudioSession,
 } from "@/lib/studio-types"
 import {
@@ -165,6 +168,7 @@ const CHAT_REASONING_EFFORT_STORAGE_KEY = "astraflow:chat-reasoning-effort"
 const PENDING_PROJECT_STORAGE_KEY = "astraflow:pending-project"
 const DEFAULT_CHAT_RUNTIME_ID = "langchain"
 const PROJECT_NONE_VALUE = "__none__"
+const ACP_PERMISSION_RUNTIME_IDS = new Set(["codex", "claude-code"])
 
 type ChatRuntimeOption = Pick<AgentRuntimeInfo, "id" | "label" | "description">
 
@@ -433,6 +437,10 @@ function getChatRuntimeLabel(
   )
 }
 
+function supportsPermissionMode(runtimeId: string) {
+  return ACP_PERMISSION_RUNTIME_IDS.has(runtimeId)
+}
+
 async function readJson<T>(response: Response) {
   const data = (await response.json()) as ApiResponse<T>
 
@@ -489,6 +497,33 @@ async function updateSessionProject(
   })
 
   return readJson<StudioSession>(response)
+}
+
+async function updateSessionPermissionMode(
+  sessionId: string,
+  permissionMode: StudioPermissionMode
+) {
+  const response = await fetch(`/api/studio/sessions/${sessionId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ permissionMode }),
+  })
+
+  return readJson<StudioSession>(response)
+}
+
+async function sendPermissionDecision(input: {
+  sessionId: string
+  requestId: string
+  optionId: string
+}) {
+  const response = await fetch("/api/studio/chat/permission", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  })
+
+  return readJson<{ resolved: boolean }>(response)
 }
 
 async function listMessages(sessionId: string) {
@@ -759,6 +794,8 @@ function StudioChatWorkbench({
   const [selectedProjectId, setSelectedProjectId] = React.useState<
     string | null
   >(() => getPendingProjectId())
+  const [selectedPermissionMode, setSelectedPermissionMode] =
+    React.useState<StudioPermissionMode>("auto")
   const [messages, setMessages] = React.useState<StudioMessage[]>([])
   const [pendingAttachments, setPendingAttachments] = React.useState<
     PendingAttachment[]
@@ -865,6 +902,7 @@ function StudioChatWorkbench({
   const reloadSessionProject = React.useCallback(async () => {
     if (!sessionId) {
       setSelectedProjectId(getPendingProjectId())
+      setSelectedPermissionMode("auto")
       return
     }
 
@@ -873,8 +911,10 @@ function StudioChatWorkbench({
       const session = sessions.find((candidate) => candidate.id === sessionId)
 
       setSelectedProjectId(session?.projectId ?? null)
+      setSelectedPermissionMode(session?.permissionMode ?? "auto")
     } catch {
       setSelectedProjectId(null)
+      setSelectedPermissionMode("auto")
     }
   }, [sessionId])
 
@@ -1220,6 +1260,7 @@ function StudioChatWorkbench({
         const session = await updateSessionProject(sessionId, projectId)
 
         setSelectedProjectId(session.projectId)
+        setSelectedPermissionMode(session.permissionMode)
         onSessionsChange()
         dispatchStudioSessionsChanged()
       } catch {
@@ -1228,6 +1269,74 @@ function StudioChatWorkbench({
       }
     },
     [onSessionsChange, selectedProjectId, sessionId, t]
+  )
+
+  const handlePermissionModeChange = React.useCallback(
+    async (permissionMode: StudioPermissionMode) => {
+      const previousPermissionMode = selectedPermissionMode
+
+      setSelectedPermissionMode(permissionMode)
+
+      if (!sessionId) {
+        return
+      }
+
+      try {
+        const session = await updateSessionPermissionMode(
+          sessionId,
+          permissionMode
+        )
+
+        setSelectedPermissionMode(session.permissionMode)
+        onSessionsChange()
+        dispatchStudioSessionsChanged()
+      } catch {
+        setSelectedPermissionMode(previousPermissionMode)
+        toast.error(t.requestFailed)
+      }
+    },
+    [onSessionsChange, selectedPermissionMode, sessionId, t]
+  )
+
+  const handlePermissionDecision = React.useCallback(
+    (
+      requestId: string,
+      option: StudioPermissionOption,
+      status: Extract<StudioMessagePart, { type: "permission" }>["status"]
+    ) => {
+      if (!sessionId) {
+        return
+      }
+
+      setMessages((currentMessages) =>
+        currentMessages.map((message) =>
+          message.sessionId !== sessionId
+            ? message
+            : {
+                ...message,
+                parts: message.parts.map((part) =>
+                  part.type === "permission" && part.id === requestId
+                    ? {
+                        ...part,
+                        status,
+                        selectedOptionId: option.optionId,
+                      }
+                    : part
+                ),
+              }
+        )
+      )
+
+      void sendPermissionDecision({
+        sessionId,
+        requestId,
+        optionId: option.optionId,
+      }).catch(() => {
+        toast.error(t.studioPermissionDecisionFailed)
+        void reloadMessages(sessionId)
+      })
+    },
+    [reloadMessages, sessionId, t]
   )
 
   async function handleSubmit() {
@@ -1250,6 +1359,7 @@ function StudioChatWorkbench({
           : await createSession(prompt || attachments[0]?.name || "New chat")
       const activeSessionId = activeSession.id
       const projectIdForNewSession = !sessionId ? getPendingProjectId() : null
+      let nextPermissionMode = selectedPermissionMode
 
       if (projectIdForNewSession) {
         try {
@@ -1259,11 +1369,31 @@ function StudioChatWorkbench({
           )
 
           setSelectedProjectId(updatedSession.projectId)
+          nextPermissionMode = updatedSession.permissionMode
           setPendingProjectId(null)
         } catch {
           toast.error(t.studioLocalProjectBindFailed)
         }
       }
+
+      if (
+        !sessionId &&
+        selectedPermissionMode !== "auto" &&
+        selectedPermissionMode !== nextPermissionMode
+      ) {
+        try {
+          const updatedSession = await updateSessionPermissionMode(
+            activeSessionId,
+            selectedPermissionMode
+          )
+
+          nextPermissionMode = updatedSession.permissionMode
+        } catch {
+          toast.error(t.requestFailed)
+        }
+      }
+
+      setSelectedPermissionMode(nextPermissionMode)
 
       const userMessage = await createMessage({
         sessionId: activeSessionId,
@@ -1328,6 +1458,7 @@ function StudioChatWorkbench({
                   key={message.id}
                   message={message}
                   onRetry={handleRetryMessage}
+                  onPermissionDecision={handlePermissionDecision}
                 />
               ))}
 
@@ -1360,12 +1491,14 @@ function StudioChatWorkbench({
                 runtimeId={resolvedRuntimeId}
                 runtimeInfos={runtimeInfos}
                 reasoningEffort={selectedReasoningEffort}
+                permissionMode={selectedPermissionMode}
                 localProjects={localProjects}
                 selectedProjectId={selectedProjectId}
                 attachments={pendingAttachments}
                 onModelChange={setSelectedModel}
                 onRuntimeChange={setSelectedRuntimeId}
                 onReasoningEffortChange={setSelectedReasoningEffort}
+                onPermissionModeChange={handlePermissionModeChange}
                 onProjectChange={handleProjectChange}
                 onValueChange={setInput}
                 onAddFiles={addFiles}
@@ -1389,12 +1522,14 @@ function StudioChatWorkbench({
               runtimeId={resolvedRuntimeId}
               runtimeInfos={runtimeInfos}
               reasoningEffort={selectedReasoningEffort}
+              permissionMode={selectedPermissionMode}
               localProjects={localProjects}
               selectedProjectId={selectedProjectId}
               attachments={pendingAttachments}
               onModelChange={setSelectedModel}
               onRuntimeChange={setSelectedRuntimeId}
               onReasoningEffortChange={setSelectedReasoningEffort}
+              onPermissionModeChange={handlePermissionModeChange}
               onProjectChange={handleProjectChange}
               onValueChange={setInput}
               onAddFiles={addFiles}
@@ -1420,12 +1555,14 @@ type ChatComposerProps = {
   runtimeId: string
   runtimeInfos: ChatRuntimeOption[]
   reasoningEffort: ChatReasoningEffort
+  permissionMode: StudioPermissionMode
   localProjects: StudioLocalProjectWithGitInfo[]
   selectedProjectId: string | null
   attachments: PendingAttachment[]
   onModelChange: (model: SupportedChatModel) => void
   onRuntimeChange: (runtimeId: string) => void
   onReasoningEffortChange: (effort: ChatReasoningEffort) => void
+  onPermissionModeChange: (permissionMode: StudioPermissionMode) => void
   onProjectChange: (projectId: string | null) => void
   onValueChange: (value: string) => void
   onAddFiles: (files: FileList | null) => void
@@ -1578,12 +1715,14 @@ function ChatComposer({
   runtimeId,
   runtimeInfos,
   reasoningEffort,
+  permissionMode,
   localProjects,
   selectedProjectId,
   attachments,
   onModelChange,
   onRuntimeChange,
   onReasoningEffortChange,
+  onPermissionModeChange,
   onProjectChange,
   onValueChange,
   onAddFiles,
@@ -1607,6 +1746,24 @@ function ChatComposer({
     max: t.studioReasoningMax,
     enabled: t.studioReasoningEnabled,
   }
+  const permissionLabelByValue: Record<StudioPermissionMode, string> = {
+    auto: t.studioPermissionAuto,
+    ask: t.studioPermissionAsk,
+    readonly: t.studioPermissionReadonly,
+  }
+  const permissionOptions: Array<{
+    value: StudioPermissionMode
+    label: string
+    icon: typeof Zap
+  }> = [
+    { value: "auto", label: permissionLabelByValue.auto, icon: Zap },
+    { value: "ask", label: permissionLabelByValue.ask, icon: Hand },
+    { value: "readonly", label: permissionLabelByValue.readonly, icon: Eye },
+  ]
+  const permissionModeOption =
+    permissionOptions.find((option) => option.value === permissionMode) ??
+    permissionOptions[0]
+  const PermissionModeIcon = permissionModeOption.icon
   const resolvedReasoningEffort = resolveChatReasoningEffort(
     model,
     reasoningEffort
@@ -1621,6 +1778,7 @@ function ChatComposer({
   const selectedRuntimeInfo =
     runtimeInfos.find((runtime) => runtime.id === runtimeId) ??
     FALLBACK_CHAT_RUNTIME_INFO
+  const showPermissionMode = supportsPermissionMode(runtimeId)
   const selectedProject =
     localProjects.find((project) => project.id === selectedProjectId) ?? null
   const selectedProjectValue = selectedProject?.id ?? PROJECT_NONE_VALUE
@@ -1793,6 +1951,44 @@ function ChatComposer({
               </SelectContent>
             </Select>
 
+            {showPermissionMode ? (
+              <Select
+                value={permissionMode}
+                onValueChange={(nextValue) =>
+                  onPermissionModeChange(nextValue as StudioPermissionMode)
+                }
+                disabled={isBusy}
+              >
+                <SelectTrigger
+                  size="sm"
+                  className="h-8 max-w-44 rounded-full bg-background px-3 text-sm sm:max-w-48"
+                  aria-label={t.studioPermissionMode}
+                >
+                  <PermissionModeIcon aria-hidden className="size-4" />
+                  <span className="truncate">{permissionModeOption.label}</span>
+                </SelectTrigger>
+                <SelectContent position="popper" side="top" align="end">
+                  <SelectGroup>
+                    {permissionOptions.map((option) => {
+                      const Icon = option.icon
+
+                      return (
+                        <SelectItem key={option.value} value={option.value}>
+                          <span className="flex min-w-0 items-center gap-2">
+                            <Icon
+                              aria-hidden
+                              className="size-4 text-muted-foreground"
+                            />
+                            <span className="truncate">{option.label}</span>
+                          </span>
+                        </SelectItem>
+                      )
+                    })}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            ) : null}
+
             <Select
               value={model}
               onValueChange={(nextValue) =>
@@ -1960,9 +2156,15 @@ function ChatComposer({
 
 const ChatMessageBubble = React.memo(function ChatMessageBubble({
   message,
+  onPermissionDecision,
   onRetry,
 }: {
   message: StudioMessage
+  onPermissionDecision: (
+    requestId: string,
+    option: StudioPermissionOption,
+    status: Extract<StudioMessagePart, { type: "permission" }>["status"]
+  ) => void
   onRetry: (message: StudioMessage) => void
 }) {
   if (message.role === "user") {
@@ -1999,7 +2201,13 @@ const ChatMessageBubble = React.memo(function ChatMessageBubble({
     )
   }
 
-  return <AssistantMessage message={message} onRetry={onRetry} />
+  return (
+    <AssistantMessage
+      message={message}
+      onPermissionDecision={onPermissionDecision}
+      onRetry={onRetry}
+    />
+  )
 })
 
 const markdownClassName =
@@ -2133,6 +2341,131 @@ function AssistantPlan({
           </li>
         ))}
       </ul>
+    </div>
+  )
+}
+
+function getPermissionDecisionStatus(option: StudioPermissionOption) {
+  return option.kind.startsWith("allow")
+    ? ("approved" as const)
+    : ("denied" as const)
+}
+
+function getPermissionStatusLabel(
+  status: Extract<StudioMessagePart, { type: "permission" }>["status"],
+  t: ReturnType<typeof useI18n>["t"]
+) {
+  switch (status) {
+    case "approved":
+      return t.studioPermissionApproved
+    case "denied":
+      return t.studioPermissionDenied
+    case "cancelled":
+      return t.studioPermissionCancelled
+    case "pending":
+      return t.studioPermissionPending
+  }
+}
+
+function AssistantPermissionCard({
+  part,
+  onDecision,
+}: {
+  part: Extract<StudioMessagePart, { type: "permission" }>
+  onDecision: (
+    requestId: string,
+    option: StudioPermissionOption,
+    status: Extract<StudioMessagePart, { type: "permission" }>["status"]
+  ) => void
+}) {
+  const { t } = useI18n()
+  const [expanded, setExpanded] = React.useState(false)
+  const input = part.input.trim()
+  const selectedOption = part.options.find(
+    (option) => option.optionId === part.selectedOptionId
+  )
+  const showToggle = input.length > 320 || input.split(/\r?\n/).length > 4
+
+  return (
+    <div
+      className={cn(
+        assistantTraceContainerClassName,
+        "rounded-xl border border-border/70 bg-card px-3 py-3 text-sm text-foreground shadow-sm"
+      )}
+    >
+      <div className="flex min-w-0 items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-xs font-semibold text-muted-foreground uppercase">
+            {t.studioPermissionRequested}
+          </div>
+          <div className="mt-0.5 truncate font-medium">{part.toolName}</div>
+        </div>
+        <Badge
+          variant={
+            part.status === "denied" || part.status === "cancelled"
+              ? "destructive"
+              : part.status === "approved"
+                ? "secondary"
+                : "outline"
+          }
+        >
+          {getPermissionStatusLabel(part.status, t)}
+        </Badge>
+      </div>
+
+      <div className="mt-3 min-w-0">
+        <div className="mb-1 text-xs font-medium text-muted-foreground">
+          {t.studioPermissionInput}
+        </div>
+        <pre
+          className={cn(
+            "min-w-0 overflow-x-auto rounded-lg bg-muted/60 px-2.5 py-2 font-mono text-xs leading-5 whitespace-pre-wrap text-foreground",
+            !expanded && "max-h-24 overflow-hidden"
+          )}
+        >
+          {input || t.studioPermissionNoInput}
+        </pre>
+        {showToggle ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="mt-1 h-7 rounded-lg px-2 text-xs"
+            onClick={() => setExpanded((current) => !current)}
+          >
+            {expanded ? t.showLess : t.showMore}
+          </Button>
+        ) : null}
+      </div>
+
+      {part.status === "pending" ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {part.options.map((option) => (
+            <Button
+              key={option.optionId}
+              type="button"
+              variant={
+                option.kind.startsWith("reject")
+                  ? "destructive"
+                  : option.kind === "allow_always"
+                    ? "default"
+                    : "outline"
+              }
+              size="sm"
+              className="h-8 rounded-xl"
+              onClick={() =>
+                onDecision(part.id, option, getPermissionDecisionStatus(option))
+              }
+            >
+              {option.name || option.optionId}
+            </Button>
+          ))}
+        </div>
+      ) : selectedOption ? (
+        <div className="mt-3 text-xs text-muted-foreground">
+          {selectedOption.name || selectedOption.optionId}
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -3090,11 +3423,17 @@ function AssistantActivity({ activity }: { activity: StudioMessageActivity }) {
 const AssistantContentParts = React.memo(function AssistantContentParts({
   content,
   activities,
+  onPermissionDecision,
   parts,
   streaming = false,
 }: {
   content: string
   activities: StudioMessageActivity[]
+  onPermissionDecision: (
+    requestId: string,
+    option: StudioPermissionOption,
+    status: Extract<StudioMessagePart, { type: "permission" }>["status"]
+  ) => void
   parts: StudioMessagePart[]
   streaming?: boolean
 }) {
@@ -3134,6 +3473,16 @@ const AssistantContentParts = React.memo(function AssistantContentParts({
 
         if (part.type === "plan") {
           return <AssistantPlan key={`plan-${index}`} todos={part.todos} />
+        }
+
+        if (part.type === "permission") {
+          return (
+            <AssistantPermissionCard
+              key={part.id}
+              part={part}
+              onDecision={onPermissionDecision}
+            />
+          )
         }
 
         if (!part.content.trim()) {
@@ -3276,6 +3625,7 @@ function MessageVersionsDialog({
           <AssistantContentParts
             content={activeVersion.content}
             activities={activeVersion.activities}
+            onPermissionDecision={() => undefined}
             parts={activeVersion.parts}
           />
         </div>
@@ -3286,9 +3636,15 @@ function MessageVersionsDialog({
 
 const AssistantMessage = React.memo(function AssistantMessage({
   message,
+  onPermissionDecision,
   onRetry,
 }: {
   message: StudioMessage
+  onPermissionDecision: (
+    requestId: string,
+    option: StudioPermissionOption,
+    status: Extract<StudioMessagePart, { type: "permission" }>["status"]
+  ) => void
   onRetry: (message: StudioMessage) => void
 }) {
   const { t } = useI18n()
@@ -3327,6 +3683,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
           <AssistantContentParts
             content={message.content}
             activities={message.activities}
+            onPermissionDecision={onPermissionDecision}
             parts={message.parts}
             streaming={isStreaming}
           />

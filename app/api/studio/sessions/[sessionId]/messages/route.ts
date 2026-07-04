@@ -42,6 +42,12 @@ const activitySchema = z.object({
   error: z.string().trim().max(10_000).nullable().default(null),
 })
 
+const permissionOptionSchema = z.object({
+  optionId: z.string().trim().min(1).max(120),
+  name: z.string().trim().min(1).max(200),
+  kind: z.string().trim().min(1).max(80),
+})
+
 const messagePartSchema = z.discriminatedUnion("type", [
   z.object({
     id: z.string().trim().min(1).max(120),
@@ -77,6 +83,15 @@ const messagePartSchema = z.discriminatedUnion("type", [
         })
       )
       .max(120),
+  }),
+  z.object({
+    id: z.string().trim().min(1).max(120),
+    type: z.literal("permission"),
+    toolName: z.string().trim().min(1).max(120),
+    input: z.string().max(20_000),
+    status: z.enum(["pending", "approved", "denied", "cancelled"]),
+    options: z.array(permissionOptionSchema).max(12),
+    selectedOptionId: z.string().trim().min(1).max(120).nullable(),
   }),
 ])
 

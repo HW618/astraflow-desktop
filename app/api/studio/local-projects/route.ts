@@ -6,7 +6,9 @@ import { z } from "zod"
 
 import { getAppAuthState } from "@/lib/app-auth"
 import {
+  countStudioPermissionRules,
   createStudioLocalProject,
+  deleteStudioPermissionRules,
   deleteStudioLocalProject,
   listStudioLocalProjects,
 } from "@/lib/studio-db"
@@ -26,6 +28,7 @@ const createLocalProjectSchema = z.object({
 
 const deleteLocalProjectSchema = z.object({
   id: z.string().trim().min(1),
+  action: z.enum(["delete", "clearPermissionRules"]).default("delete"),
 })
 
 async function requireAuthenticatedRequest() {
@@ -95,6 +98,7 @@ async function withGitInfo(
   return {
     ...project,
     git: await readGitInfo(project.path),
+    permissionRuleCount: countStudioPermissionRules(project.id),
   }
 }
 
@@ -178,6 +182,15 @@ export async function DELETE(request: Request) {
       { ok: false, error: parsed.error.flatten() },
       { status: 400 }
     )
+  }
+
+  if (parsed.data.action === "clearPermissionRules") {
+    const deleted = deleteStudioPermissionRules(parsed.data.id)
+
+    return NextResponse.json({
+      ok: true,
+      data: { id: parsed.data.id, deleted },
+    })
   }
 
   deleteStudioLocalProject(parsed.data.id)

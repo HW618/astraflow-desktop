@@ -2,6 +2,10 @@ export const studioModes = ["chat", "image", "video", "audio"] as const
 
 export type StudioMode = (typeof studioModes)[number]
 
+export const studioPermissionModes = ["auto", "ask", "readonly"] as const
+
+export type StudioPermissionMode = (typeof studioPermissionModes)[number]
+
 export type StudioMessageRole = "user" | "assistant"
 
 export type StudioMessageStatus = "complete" | "streaming" | "error"
@@ -13,6 +17,12 @@ export type StudioMessageActivity = {
   input: string
   output: string
   error: string | null
+}
+
+export type StudioPermissionOption = {
+  optionId: string
+  name: string
+  kind: string
 }
 
 export type StudioMessagePart =
@@ -41,6 +51,15 @@ export type StudioMessagePart =
         status: "pending" | "in_progress" | "completed"
       }[]
     }
+  | {
+      id: string
+      type: "permission"
+      toolName: string
+      input: string
+      status: "pending" | "approved" | "denied" | "cancelled"
+      options: StudioPermissionOption[]
+      selectedOptionId: string | null
+    }
 
 export type StudioAttachmentKind = "image" | "file"
 
@@ -60,6 +79,7 @@ export type StudioSession = {
   mode: StudioMode
   title: string
   projectId: string | null
+  permissionMode: StudioPermissionMode
   createdAt: string
   updatedAt: string
 }
@@ -80,6 +100,7 @@ export type StudioLocalProjectGitInfo = {
 
 export type StudioLocalProjectWithGitInfo = StudioLocalProject & {
   git: StudioLocalProjectGitInfo
+  permissionRuleCount: number
 }
 
 export type StudioMessage = {

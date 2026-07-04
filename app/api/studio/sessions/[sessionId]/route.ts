@@ -5,9 +5,11 @@ import {
   deleteStudioSession,
   getStudioLocalProject,
   getStudioSession,
+  updateStudioSessionPermissionMode,
   updateStudioSessionProject,
   updateStudioSessionTitle,
 } from "@/lib/studio-db"
+import { studioPermissionModes } from "@/lib/studio-types"
 
 export const runtime = "nodejs"
 
@@ -15,8 +17,14 @@ const updateSessionSchema = z
   .object({
     title: z.string().trim().min(1).max(120).optional(),
     projectId: z.string().trim().min(1).nullable().optional(),
+    permissionMode: z.enum(studioPermissionModes).optional(),
   })
-  .refine((value) => value.title !== undefined || value.projectId !== undefined)
+  .refine(
+    (value) =>
+      value.title !== undefined ||
+      value.projectId !== undefined ||
+      value.permissionMode !== undefined
+  )
 
 type RouteContext = {
   params: Promise<{ sessionId: string }>
@@ -56,6 +64,13 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   if (parsed.data.projectId !== undefined) {
     session = updateStudioSessionProject(sessionId, parsed.data.projectId)
+  }
+
+  if (parsed.data.permissionMode !== undefined) {
+    session = updateStudioSessionPermissionMode(
+      sessionId,
+      parsed.data.permissionMode
+    )
   }
 
   return NextResponse.json({ ok: true, data: session })

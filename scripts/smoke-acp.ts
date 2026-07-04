@@ -79,8 +79,11 @@ async function smokeTarget(target: SmokeTarget) {
   )
   const child = spawnAcpChild(probe.command, workspace)
   let stderr = ""
+  const abortController = new AbortController()
   const app = createAcpClientApp({
     debugLabel: `smoke:${target.id}`,
+    getSignal: () => abortController.signal,
+    sessionId: `smoke:${target.id}`,
     workspace,
   })
   const connection = app.connect(createAcpProcessStream(child))

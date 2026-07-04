@@ -17,6 +17,10 @@ import { dirname, isAbsolute, relative, resolve } from "node:path"
 import { Readable, Writable } from "node:stream"
 
 import type { AgentEvent } from "@/lib/agent/events"
+import {
+  requestPermission,
+  type PermissionOption,
+} from "@/lib/agent/permission-broker"
 import type {
   AgentRunInput,
   AgentRuntime,
@@ -44,6 +48,7 @@ type AcpSessionState = {
   idleTimer: NodeJS.Timeout | null
   key: string
   queue: AgentEventQueue | null
+  runSignal: AbortSignal | null
   stderr: string
   toolNames: Map<string, string>
   workspace: string
@@ -314,23 +319,17 @@ function applyLineWindow(
   return lines.slice(start, end).join("\n")
 }
 
-function findAllowOption(
-  options: Array<{ kind: string; name: string; optionId: string }>
-) {
-  return (
-    options.find((option) => option.kind.startsWith("allow")) ??
-    options[0] ??
-    null
-  )
-}
-
 export function createAcpClientApp({
   debugLabel,
   emitEvent,
+  getSignal,
+  sessionId,
   workspace,
 }: {
   debugLabel: string
   emitEvent?: (event: AgentEvent) => void
+  getSignal: () => AbortSignal
+  sessionId: string
   workspace: string
 }) {
   return createAcpClient({ name: "AstraFlow Desktop" })
@@ -349,17 +348,46 @@ export function createAcpClientApp({
     })
     .onRequest(
       methods.client.session.requestPermission,
-      ({ params, requestId }) => {
-        const option = findAllowOption(params.options)
+      async ({ params, requestId }) => {
+        const permissionRequestId = String(requestId ?? randomUUID())
+        const options: PermissionOption[] = params.options.map((option) => ({
+          optionId: option.optionId,
+          name: option.name,
+          kind: option.kind,
+        }))
         const toolCall = params.toolCall
         const toolName = toolCall.kind ?? toolCall.title ?? "tool"
+        const input = stringifyPayload(toolCall.rawInput ?? toolCall)
 
-        if (!option) {
+        emitEvent?.({
+          type: "permission_request",
+          requestId: permissionRequestId,
+          toolName,
+          input,
+          options,
+          status: "pending",
+          selectedOptionId: null,
+          decisions: [],
+        })
+
+        const decision = await requestPermission({
+          sessionId,
+          requestId: permissionRequestId,
+          toolName,
+          inputPreview: input,
+          options,
+          signal: getSignal(),
+        })
+
+        if ("cancelled" in decision) {
           emitEvent?.({
             type: "permission_request",
-            requestId: String(requestId ?? randomUUID()),
+            requestId: permissionRequestId,
             toolName,
-            input: stringifyPayload(toolCall.rawInput ?? toolCall),
+            input,
+            options,
+            status: "resolved",
+            selectedOptionId: null,
             decisions: ["cancelled"],
           })
 
@@ -368,25 +396,32 @@ export function createAcpClientApp({
           }
         }
 
+        const option = options.find(
+          (candidate) => candidate.optionId === decision.optionId
+        )
+
         debugAcp("permission_auto_selected", {
           debugLabel,
-          optionId: option.optionId,
-          optionKind: option.kind,
+          optionId: decision.optionId,
+          optionKind: option?.kind,
           sessionId: params.sessionId,
         })
 
         emitEvent?.({
           type: "permission_request",
-          requestId: String(requestId ?? randomUUID()),
+          requestId: permissionRequestId,
           toolName,
-          input: stringifyPayload(toolCall.rawInput ?? toolCall),
-          decisions: [option.name || option.optionId],
+          input,
+          options,
+          status: "resolved",
+          selectedOptionId: decision.optionId,
+          decisions: [option?.name || decision.optionId],
         })
 
         return {
           outcome: {
             outcome: "selected" as const,
-            optionId: option.optionId,
+            optionId: decision.optionId,
           },
         }
       }
@@ -854,19 +889,24 @@ async function createAcpSession({
   command,
   info,
   key,
+  sessionId,
   workspace,
 }: {
   command: AcpCommandSpec
   info: AgentRuntimeInfo
   key: string
+  sessionId: string
   workspace: string
 }) {
   const child = spawnAcpChild(command, workspace)
   let state: AcpSessionState | null = null
   let capturedStderr = ""
+  const fallbackAbortController = new AbortController()
   const stream = createAcpProcessStream(child)
   const app = createAcpClientApp({
     debugLabel: info.id,
+    getSignal: () => state?.runSignal ?? fallbackAbortController.signal,
+    sessionId,
     workspace,
     emitEvent: (event) => {
       state?.queue?.push(event)
@@ -924,6 +964,7 @@ async function createAcpSession({
       idleTimer: null,
       key,
       queue: null,
+      runSignal: null,
       stderr: capturedStderr,
       toolNames: new Map(),
       workspace,
@@ -1009,6 +1050,7 @@ async function getOrCreateAcpSession({
       command,
       info,
       key,
+      sessionId,
       workspace,
     }),
     shouldIncludeRecap: true,
@@ -1065,8 +1107,9 @@ async function pumpAcpPrompt({
   input: AgentRunInput
   queue: AgentEventQueue
   shouldIncludeRecap: boolean
-  state: AcpSessionState
+    state: AcpSessionState
 }) {
+  state.runSignal = input.signal
   const cleanupAbortHandler = installAbortHandler({
     signal: input.signal,
     state,
@@ -1106,6 +1149,9 @@ async function pumpAcpPrompt({
     }
   } finally {
     cleanupAbortHandler()
+    if (state.runSignal === input.signal) {
+      state.runSignal = null
+    }
     queue.close()
   }
 }

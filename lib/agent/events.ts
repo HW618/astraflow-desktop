@@ -31,7 +31,10 @@ export type AgentEvent =
       requestId: string
       toolName: string
       input: string
-      decisions: string[]
+      decisions?: string[]
+      options?: { optionId: string; name: string; kind: string }[]
+      selectedOptionId?: string | null
+      status?: "pending" | "resolved"
     }
   | { type: "run_meta"; sessionRef?: string; usage?: unknown }
   | { type: "error"; message: string }

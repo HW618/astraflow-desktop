@@ -38,6 +38,7 @@ import type {
   CodeBoxVolume,
 } from "@/lib/codebox-types"
 import type { InstalledSkill, SkillMeta } from "@/lib/skill-market"
+import { studioPermissionModes } from "@/lib/studio-types"
 import type {
   StudioAttachment,
   StudioMessageActivity,
@@ -56,6 +57,7 @@ import type {
   StudioMode,
   StudioOAuthStatus,
   StudioOAuthTokens,
+  StudioPermissionMode,
   StudioSession,
   StudioSessionFile,
   StudioSessionFileKind,
@@ -67,6 +69,7 @@ type DbSessionRow = {
   mode: StudioMode
   title: string
   project_id: string | null
+  permission_mode: StudioPermissionMode
   created_at: string
   updated_at: string
 }
@@ -103,6 +106,13 @@ type DbSettingRow = {
   key: string
   value: string
   updated_at: string
+}
+
+type DbPermissionRuleRow = {
+  id: string
+  project_id: string | null
+  tool_name: string
+  created_at: string
 }
 
 type DbSessionSandboxRow = {
@@ -493,6 +503,10 @@ const studioTableColumns = {
     { name: "mode", definition: "mode TEXT NOT NULL DEFAULT 'chat'" },
     { name: "title", definition: "title TEXT NOT NULL DEFAULT 'New chat'" },
     { name: "project_id", definition: "project_id TEXT" },
+    {
+      name: "permission_mode",
+      definition: "permission_mode TEXT NOT NULL DEFAULT 'auto'",
+    },
     { name: "created_at", definition: "created_at TEXT NOT NULL DEFAULT ''" },
     { name: "updated_at", definition: "updated_at TEXT NOT NULL DEFAULT ''" },
   ],
@@ -537,6 +551,12 @@ const studioTableColumns = {
     { name: "key", definition: "key TEXT" },
     { name: "value", definition: "value TEXT NOT NULL DEFAULT ''" },
     { name: "updated_at", definition: "updated_at TEXT NOT NULL DEFAULT ''" },
+  ],
+  studio_permission_rules: [
+    { name: "id", definition: "id TEXT" },
+    { name: "project_id", definition: "project_id TEXT" },
+    { name: "tool_name", definition: "tool_name TEXT NOT NULL DEFAULT ''" },
+    { name: "created_at", definition: "created_at TEXT NOT NULL DEFAULT ''" },
   ],
   studio_session_sandboxes: [
     { name: "session_id", definition: "session_id TEXT" },
@@ -859,6 +879,7 @@ function initializeSchema(database: Database.Database) {
       mode TEXT NOT NULL,
       title TEXT NOT NULL,
       project_id TEXT,
+      permission_mode TEXT NOT NULL DEFAULT 'auto',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -895,6 +916,14 @@ function initializeSchema(database: Database.Database) {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS studio_permission_rules (
+      id TEXT PRIMARY KEY,
+      project_id TEXT,
+      tool_name TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(project_id, tool_name)
     );
 
     CREATE TABLE IF NOT EXISTS studio_session_sandboxes (
@@ -1085,6 +1114,12 @@ function ensureSchemaIndexes(database: Database.Database) {
     CREATE INDEX IF NOT EXISTS studio_sessions_project_id_idx
       ON studio_sessions(project_id, updated_at DESC);
 
+    CREATE UNIQUE INDEX IF NOT EXISTS studio_permission_rules_scope_tool_idx
+      ON studio_permission_rules(COALESCE(project_id, ''), tool_name);
+
+    CREATE INDEX IF NOT EXISTS studio_permission_rules_project_idx
+      ON studio_permission_rules(project_id, created_at DESC);
+
     CREATE INDEX IF NOT EXISTS studio_local_projects_updated_idx
       ON studio_local_projects(last_opened_at DESC, updated_at DESC);
 
@@ -1152,9 +1187,17 @@ function mapSession(row: DbSessionRow): StudioSession {
     mode: row.mode,
     title: row.title,
     projectId: row.project_id,
+    permissionMode: normalizePermissionMode(row.permission_mode),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
+}
+
+function normalizePermissionMode(value: unknown): StudioPermissionMode {
+  return typeof value === "string" &&
+    studioPermissionModes.includes(value as StudioPermissionMode)
+    ? (value as StudioPermissionMode)
+    : "auto"
 }
 
 function mapLocalProject(row: DbLocalProjectRow): StudioLocalProject {
@@ -1428,6 +1471,16 @@ function isStudioMessageActivity(
   )
 }
 
+function isStudioPermissionOption(value: unknown) {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { optionId?: unknown }).optionId === "string" &&
+    typeof (value as { name?: unknown }).name === "string" &&
+    typeof (value as { kind?: unknown }).kind === "string"
+  )
+}
+
 function parseParts(raw: string | null): StudioMessagePart[] {
   if (!raw) {
     return []
@@ -1467,6 +1520,22 @@ function parseParts(raw: string | null): StudioMessagePart[] {
                 todo.status === "in_progress" ||
                 todo.status === "completed")
           )
+        )
+      }
+
+      if (part.type === "permission") {
+        return (
+          typeof part.id === "string" &&
+          typeof part.toolName === "string" &&
+          typeof part.input === "string" &&
+          (part.status === "pending" ||
+            part.status === "approved" ||
+            part.status === "denied" ||
+            part.status === "cancelled") &&
+          Array.isArray(part.options) &&
+          part.options.every(isStudioPermissionOption) &&
+          (typeof part.selectedOptionId === "string" ||
+            part.selectedOptionId === null)
         )
       }
 
@@ -2642,16 +2711,136 @@ export function deleteStudioLocalProject(projectId: string) {
         `
       )
       .run(projectId)
+
+    database
+      .prepare(
+        `
+          DELETE FROM studio_permission_rules
+          WHERE project_id = ?
+        `
+      )
+      .run(projectId)
   })
 
   transaction()
+}
+
+export function hasStudioPermissionRule({
+  projectId,
+  toolName,
+}: {
+  projectId: string | null
+  toolName: string
+}) {
+  const normalizedToolName = toolName.trim()
+
+  if (!normalizedToolName) {
+    return false
+  }
+
+  const row = getDb()
+    .prepare(
+      `
+        SELECT id, project_id, tool_name, created_at
+        FROM studio_permission_rules
+        WHERE tool_name = ?
+          AND (
+            project_id = ?
+            OR project_id IS NULL
+          )
+        ORDER BY
+          CASE WHEN project_id = ? THEN 0 ELSE 1 END,
+          created_at DESC
+        LIMIT 1
+      `
+    )
+    .get(normalizedToolName, projectId, projectId) as
+    | DbPermissionRuleRow
+    | undefined
+
+  return Boolean(row)
+}
+
+export function createStudioPermissionRule({
+  projectId,
+  toolName,
+}: {
+  projectId: string | null
+  toolName: string
+}) {
+  const normalizedToolName = toolName.trim()
+
+  if (!normalizedToolName) {
+    return null
+  }
+
+  const id = randomUUID()
+  const createdAt = nowIso()
+
+  getDb()
+    .prepare(
+      `
+        INSERT OR IGNORE INTO studio_permission_rules
+          (id, project_id, tool_name, created_at)
+        VALUES
+          (?, ?, ?, ?)
+      `
+    )
+    .run(id, projectId, normalizedToolName, createdAt)
+
+  return {
+    id,
+    projectId,
+    toolName: normalizedToolName,
+    createdAt,
+  }
+}
+
+export function countStudioPermissionRules(projectId: string | null) {
+  const row = getDb()
+    .prepare(
+      `
+        SELECT COUNT(*) AS count
+        FROM studio_permission_rules
+        WHERE ${
+          projectId === null ? "project_id IS NULL" : "project_id = ?"
+        }
+      `
+    )
+    .get(...(projectId === null ? [] : [projectId])) as
+    | { count: number }
+    | undefined
+
+  return row?.count ?? 0
+}
+
+export function deleteStudioPermissionRules(projectId: string | null) {
+  const result = getDb()
+    .prepare(
+      `
+        DELETE FROM studio_permission_rules
+        WHERE ${
+          projectId === null ? "project_id IS NULL" : "project_id = ?"
+        }
+      `
+    )
+    .run(...(projectId === null ? [] : [projectId]))
+
+  return result.changes
 }
 
 export function listStudioSessions() {
   const rows = getDb()
     .prepare(
       `
-        SELECT id, mode, title, project_id, created_at, updated_at
+        SELECT
+          id,
+          mode,
+          title,
+          project_id,
+          permission_mode,
+          created_at,
+          updated_at
         FROM studio_sessions
         ORDER BY updated_at DESC
       `
@@ -2665,7 +2854,14 @@ export function getStudioSession(sessionId: string) {
   const row = getDb()
     .prepare(
       `
-        SELECT id, mode, title, project_id, created_at, updated_at
+        SELECT
+          id,
+          mode,
+          title,
+          project_id,
+          permission_mode,
+          created_at,
+          updated_at
         FROM studio_sessions
         WHERE id = ?
       `
@@ -2681,6 +2877,7 @@ export function createStudioSession({ mode, title }: CreateSessionInput) {
     mode,
     title: normalizeTitle(title),
     projectId: null,
+    permissionMode: "auto",
     createdAt: nowIso(),
     updatedAt: nowIso(),
   }
@@ -2689,9 +2886,25 @@ export function createStudioSession({ mode, title }: CreateSessionInput) {
     .prepare(
       `
         INSERT INTO studio_sessions
-          (id, mode, title, project_id, created_at, updated_at)
+          (
+            id,
+            mode,
+            title,
+            project_id,
+            permission_mode,
+            created_at,
+            updated_at
+          )
         VALUES
-          (@id, @mode, @title, @projectId, @createdAt, @updatedAt)
+          (
+            @id,
+            @mode,
+            @title,
+            @projectId,
+            @permissionMode,
+            @createdAt,
+            @updatedAt
+          )
       `
     )
     .run(session)
@@ -2726,15 +2939,39 @@ export function updateStudioSessionProject(
     .prepare(
       `
         UPDATE studio_sessions
-        SET project_id = ?, updated_at = ?
+        SET project_id = ?,
+            permission_mode = CASE
+              WHEN ? IS NOT NULL AND permission_mode = 'auto' THEN 'ask'
+              ELSE permission_mode
+            END,
+            updated_at = ?
         WHERE id = ?
       `
     )
-    .run(projectId, updatedAt, sessionId)
+    .run(projectId, projectId, updatedAt, sessionId)
 
   if (projectId) {
     touchStudioLocalProject(projectId)
   }
+
+  return getStudioSession(sessionId)
+}
+
+export function updateStudioSessionPermissionMode(
+  sessionId: string,
+  permissionMode: StudioPermissionMode
+) {
+  const updatedAt = nowIso()
+
+  getDb()
+    .prepare(
+      `
+        UPDATE studio_sessions
+        SET permission_mode = ?, updated_at = ?
+        WHERE id = ?
+      `
+    )
+    .run(permissionMode, updatedAt, sessionId)
 
   return getStudioSession(sessionId)
 }
