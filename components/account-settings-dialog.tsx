@@ -12,6 +12,7 @@ import {
   RiLogoutBoxRLine,
   RiMailLine,
   RiMoonLine,
+  RiRobot2Line,
   RiSettings3Line,
   RiSunLine,
   RiTeamLine,
@@ -22,6 +23,7 @@ import type { RemixiconComponentType } from "@remixicon/react"
 import { toast } from "sonner"
 
 import { AppInfoButton } from "@/components/app-info-button"
+import { StudioAgentModelSettingsPage } from "@/components/studio-agent-model-settings-page"
 import { useTheme } from "@/components/theme-provider"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
@@ -84,8 +86,7 @@ type ProjectsResponse =
       message?: string
     }
 
-type SettingsDialogSection =
-  "account" | "system"
+type SettingsDialogSection = "account" | "agents" | "system"
 
 type AccountSettingsDialogProps = {
   open: boolean
@@ -240,7 +241,9 @@ function SettingRow({
           ) : null}
         </div>
       </div>
-      {children ? <div className="w-full sm:w-auto sm:shrink-0">{children}</div> : null}
+      {children ? (
+        <div className="w-full sm:w-auto sm:shrink-0">{children}</div>
+      ) : null}
     </div>
   )
 }
@@ -290,6 +293,10 @@ function AccountSettingsDialog({
     locale === "zh"
       ? {
           accountManagement: "账户管理",
+          agentSettings: "Agent 设置",
+          agentModelSettings: "Agent 模型设置",
+          agentModelSettingsDesc:
+            "配置每个 Agent 默认使用的 Modelverse 模型，或切回本机 CLI 配置。",
           systemSettings: "系统设置",
           settingsDescription: "管理账户、项目和应用偏好。",
           plan: "体验版",
@@ -318,6 +325,10 @@ function AccountSettingsDialog({
         }
       : {
           accountManagement: "Account",
+          agentSettings: "Agent settings",
+          agentModelSettings: "Agent models",
+          agentModelSettingsDesc:
+            "Configure each agent's default Modelverse model, or switch back to local CLI settings.",
           systemSettings: "System",
           settingsDescription: "Manage account, project, and app preferences.",
           plan: "Trial",
@@ -348,10 +359,31 @@ function AccountSettingsDialog({
   const sections: Array<{
     id: SettingsDialogSection
     label: string
+    title: string
+    description: string
     icon: RemixiconComponentType
   }> = [
-    { id: "account", label: copy.accountManagement, icon: RiUser3Line },
-    { id: "system", label: copy.systemSettings, icon: RiSettings3Line },
+    {
+      id: "account",
+      label: copy.accountManagement,
+      title: copy.accountManagement,
+      description: copy.settingsDescription,
+      icon: RiUser3Line,
+    },
+    {
+      id: "agents",
+      label: copy.agentSettings,
+      title: copy.agentModelSettings,
+      description: copy.agentModelSettingsDesc,
+      icon: RiRobot2Line,
+    },
+    {
+      id: "system",
+      label: copy.systemSettings,
+      title: copy.systemSettings,
+      description: copy.settingsDescription,
+      icon: RiSettings3Line,
+    },
   ]
 
   const loadProjects = React.useCallback(async () => {
@@ -451,6 +483,8 @@ function AccountSettingsDialog({
     typeof displayUser?.companyId === "number"
       ? String(displayUser.companyId)
       : "-"
+  const activeSectionMeta =
+    sections.find((section) => section.id === activeSection) ?? sections[0]
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -505,15 +539,14 @@ function AccountSettingsDialog({
           </aside>
 
           <main className="min-h-0 min-w-0 overflow-y-auto px-5 py-5 md:px-8 md:py-7">
-            <div className="mx-auto flex w-full min-w-0 max-w-4xl flex-col gap-5">
+            <div className="mx-auto flex w-full max-w-4xl min-w-0 flex-col gap-5">
               <div className="flex min-w-0 items-start justify-between gap-4 border-b pr-12 pb-4">
                 <div className="min-w-0">
                   <h2 className="text-2xl font-semibold tracking-normal">
-                    {sections.find((section) => section.id === activeSection)
-                      ?.label ?? t.settings}
+                    {activeSectionMeta?.title ?? t.settings}
                   </h2>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    {copy.settingsDescription}
+                    {activeSectionMeta?.description ?? copy.settingsDescription}
                   </p>
                 </div>
                 {(isLoadingProjects || isSavingProject) && open ? (
@@ -756,6 +789,10 @@ function AccountSettingsDialog({
                 </div>
               ) : null}
 
+              {activeSection === "agents" ? (
+                <StudioAgentModelSettingsPage embedded />
+              ) : null}
+
               {activeSection === "system" ? (
                 <div className="grid gap-3">
                   <SettingRow
@@ -804,7 +841,6 @@ function AccountSettingsDialog({
                   </SettingRow>
                 </div>
               ) : null}
-
             </div>
           </main>
         </div>

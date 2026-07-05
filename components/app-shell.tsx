@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation"
 import { AppSidebar } from "@/components/app-sidebar"
 import { StudioOnboardingTour } from "@/components/onboarding-tour"
 import { SidebarToggleButton } from "@/components/sidebar-toggle-button"
+import { Titlebar } from "@/components/titlebar"
 import {
   SidebarInset,
   SidebarProvider,
@@ -91,16 +92,10 @@ function SidebarResizeHandle({
       className="fixed bottom-0 z-20 hidden w-2 -translate-x-1/2 cursor-col-resize after:absolute after:inset-y-0 after:left-1/2 after:w-px hover:after:bg-border md:block"
       style={{
         left: open ? width : "var(--sidebar-collapsed-resize-left)",
-        top: "var(--electron-titlebar-height)",
+        top: 0,
       }}
       onPointerDown={handlePointerDown}
     />
-  )
-}
-
-function ElectronTitlebar() {
-  return (
-    <div className="electron-titlebar shrink-0 overflow-hidden bg-background" />
   )
 }
 
@@ -136,7 +131,7 @@ function DesktopCollapsedSidebarTrigger() {
   }
 
   return (
-    <div className="electron-collapsed-sidebar-trigger fixed top-2 left-2 z-50 hidden md:block">
+    <div className="electron-collapsed-sidebar-trigger fixed top-[calc((var(--titlebar-height)-2rem)/2)] left-(--titlebar-toggle-left) z-50 hidden md:block">
       <SidebarToggleButton />
     </div>
   )
@@ -172,7 +167,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
   if (pathname === "/login") {
     return (
       <div className="flex h-svh min-h-0 flex-col bg-background">
-        <ElectronTitlebar />
+        <Titlebar className="bg-background" />
         <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
       </div>
     )
@@ -189,7 +184,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
         {
           "--sidebar-width": `${sidebarWidth}px`,
           "--sidebar-width-mobile": "19rem",
-          "--sidebar-top-offset": "var(--electron-titlebar-height)",
+          "--sidebar-top-offset": "0px",
         } as React.CSSProperties
       }
     >

@@ -483,6 +483,7 @@ type UpdateImageGenerationInput = {
 
 const DEFAULT_SESSION_TITLE = "New chat"
 const STUDIO_MODELVERSE_API_KEY_SETTING = "modelverse_api_key"
+const STUDIO_AGENT_MODEL_SETTINGS = "agent_model_settings"
 const SELECTED_UCLOUD_PROJECT_SETTING = "selected_ucloud_project"
 const STUDIO_EXA_API_KEY_SETTING = "exa_api_key"
 const STUDIO_OAUTH_SETTING = "ucloud_oauth_tokens"
@@ -4375,6 +4376,30 @@ export function saveStudioModelverseApiKey(
 
 export function clearStudioModelverseApiKey() {
   deleteStudioSetting(STUDIO_MODELVERSE_API_KEY_SETTING)
+}
+
+export function getStudioAgentModelSettingsRecord() {
+  const row = readStudioSetting(STUDIO_AGENT_MODEL_SETTINGS)
+
+  if (!row?.value) {
+    return null
+  }
+
+  try {
+    return {
+      value: JSON.parse(row.value) as unknown,
+      updatedAt: row.updated_at,
+    }
+  } catch {
+    return null
+  }
+}
+
+export function saveStudioAgentModelSettingsRecord(value: unknown) {
+  return writeStudioSetting(
+    STUDIO_AGENT_MODEL_SETTINGS,
+    JSON.stringify(value)
+  )
 }
 
 export function getSelectedUCloudProjectId() {

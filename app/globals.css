@@ -65,8 +65,9 @@
   --chart-4: oklch(0.488 0.243 264.376);
   --chart-5: oklch(0.424 0.199 265.638);
   --radius: 0.375rem;
-  --electron-titlebar-height: 0px;
-  --electron-sidebar-toggle-left: 4.25rem;
+  --titlebar-height: 3rem;
+  --titlebar-inset-left: 0px;
+  --titlebar-toggle-left: calc(var(--titlebar-inset-left) + 0.75rem);
   --sidebar-collapsed-resize-left: 6px;
   --sidebar: oklch(0.935 0.003 260);
   --sidebar-foreground: oklch(0.32 0.01 263);
@@ -78,28 +79,16 @@
   --sidebar-ring: oklch(0.61 0.16 268);
 }
 
-/* macOS hiddenInset window: no dedicated titlebar row — the sidebar header
-   doubles as the drag region and clears the traffic lights. In fullscreen the
-   traffic lights auto-hide, so the extra left padding collapses too. The
-   .electron-titlebar strip remains only for pages without a sidebar (login). */
-.electron-titlebar {
-  height: var(--electron-titlebar-height);
-  -webkit-app-region: drag;
-}
-
-html[data-astraflow-platform="darwin"] .electron-titlebar {
-  --electron-titlebar-height: 40px;
+/* Unified titlebar: web and Electron render the same --titlebar-height row
+   (the sidebar header doubles as the titlebar). On macOS Electron,
+   --titlebar-inset-left clears the native traffic lights; in fullscreen the
+   lights auto-hide, so the inset collapses and the layout matches the web. */
+html[data-astraflow-platform="darwin"]:not([data-astraflow-fullscreen="true"]) {
+  --titlebar-inset-left: 68px;
 }
 
 html[data-astraflow-platform="darwin"] [data-electron-drag-header] {
   -webkit-app-region: drag;
-  min-height: 3rem;
-  justify-content: center;
-}
-
-html[data-astraflow-platform="darwin"]:not([data-astraflow-fullscreen="true"])
-  .electron-sidebar-toggle-anchor {
-  left: var(--electron-sidebar-toggle-left);
 }
 
 html[data-astraflow-platform="darwin"]
@@ -113,8 +102,8 @@ html[data-astraflow-platform="darwin"] .electron-drag-corner {
   top: 0;
   left: 0;
   z-index: 40;
-  height: 3rem;
-  width: 80px;
+  height: var(--titlebar-height);
+  width: calc(var(--titlebar-inset-left) + 0.75rem + 2rem);
   -webkit-app-region: drag;
 }
 
@@ -237,11 +226,6 @@ html[data-astraflow-platform="darwin"] .electron-drag-corner {
 
 .driver-active .driver-active-element {
   border-radius: 16px;
-}
-
-html[data-astraflow-platform="darwin"]:not([data-astraflow-fullscreen="true"])
-  .electron-collapsed-sidebar-trigger {
-  left: 80px;
 }
 
 html[data-astraflow-fullscreen="true"] .electron-drag-corner {

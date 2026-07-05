@@ -4,7 +4,6 @@ import { z } from "zod"
 import { requireAuthenticatedRequest } from "@/lib/app-auth"
 import {
   DEFAULT_CHAT_MODEL,
-  SUPPORTED_CHAT_MODELS,
   SUPPORTED_CHAT_REASONING_EFFORTS,
 } from "@/lib/chat-models"
 import { getStudioSession } from "@/lib/studio-db"
@@ -18,7 +17,7 @@ export const runtime = "nodejs"
 
 const chatRequestSchema = z.object({
   sessionId: z.string().trim().min(1),
-  model: z.enum(SUPPORTED_CHAT_MODELS).default(DEFAULT_CHAT_MODEL),
+  model: z.string().trim().min(1).max(128).default(DEFAULT_CHAT_MODEL),
   reasoningEffort: z.enum(SUPPORTED_CHAT_REASONING_EFFORTS).optional(),
   runtimeId: z.string().trim().min(1).optional(),
   environment: z.enum(["remote", "local"]).optional(),

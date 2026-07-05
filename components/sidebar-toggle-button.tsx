@@ -1,5 +1,6 @@
 "use client"
 
+import * as React from "react"
 import type { ComponentProps } from "react"
 
 import { useI18n } from "@/components/i18n-provider"
@@ -17,12 +18,26 @@ type SidebarToggleButtonProps = {
   tooltipSide?: ComponentProps<typeof TooltipContent>["side"]
 }
 
+function isMacPlatform() {
+  if (typeof document === "undefined") {
+    return true
+  }
+
+  const platform = document.documentElement.dataset.astraflowPlatform
+  if (platform) {
+    return platform === "darwin"
+  }
+
+  return /Mac|iP(hone|ad|od)/i.test(navigator.platform || navigator.userAgent)
+}
+
 function SidebarToggleButton({
   className,
   tooltipAlign = "start",
   tooltipSide = "bottom",
 }: SidebarToggleButtonProps) {
   const { t } = useI18n()
+  const isMac = React.useMemo(() => isMacPlatform(), [])
 
   return (
     <Tooltip>
@@ -47,7 +62,7 @@ function SidebarToggleButton({
           data-slot="kbd"
           className="bg-background/15 px-1.5 py-0.5 text-[11px] font-semibold text-background/80"
         >
-          Cmd+B
+          {isMac ? "Cmd+B" : "Ctrl+B"}
         </span>
       </TooltipContent>
     </Tooltip>

@@ -3,11 +3,16 @@ import { ChatOpenAI } from "@langchain/openai"
 
 import {
   getChatModelConfig,
+  isBuiltInChatModel,
   resolveChatReasoningEffort,
   type ChatReasoningEffort,
   type SupportedChatModel,
 } from "@/lib/chat-models"
-import { MODELVERSE_BASE_URL as MODELVERSE_ANTHROPIC_BASE_URL } from "@/lib/modelverse-config"
+import {
+  getAgentModelById,
+  MODELVERSE_ANTHROPIC_BASE_URL,
+  MODELVERSE_OPENAI_BASE_URL,
+} from "@/lib/agent-model-settings"
 import {
   getStoredModelverseApiKey,
   MODELVERSE_BASE_URL,
@@ -38,19 +43,21 @@ export function createModelverseChatModel(
   requestedReasoningEffort: ChatReasoningEffort
 ) {
   const apiKey = getLangChainApiKey()
-  const config = getChatModelConfig(model)
-  const reasoningEffort = resolveChatReasoningEffort(
-    model,
-    requestedReasoningEffort
-  )
+  const agentModel = getAgentModelById(model)
+  const config = isBuiltInChatModel(model) ? getChatModelConfig(model) : null
+  const reasoningEffort = agentModel
+    ? agentModel.reasoningEfforts.includes(requestedReasoningEffort)
+      ? requestedReasoningEffort
+      : agentModel.defaultReasoningEffort
+    : resolveChatReasoningEffort(config?.value ?? model, requestedReasoningEffort)
 
-  if (config.provider === "langchain_anthropic") {
+  if ((agentModel?.protocol ?? config?.protocol) === "anthropic-messages") {
     const outputEffort = reasoningEffort as AnthropicReasoningEffort
 
     return new ChatAnthropic({
       apiKey,
-      model: config.providerModel,
-      anthropicApiUrl: MODELVERSE_ANTHROPIC_BASE_URL,
+      model: agentModel?.providerModel ?? config?.providerModel ?? model,
+      anthropicApiUrl: agentModel?.baseUrl ?? MODELVERSE_ANTHROPIC_BASE_URL,
       streaming: true,
       thinking:
         reasoningEffort === "none"
@@ -61,7 +68,7 @@ export function createModelverseChatModel(
     })
   }
 
-  if (config.reasoningMode === "glm_reasoning_effort") {
+  if (config?.reasoningMode === "glm_reasoning_effort") {
     return new ChatOpenAI({
       apiKey,
       model: config.providerModel,
@@ -79,7 +86,7 @@ export function createModelverseChatModel(
     })
   }
 
-  if (config.reasoningMode === "kimi_thinking") {
+  if (config?.reasoningMode === "kimi_thinking") {
     return new ChatOpenAI({
       apiKey,
       model: config.providerModel,
@@ -100,15 +107,16 @@ export function createModelverseChatModel(
 
   return new ChatOpenAI({
     apiKey,
-    model: config.providerModel,
+    model: agentModel?.providerModel ?? config?.providerModel ?? model,
     streaming: true,
-    useResponsesApi: false,
+    useResponsesApi: agentModel?.protocol === "openai-responses",
     reasoning: { effort: openAIReasoningEffort },
     modelKwargs: {
       reasoning_effort: openAIReasoningEffort,
     },
     configuration: {
-      baseURL: MODELVERSE_BASE_URL,
+      baseURL:
+        agentModel?.baseUrl ?? MODELVERSE_OPENAI_BASE_URL ?? MODELVERSE_BASE_URL,
     },
   })
 }

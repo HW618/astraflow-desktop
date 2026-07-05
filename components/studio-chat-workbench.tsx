@@ -109,6 +109,10 @@ import {
   type ChatReasoningEffort,
   type SupportedChatModel,
 } from "@/lib/chat-models"
+import type {
+  AgentModelDefinition,
+  AgentModelSettingsPayload,
+} from "@/lib/agent-model-settings-shared"
 import type { AgentRuntimeInfo } from "@/lib/agent/runtime"
 import {
   consumePendingProjectId,
@@ -929,8 +933,8 @@ function getStoredChatModel(): SupportedChatModel {
 
   const stored = window.localStorage.getItem(CHAT_MODEL_STORAGE_KEY)
 
-  if (stored && CHAT_MODEL_OPTIONS.some((option) => option.value === stored)) {
-    return stored as SupportedChatModel
+  if (stored?.trim()) {
+    return stored.trim()
   }
 
   return DEFAULT_CHAT_MODEL
@@ -1147,6 +1151,31 @@ function getChatModelLabel(model: SupportedChatModel) {
   )
 }
 
+function getAgentChatModelLabel(
+  model: SupportedChatModel,
+  modelOptions: AgentModelDefinition[]
+) {
+  return (
+    modelOptions.find((option) => option.id === model)?.label ??
+    getChatModelLabel(model)
+  )
+}
+
+function getFallbackAgentModelOptions(): AgentModelDefinition[] {
+  return CHAT_MODEL_OPTIONS.map((option) => ({
+    id: option.value,
+    label: option.label,
+    providerModel: option.providerModel,
+    protocol: option.protocol,
+    baseUrl: null,
+    supportedRuntimeIds: [...option.supportedRuntimeIds],
+    reasoningEfforts: [...option.reasoningEfforts],
+    defaultReasoningEffort: option.defaultReasoningEffort,
+    builtin: true,
+    enabled: true,
+  }))
+}
+
 function normalizeChatRuntimeInfos(runtimes: AgentRuntimeInfo[]) {
   const seenRuntimeIds = new Set<string>()
   const normalized = runtimes.reduce<ChatRuntimeOption[]>(
@@ -1219,6 +1248,14 @@ async function listAgentRuntimes() {
   })
 
   return normalizeChatRuntimeInfos(await readJson<AgentRuntimeInfo[]>(response))
+}
+
+async function getAgentModelSettingsForComposer() {
+  const response = await fetch("/api/studio/agent-model-settings", {
+    cache: "no-store",
+  })
+
+  return readJson<AgentModelSettingsPayload>(response)
 }
 
 async function listLocalProjectsForComposer() {
@@ -1571,6 +1608,8 @@ function StudioChatWorkbench({
   const [runtimeInfos, setRuntimeInfos] = React.useState<ChatRuntimeOption[]>(
     () => [FALLBACK_CHAT_RUNTIME_INFO]
   )
+  const [agentModelSettings, setAgentModelSettings] =
+    React.useState<AgentModelSettingsPayload | null>(null)
   const [localProjects, setLocalProjects] = React.useState<
     StudioLocalProjectWithGitInfo[]
   >([])
@@ -1606,6 +1645,18 @@ function StudioChatWorkbench({
     selectedRuntimeId,
     runtimeInfos
   )
+  const modelOptions = React.useMemo(() => {
+    const models = agentModelSettings?.models ?? getFallbackAgentModelOptions()
+    const compatibleModels = models.filter(
+      (model) =>
+        model.enabled &&
+        model.supportedRuntimeIds.some(
+          (runtimeId) => runtimeId === resolvedRuntimeId
+        )
+    )
+
+    return compatibleModels.length > 0 ? compatibleModels : models
+  }, [agentModelSettings?.models, resolvedRuntimeId])
   const resolvedEnvironment =
     resolvedRuntimeId === DEFAULT_CHAT_RUNTIME_ID
       ? selectedEnvironment
@@ -1638,6 +1689,30 @@ function StudioChatWorkbench({
   const [rightPanelWidth, setRightPanelWidth] = useRightPanelWidth()
   const [rightPanelFocused, setRightPanelFocused] = React.useState(false)
   const effectiveRightPanelFocused = rightPanelOpen && rightPanelFocused
+
+  React.useEffect(() => {
+    if (
+      modelOptions.length > 0 &&
+      !modelOptions.some((option) => option.id === selectedModel)
+    ) {
+      const runtimeDefault =
+        agentModelSettings?.runtimes[
+          resolvedRuntimeId as keyof AgentModelSettingsPayload["runtimes"]
+        ]?.defaultModel
+      const nextModel =
+        modelOptions.find((option) => option.id === runtimeDefault)?.id ??
+        modelOptions[0].id
+
+      setSelectedModel(nextModel)
+    }
+  }, [
+    agentModelSettings?.runtimes,
+    modelOptions,
+    resolvedRuntimeId,
+    selectedModel,
+    setSelectedModel,
+  ])
+
   const toggleTerminalPanel = React.useCallback(() => {
     setTerminalPanelOpen(!getStoredTerminalPanelOpen())
   }, [setTerminalPanelOpen])
@@ -1770,15 +1845,17 @@ function StudioChatWorkbench({
   React.useEffect(() => {
     let cancelled = false
 
-    void listAgentRuntimes()
-      .then((nextRuntimeInfos) => {
+    void Promise.all([listAgentRuntimes(), getAgentModelSettingsForComposer()])
+      .then(([nextRuntimeInfos, nextAgentModelSettings]) => {
         if (!cancelled) {
           setRuntimeInfos(nextRuntimeInfos)
+          setAgentModelSettings(nextAgentModelSettings)
         }
       })
       .catch(() => {
         if (!cancelled) {
           setRuntimeInfos([FALLBACK_CHAT_RUNTIME_INFO])
+          setAgentModelSettings(null)
         }
       })
 
@@ -2483,6 +2560,7 @@ function StudioChatWorkbench({
                 <ChatComposer
                   value={input}
                   model={selectedModel}
+                  modelOptions={modelOptions}
                   runtimeId={resolvedRuntimeId}
                   runtimeInfos={runtimeInfos}
                   reasoningEffort={selectedReasoningEffort}
@@ -2523,6 +2601,7 @@ function StudioChatWorkbench({
                   <ChatComposer
                     value={input}
                     model={selectedModel}
+                    modelOptions={modelOptions}
                     runtimeId={resolvedRuntimeId}
                     runtimeInfos={runtimeInfos}
                     reasoningEffort={selectedReasoningEffort}
@@ -4475,6 +4554,7 @@ function StudioSideTerminal({
 type ChatComposerProps = {
   value: string
   model: SupportedChatModel
+  modelOptions: AgentModelDefinition[]
   runtimeId: string
   runtimeInfos: ChatRuntimeOption[]
   reasoningEffort: ChatReasoningEffort
@@ -4734,6 +4814,7 @@ function ChatComposerPluginsButton() {
 function ChatComposer({
   value,
   model,
+  modelOptions,
   runtimeId,
   runtimeInfos,
   reasoningEffort,
@@ -4807,11 +4888,17 @@ function ChatComposer({
     permissionOptions.find((option) => option.value === permissionMode) ??
     permissionOptions[0]
   const PermissionModeIcon = permissionModeOption.icon
-  const resolvedReasoningEffort = resolveChatReasoningEffort(
-    model,
+  const selectedModelOption =
+    modelOptions.find((option) => option.id === model) ?? null
+  const selectedModelReasoningEfforts =
+    selectedModelOption?.reasoningEfforts ?? getChatReasoningEfforts(model)
+  const resolvedReasoningEffort = selectedModelReasoningEfforts.includes(
     reasoningEffort
   )
-  const reasoningOptions = getChatReasoningEfforts(model).map((effort) => ({
+    ? reasoningEffort
+    : (selectedModelOption?.defaultReasoningEffort ??
+      resolveChatReasoningEffort(model, reasoningEffort))
+  const reasoningOptions = selectedModelReasoningEfforts.map((effort) => ({
     value: effort,
     label: reasoningLabelByValue[effort],
     description: getReasoningEffortDescription(effort, t),
@@ -5105,14 +5192,16 @@ function ChatComposer({
                 aria-label={t.studioChatModel}
                 title={t.studioChatModelDescription}
               >
-                <span className="truncate">{getChatModelLabel(model)}</span>
+                <span className="truncate">
+                  {getAgentChatModelLabel(model, modelOptions)}
+                </span>
               </SelectTrigger>
               <SelectContent position="popper" side="top" align="end">
                 <SelectGroup>
-                  {CHAT_MODEL_OPTIONS.map((option) => (
+                  {modelOptions.map((option) => (
                     <SelectItem
-                      key={option.value}
-                      value={option.value}
+                      key={option.id}
+                      value={option.id}
                       className="pr-10"
                     >
                       <SelectOptionRow

@@ -1,16 +1,28 @@
 import { spawnSync } from "node:child_process"
+import { createHash } from "node:crypto"
 import { accessSync, constants, realpathSync } from "node:fs"
 import { delimiter, join } from "node:path"
 
 import {
   AcpRuntime,
   type AcpCommandSpec,
+  type AcpAuthenticationSpec,
   type AcpStdioCommandSpec,
 } from "@/lib/agent/acp/acp-runtime"
 import {
+  MODELVERSE_ANTHROPIC_BASE_URL,
+  MODELVERSE_OPENAI_BASE_URL,
+  MODELVERSE_PROVIDER_ID,
+  getRuntimeModelSetting,
+  resolveAgentModelForRuntime,
+} from "@/lib/agent-model-settings"
+import type { AgentModelDefinition } from "@/lib/agent-model-settings-shared"
+import {
   registerAgentRuntime,
   type AgentRuntimeInfo,
+  type AgentRunInput,
 } from "@/lib/agent/runtime"
+import { getStudioModelverseApiKey } from "@/lib/studio-db"
 
 type CommandProbe =
   | { available: true; command: AcpCommandSpec; detail: string }
@@ -108,6 +120,9 @@ function resolveNodePackageScript(
   return {
     command: process.execPath,
     args: [scriptPath],
+    env: {
+      ELECTRON_RUN_AS_NODE: "1",
+    },
   }
 }
 
@@ -125,6 +140,218 @@ function resolveNodePackageExecutable(
   return isExecutable(executablePath) ? realpathSync(executablePath) : null
 }
 
+function mergeCommandEnv(
+  command: AcpCommandSpec,
+  env: Record<string, string | undefined>
+): AcpCommandSpec {
+  if (command.transport === "http") {
+    return command
+  }
+
+  return {
+    ...command,
+    args: command.args ? [...command.args] : undefined,
+    env: {
+      ...(command.env ?? {}),
+      ...env,
+    },
+  }
+}
+
+function getModelverseRunConfig(runtimeId: string, input: AgentRunInput) {
+  const runtimeSetting = getRuntimeModelSetting(runtimeId)
+
+  if (!runtimeSetting || runtimeSetting.useLocalSettings) {
+    return null
+  }
+
+  const apiKey = getStudioModelverseApiKey()?.key
+
+  if (!apiKey) {
+    throw new Error("Modelverse API key is not configured locally.")
+  }
+
+  const model = resolveAgentModelForRuntime({
+    modelId: input.model,
+    runtimeId,
+  })
+
+  if (!model) {
+    throw new Error(`No Modelverse model is configured for ${runtimeId}.`)
+  }
+
+  return { apiKey, model }
+}
+
+function requireProtocol(
+  model: AgentModelDefinition,
+  protocols: AgentModelDefinition["protocol"][]
+) {
+  if (!protocols.includes(model.protocol)) {
+    throw new Error(
+      `${model.label} does not support the selected agent protocol.`
+    )
+  }
+}
+
+function codexWireApiForModel(model: AgentModelDefinition) {
+  return model.protocol === "openai-responses" ? "responses" : "chat"
+}
+
+function createCodexConfig(model: AgentModelDefinition) {
+  const baseUrl = model.baseUrl ?? MODELVERSE_OPENAI_BASE_URL
+
+  return {
+    model: model.providerModel,
+    model_provider: MODELVERSE_PROVIDER_ID,
+    model_providers: {
+      [MODELVERSE_PROVIDER_ID]: {
+        name: "Modelverse",
+        base_url: baseUrl,
+        env_key: "ASTRAFLOW_MODELVERSE_API_KEY",
+        wire_api: codexWireApiForModel(model),
+      },
+    },
+  }
+}
+
+function createOpenCodeConfig(model: AgentModelDefinition) {
+  const isAnthropic = model.protocol === "anthropic-messages"
+  const providerId = isAnthropic ? "modelverse-anthropic" : "modelverse-openai"
+  const providerPackage = isAnthropic
+    ? "@ai-sdk/anthropic"
+    : "@ai-sdk/openai-compatible"
+  const baseURL =
+    model.baseUrl ??
+    (isAnthropic ? MODELVERSE_ANTHROPIC_BASE_URL : MODELVERSE_OPENAI_BASE_URL)
+
+  return {
+    model: `${providerId}/${model.providerModel}`,
+    small_model: `${providerId}/${model.providerModel}`,
+    provider: {
+      [providerId]: {
+        npm: providerPackage,
+        name: isAnthropic ? "Modelverse Anthropic" : "Modelverse OpenAI",
+        options: {
+          apiKey: "{env:ASTRAFLOW_MODELVERSE_API_KEY}",
+          baseURL,
+        },
+        models: {
+          [model.providerModel]: {
+            name: model.label,
+          },
+        },
+      },
+    },
+  }
+}
+
+function fingerprintSecret(value: string) {
+  return createHash("sha256").update(value).digest("hex").slice(0, 12)
+}
+
+function withCodexModelverseConfig(
+  command: AcpCommandSpec,
+  input: AgentRunInput
+) {
+  const config = getModelverseRunConfig("codex", input)
+
+  if (!config) {
+    return command
+  }
+
+  requireProtocol(config.model, ["openai-chat", "openai-responses"])
+
+  return mergeCommandEnv(command, {
+    ASTRAFLOW_MODELVERSE_API_KEY: config.apiKey,
+    CODEX_API_KEY: config.apiKey,
+    CODEX_CONFIG: JSON.stringify(createCodexConfig(config.model)),
+    MODEL_PROVIDER: MODELVERSE_PROVIDER_ID,
+    OPENAI_API_KEY: config.apiKey,
+  })
+}
+
+function withClaudeCodeModelverseConfig(
+  command: AcpCommandSpec,
+  input: AgentRunInput
+) {
+  const config = getModelverseRunConfig("claude-code", input)
+
+  if (!config) {
+    return command
+  }
+
+  requireProtocol(config.model, ["anthropic-messages"])
+
+  return mergeCommandEnv(command, {
+    ANTHROPIC_MODEL: config.model.providerModel,
+    ASTRAFLOW_MODELVERSE_API_KEY: config.apiKey,
+    CLAUDE_MODEL_CONFIG: JSON.stringify({
+      availableModels: [config.model.providerModel],
+    }),
+  })
+}
+
+function withOpenCodeModelverseConfig(
+  command: AcpCommandSpec,
+  input: AgentRunInput
+) {
+  const config = getModelverseRunConfig("opencode", input)
+
+  if (!config) {
+    return command
+  }
+
+  const openCodeConfig = JSON.stringify(createOpenCodeConfig(config.model))
+
+  return mergeCommandEnv(command, {
+    ASTRAFLOW_MODELVERSE_API_KEY: config.apiKey,
+    OPENCODE_CONFIG_CONTENT: openCodeConfig,
+  })
+}
+
+function resolveAcpSessionKey(runtimeId: string, input: AgentRunInput) {
+  const runtimeSetting = getRuntimeModelSetting(runtimeId)
+  const config = getModelverseRunConfig(runtimeId, input)
+
+  if (!runtimeSetting || runtimeSetting.useLocalSettings || !config) {
+    return "local-settings"
+  }
+
+  return [
+    MODELVERSE_PROVIDER_ID,
+    config.model.id,
+    config.model.providerModel,
+    config.model.protocol,
+    config.model.baseUrl ?? "",
+    fingerprintSecret(config.apiKey),
+  ].join(":")
+}
+
+function resolveClaudeCodeAuthentication(
+  input: AgentRunInput
+): AcpAuthenticationSpec | null {
+  const config = getModelverseRunConfig("claude-code", input)
+
+  if (!config) {
+    return null
+  }
+
+  requireProtocol(config.model, ["anthropic-messages"])
+
+  return {
+    methodId: "gateway",
+    _meta: {
+      gateway: {
+        baseUrl: config.model.baseUrl ?? MODELVERSE_ANTHROPIC_BASE_URL,
+        headers: {
+          Authorization: `Bearer ${config.apiKey}`,
+        },
+      },
+    },
+  }
+}
+
 function getCommandOutput(command: string, args: string[]) {
   const result = spawnSync(command, args, {
     encoding: "utf8",
@@ -140,6 +367,19 @@ function codexCliSupportsAcp(codexPath: string) {
   const help = getCommandOutput(codexPath, ["--help"])
 
   return Boolean(help?.match(/^\s+acp\b/m))
+}
+
+function resolveCodexAcpAdapterCommand(): AcpCommandSpec | null {
+  const codexAcpPath = resolveNodeModulesBin("codex-acp")
+
+  if (codexAcpPath) {
+    return { command: codexAcpPath }
+  }
+
+  return resolveNodePackageScript(
+    "@agentclientprotocol/codex-acp",
+    "dist/index.js"
+  )
 }
 
 export function probeCodexAcpCommand(): CommandProbe {
@@ -206,6 +446,16 @@ export function resolveCodexAcpCommand() {
   const probe = probeCodexAcpCommand()
 
   return probe.available ? probe.command : null
+}
+
+function resolveCodexCommandForRun(input: AgentRunInput) {
+  const runtimeSetting = getRuntimeModelSetting("codex")
+  const command =
+    runtimeSetting && !runtimeSetting.useLocalSettings
+      ? (resolveCodexAcpAdapterCommand() ?? resolveCodexAcpCommand())
+      : resolveCodexAcpCommand()
+
+  return command ? withCodexModelverseConfig(command, input) : null
 }
 
 export function probeClaudeCodeAcpCommand(): CommandProbe {
@@ -296,15 +546,29 @@ function registerAcpRuntime(info: AgentRuntimeInfo, probe: CommandProbe) {
 
   const resolveCommand =
     info.id === "codex"
-      ? resolveCodexAcpCommand
+      ? resolveCodexCommandForRun
       : info.id === "claude-code"
-        ? resolveClaudeCodeAcpCommand
-        : resolveOpenCodeAcpCommand
+        ? (input: AgentRunInput) => {
+            const command = resolveClaudeCodeAcpCommand()
+            return command
+              ? withClaudeCodeModelverseConfig(command, input)
+              : null
+          }
+        : (input: AgentRunInput) => {
+            const command = resolveOpenCodeAcpCommand()
+            return command ? withOpenCodeModelverseConfig(command, input) : null
+          }
+  const resolveAuthentication =
+    info.id === "claude-code" ? resolveClaudeCodeAuthentication : undefined
+  const resolveSessionKey = (input: AgentRunInput) =>
+    resolveAcpSessionKey(info.id, input)
 
   registerAgentRuntime(
     new AcpRuntime({
       info,
       resolveCommand,
+      resolveAuthentication,
+      resolveSessionKey,
     })
   )
 

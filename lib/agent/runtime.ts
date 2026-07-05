@@ -1,5 +1,6 @@
 import type { BaseMessage } from "@langchain/core/messages"
 
+import type { AgentRuntimeId } from "@/lib/agent-model-settings-shared"
 import type { ChatReasoningEffort, SupportedChatModel } from "@/lib/chat-models"
 import type { AgentEvent } from "@/lib/agent/events"
 
@@ -12,9 +13,6 @@ export type RuntimeCapabilities = {
   mcp: boolean
   skills: boolean
 }
-
-export type AgentRuntimeId =
-  "astraflow" | "claude-code" | "codex" | "opencode"
 
 // Runtime ids that older clients may still send (persisted in localStorage).
 const LEGACY_AGENT_RUNTIME_ALIASES: Record<string, AgentRuntimeId> = {

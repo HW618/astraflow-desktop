@@ -39,7 +39,7 @@ import { useI18n } from "@/components/i18n-provider"
 import { requestStudioOnboardingTour } from "@/components/onboarding-tour"
 import { Button } from "@/components/ui/button"
 import { LogoutButton } from "@/components/logout-button"
-import { SidebarToggleButton } from "@/components/sidebar-toggle-button"
+import { Titlebar } from "@/components/titlebar"
 import {
   Dialog,
   DialogContent,
@@ -937,15 +937,9 @@ function AppSidebar() {
   return (
     <>
       <Sidebar collapsible="offcanvas">
-        <SidebarHeader data-electron-drag-header>
-          <div className="electron-sidebar-topbar relative h-8">
-            <div
-              data-tour-id="studio-sidebar-toggle"
-              className="electron-sidebar-toggle-anchor absolute top-1/2 left-3 shrink-0 -translate-y-1/2"
-            >
-              <SidebarToggleButton />
-            </div>
-            <div className="absolute top-1/2 right-3 flex -translate-y-1/2 items-center gap-2 group-data-[collapsible=icon]:hidden">
+        <SidebarHeader className="p-0">
+          <Titlebar showSidebarToggle>
+            <div className="contents group-data-[collapsible=icon]:hidden">
               <Button
                 type="button"
                 variant="ghost"
@@ -959,7 +953,7 @@ function AppSidebar() {
               </Button>
               <AppInfoButton className="h-8 shrink-0 rounded-xl" />
             </div>
-          </div>
+          </Titlebar>
         </SidebarHeader>
 
         <SidebarContent className="gap-0.5">

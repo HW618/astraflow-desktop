@@ -490,9 +490,9 @@ function createMainWindow(url, { show = true } = {}) {
     process.platform === "darwin"
       ? {
           titleBarStyle: "hiddenInset",
-          // Vertically centered with the 3rem sidebar header row that acts as
-          // the drag region on macOS.
-          trafficLightPosition: { x: 13, y: 17 },
+          // Vertically centered with the --titlebar-height (3rem) row that
+          // acts as the drag region on macOS: 48/2 - 12/2 = 18.
+          trafficLightPosition: { x: 13, y: 18 },
         }
       : {}
 

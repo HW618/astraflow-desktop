@@ -22,6 +22,10 @@ import {
   type AgentRunEnvironment,
 } from "@/lib/agent/runtime"
 import {
+  getRuntimeModelSetting,
+  resolveAgentModelForRuntime,
+} from "@/lib/agent-model-settings"
+import {
   type ChatReasoningEffort,
   type SupportedChatModel,
 } from "@/lib/chat-models"
@@ -147,10 +151,24 @@ export function startStudioChatRun({
     throw new Error(`Agent runtime not found: ${runtimeId}`)
   }
 
+  const runtimeSetting = getRuntimeModelSetting(runtime.info.id)
+  const resolvedModel =
+    runtimeSetting?.useLocalSettings === false
+      ? resolveAgentModelForRuntime({
+          modelId: model,
+          runtimeId: runtime.info.id,
+        })
+      : null
+  const effectiveModel = resolvedModel?.id ?? model
+
+  if (runtimeSetting?.useLocalSettings === false && !resolvedModel) {
+    throw new Error(`No Modelverse model is configured for ${runtime.info.label}.`)
+  }
+
   return startAgentRun({
     createMessages: () => toLangChainMessages(sessionId, retryMessageId),
     environment,
-    model,
+    model: effectiveModel,
     projectPath: resolveSessionProjectPath(sessionId),
     reasoningEffort,
     retryMessageId,

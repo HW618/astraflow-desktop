@@ -46,9 +46,17 @@ export type AcpHttpCommandSpec = {
 
 export type AcpCommandSpec = AcpStdioCommandSpec | AcpHttpCommandSpec
 
+export type AcpAuthenticationSpec = {
+  methodId: string
+  _meta?: Record<string, unknown>
+}
+
 export type AcpRuntimeOptions = {
   info: AgentRuntimeInfo
-  resolveCommand: () => AcpCommandSpec | null
+  resolveAuthentication?: (input: AgentRunInput) => AcpAuthenticationSpec | null
+  resolveCommand: (input: AgentRunInput) => AcpCommandSpec | null
+  resolveSessionMeta?: (input: AgentRunInput) => Record<string, unknown> | null
+  resolveSessionKey?: (input: AgentRunInput) => string | null
 }
 
 type AcpSessionState = {
@@ -64,6 +72,8 @@ type AcpSessionState = {
   runTail: Promise<void>
   runSignal: AbortSignal | null
   stderr: string
+  sessionKey: string
+  sessionMeta: Record<string, unknown> | null
   toolCallIds: Set<string>
   toolNames: Map<string, string>
   workspace: string
@@ -213,9 +223,12 @@ function debugAcp(label: string, payload: Record<string, unknown>) {
 function getSessionKey(
   runtimeId: string,
   sessionId: string,
-  workspace: string
+  workspace: string,
+  modelKey: string | null
 ) {
-  return [runtimeId, sessionId, workspace].join(ACP_SESSION_KEY_SEPARATOR)
+  return [runtimeId, sessionId, workspace, modelKey ?? ""].join(
+    ACP_SESSION_KEY_SEPARATOR
+  )
 }
 
 function isRuntimeSessionKey(
@@ -623,6 +636,12 @@ export async function initializeAcpConnection(
   return connection.agent.request(methods.agent.initialize, {
     protocolVersion: PROTOCOL_VERSION,
     clientCapabilities: {
+      auth: {
+        terminal: false,
+        _meta: {
+          gateway: true,
+        },
+      },
       fs: {
         readTextFile: true,
         writeTextFile: true,
@@ -1155,16 +1174,22 @@ function installAcpProcessCleanupHooks() {
 installAcpProcessCleanupHooks()
 
 async function createAcpSession({
+  authentication,
   command,
   info,
   key,
   sessionId,
+  sessionKey,
+  sessionMeta,
   workspace,
 }: {
+  authentication: AcpAuthenticationSpec | null
   command: AcpCommandSpec
   info: AgentRuntimeInfo
   key: string
   sessionId: string
+  sessionKey: string | null
+  sessionMeta: Record<string, unknown> | null
   workspace: string
 }) {
   const { child, spawnError, stream } = createAcpCommandStream(
@@ -1209,12 +1234,24 @@ async function createAcpSession({
       `${info.label} ACP initialize`
     )
 
+    if (authentication) {
+      await withTimeout(
+        Promise.race([
+          connection.agent.request(methods.agent.authenticate, authentication),
+          spawnError,
+        ]),
+        ACP_STARTUP_TIMEOUT_MS,
+        `${info.label} ACP authenticate`
+      )
+    }
+
     const activeSession = await withTimeout(
       Promise.race([
         connection.agent
           .buildSession({
             cwd: workspace,
             mcpServers: [],
+            ...(sessionMeta ? { _meta: sessionMeta } : {}),
           })
           .start(),
         spawnError,
@@ -1235,6 +1272,8 @@ async function createAcpSession({
       queue: null,
       runTail: Promise.resolve(),
       runSignal: null,
+      sessionKey: sessionKey ?? "",
+      sessionMeta,
       stderr: capturedStderr,
       toolCallIds: new Set(),
       toolNames: new Map(),
@@ -1281,17 +1320,23 @@ async function createAcpSession({
 }
 
 async function getOrCreateAcpSession({
+  authentication,
   command,
   info,
+  modelKey,
   sessionId,
+  sessionMeta,
   workspace,
 }: {
+  authentication: AcpAuthenticationSpec | null
   command: AcpCommandSpec
   info: AgentRuntimeInfo
+  modelKey: string | null
   sessionId: string
+  sessionMeta: Record<string, unknown> | null
   workspace: string
 }) {
-  const key = getSessionKey(info.id, sessionId, workspace)
+  const key = getSessionKey(info.id, sessionId, workspace, modelKey)
   const existing = acpSessions.get(key)
 
   for (const [candidateKey, candidate] of acpSessions) {
@@ -1334,10 +1379,13 @@ async function getOrCreateAcpSession({
   }
 
   const startup = createAcpSession({
+    authentication,
     command,
     info,
     key,
     sessionId,
+    sessionKey: modelKey,
+    sessionMeta,
     workspace,
   })
 
@@ -1557,7 +1605,23 @@ async function* streamAcpRun(
   options: AcpRuntimeOptions,
   input: AgentRunInput
 ): AsyncGenerator<AgentEvent> {
-  const command = options.resolveCommand()
+  let command: AcpCommandSpec | null = null
+  let authentication: AcpAuthenticationSpec | null = null
+  let modelKey: string | null = null
+  let sessionMeta: Record<string, unknown> | null = null
+
+  try {
+    command = options.resolveCommand(input)
+    authentication = options.resolveAuthentication?.(input) ?? null
+    modelKey = options.resolveSessionKey?.(input) ?? null
+    sessionMeta = options.resolveSessionMeta?.(input) ?? null
+  } catch (error) {
+    yield {
+      type: "error",
+      message: errorMessage(error),
+    }
+    return
+  }
 
   if (!command) {
     yield {
@@ -1573,9 +1637,12 @@ async function* streamAcpRun(
 
   try {
     const session = await getOrCreateAcpSession({
+      authentication,
       command,
       info: options.info,
+      modelKey,
       sessionId: input.sessionId,
+      sessionMeta,
       workspace,
     })
 
@@ -1652,18 +1719,21 @@ async function* streamAcpRun(
 
 export class AcpRuntime implements AgentRuntime {
   readonly info: AgentRuntimeInfo
-  private readonly resolveCommand: () => AcpCommandSpec | null
+  private readonly options: AcpRuntimeOptions
 
   constructor(options: AcpRuntimeOptions) {
     this.info = options.info
-    this.resolveCommand = options.resolveCommand
+    this.options = options
   }
 
   startRun(input: AgentRunInput): AsyncIterable<AgentEvent> {
     return streamAcpRun(
       {
         info: this.info,
-        resolveCommand: this.resolveCommand,
+        resolveAuthentication: this.options.resolveAuthentication,
+        resolveCommand: this.options.resolveCommand,
+        resolveSessionKey: this.options.resolveSessionKey,
+        resolveSessionMeta: this.options.resolveSessionMeta,
       },
       input
     )

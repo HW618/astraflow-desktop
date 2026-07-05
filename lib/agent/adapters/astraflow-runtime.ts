@@ -33,7 +33,7 @@ import {
   type AgentRunInput,
   type AgentRuntime,
 } from "@/lib/agent/runtime"
-import { resolveChatReasoningEffort } from "@/lib/chat-models"
+import { DEFAULT_CHAT_REASONING_EFFORT } from "@/lib/chat-models"
 import { isMcpToolName } from "@/lib/mcp"
 import { createModelverseChatModel } from "@/lib/modelverse-langchain"
 import { DEFAULT_SYSTEM_PROMPT } from "@/lib/modelverse-openai"
@@ -537,11 +537,10 @@ async function* streamDeepAgentsRun({
   try {
     const environment: AgentRunEnvironment = requestedEnvironment ?? "local"
     const session = getStudioSession(sessionId)
-    const resolvedReasoningEffort = resolveChatReasoningEffort(
+    const chatModel = createModelverseChatModel(
       model,
-      reasoningEffort
+      reasoningEffort ?? DEFAULT_CHAT_REASONING_EFFORT
     )
-    const chatModel = createModelverseChatModel(model, resolvedReasoningEffort)
     const modelverseApiKey = getStudioModelverseApiKey()?.key ?? null
     const nativeTools = createNativeTools({
       environment,
