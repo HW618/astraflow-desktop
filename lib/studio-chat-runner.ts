@@ -8,6 +8,9 @@ import { statSync } from "node:fs"
 
 import "@/lib/agent/adapters/astraflow-runtime"
 import "@/lib/agent/adapters/acp-runtimes"
+import "@/lib/agent/adapters/claude-native-runtime"
+import "@/lib/agent/adapters/codex-direct-runtime"
+import "@/lib/agent/adapters/opencode-native-runtime"
 import {
   cancelAgentRun,
   getAgentRun,
@@ -162,7 +165,9 @@ export function startStudioChatRun({
   const effectiveModel = resolvedModel?.id ?? model
 
   if (runtimeSetting?.useLocalSettings === false && !resolvedModel) {
-    throw new Error(`No Modelverse model is configured for ${runtime.info.label}.`)
+    throw new Error(
+      `No Modelverse model is configured for ${runtime.info.label}.`
+    )
   }
 
   return startAgentRun({

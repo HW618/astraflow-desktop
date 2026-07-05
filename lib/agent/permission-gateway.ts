@@ -134,6 +134,9 @@ export function getPermissionToolKind(toolName: string): PermissionToolKind {
       "find",
       "list_installed_skills",
       "list_installed_mcp_servers",
+      "studio_list_media_generation_models",
+      "studio_list_media_generations",
+      "studio_get_media_generation",
     ].includes(normalized)
   ) {
     return "search"

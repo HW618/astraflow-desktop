@@ -80,8 +80,11 @@ type StudioAgentModelSettingsPageProps = {
 const runtimeLabels: Record<AgentRuntimeId, string> = {
   astraflow: "AstraFlow",
   codex: "Codex",
+  "codex-direct": "Codex Direct",
   "claude-code": "Claude Code",
+  "claude-native": "Claude Native",
   opencode: "OpenCode",
+  "opencode-native": "OpenCode Native",
 }
 
 const protocolLabels: Record<AgentModelProtocol, string> = {
@@ -442,8 +445,12 @@ function StudioAgentModelSettingsPage({
                         runtimeId={runtimeId}
                         className={cn(
                           "size-5",
-                          runtimeId === "claude-code" && "text-[#D97757]",
-                          runtimeId === "codex" && "text-foreground"
+                          (runtimeId === "claude-code" ||
+                            runtimeId === "claude-native") &&
+                            "text-[#D97757]",
+                          (runtimeId === "codex" ||
+                            runtimeId === "codex-direct") &&
+                            "text-foreground"
                         )}
                       />
                     </span>

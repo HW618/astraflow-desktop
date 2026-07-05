@@ -1,0 +1,172 @@
+[
+  {
+    "id": "evt_fixture_01",
+    "type": "message.updated",
+    "properties": {
+      "sessionID": "ses_root",
+      "info": {
+        "id": "msg_assistant",
+        "sessionID": "ses_root",
+        "role": "assistant"
+      }
+    }
+  },
+  {
+    "id": "evt_fixture_02",
+    "type": "message.part.delta",
+    "properties": {
+      "sessionID": "ses_root",
+      "messageID": "msg_assistant",
+      "partID": "prt_text",
+      "field": "text",
+      "delta": "Hello "
+    }
+  },
+  {
+    "id": "evt_fixture_03",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_root",
+      "part": {
+        "id": "prt_text",
+        "sessionID": "ses_root",
+        "messageID": "msg_assistant",
+        "type": "text",
+        "text": "Hello world"
+      },
+      "time": 1783249312838
+    }
+  },
+  {
+    "id": "evt_fixture_04",
+    "type": "session.next.reasoning.delta",
+    "properties": {
+      "timestamp": 1783249312840,
+      "sessionID": "ses_root",
+      "assistantMessageID": "msg_assistant",
+      "reasoningID": "rsn_1",
+      "delta": "checking plan"
+    }
+  },
+  {
+    "id": "evt_fixture_05",
+    "type": "todo.updated",
+    "properties": {
+      "sessionID": "ses_root",
+      "todos": [
+        {
+          "content": "Inspect OpenCode events",
+          "status": "completed",
+          "priority": "high"
+        },
+        {
+          "content": "Map native events",
+          "status": "in_progress",
+          "priority": "high"
+        },
+        {
+          "content": "Dropped cancelled item",
+          "status": "cancelled",
+          "priority": "low"
+        }
+      ]
+    }
+  },
+  {
+    "id": "evt_fixture_06",
+    "type": "session.next.tool.called",
+    "properties": {
+      "timestamp": 1783249312841,
+      "sessionID": "ses_root",
+      "assistantMessageID": "msg_assistant",
+      "callID": "call_read",
+      "tool": "read",
+      "input": {
+        "file": "README.md"
+      },
+      "provider": {
+        "executed": false
+      }
+    }
+  },
+  {
+    "id": "evt_fixture_07",
+    "type": "session.next.tool.success",
+    "properties": {
+      "timestamp": 1783249312842,
+      "sessionID": "ses_root",
+      "assistantMessageID": "msg_assistant",
+      "callID": "call_read",
+      "structured": {},
+      "content": [
+        {
+          "type": "text",
+          "text": "read ok"
+        }
+      ],
+      "provider": {
+        "executed": true
+      }
+    }
+  },
+  {
+    "id": "evt_fixture_08",
+    "type": "permission.v2.asked",
+    "properties": {
+      "id": "per_edit",
+      "sessionID": "ses_root",
+      "action": "edit",
+      "resources": ["lib/agent/adapters/opencode-native-runtime.ts"],
+      "metadata": {
+        "reason": "fixture"
+      },
+      "source": {
+        "type": "tool",
+        "messageID": "msg_assistant",
+        "callID": "call_edit"
+      }
+    }
+  },
+  {
+    "id": "evt_fixture_09",
+    "type": "permission.v2.replied",
+    "properties": {
+      "sessionID": "ses_root",
+      "requestID": "per_edit",
+      "reply": "once"
+    }
+  },
+  {
+    "id": "evt_fixture_10",
+    "type": "session.diff",
+    "properties": {
+      "sessionID": "ses_root",
+      "diff": [
+        {
+          "file": "lib/agent/adapters/opencode-native-runtime.ts",
+          "patch": "@@",
+          "additions": 10,
+          "deletions": 1,
+          "status": "modified"
+        }
+      ]
+    }
+  },
+  {
+    "id": "evt_fixture_11",
+    "type": "message.part.updated",
+    "properties": {
+      "sessionID": "ses_root",
+      "part": {
+        "id": "prt_subtask",
+        "sessionID": "ses_root",
+        "messageID": "msg_assistant",
+        "type": "subtask",
+        "prompt": "Check schema",
+        "description": "Inspect OpenCode server schema",
+        "agent": "explore"
+      },
+      "time": 1783249312843
+    }
+  }
+]

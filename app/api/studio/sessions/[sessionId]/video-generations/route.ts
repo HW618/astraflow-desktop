@@ -1215,14 +1215,20 @@ function scheduleVideoGenerationTask(
 }
 
 function shouldResumeVideoGeneration(generation: StudioVideoGeneration) {
-  if (!generation.providerTaskId || generation.status === "error") {
+  if (
+    !generation.providerTaskId ||
+    generation.status === "complete" ||
+    generation.status === "partial" ||
+    generation.status === "error" ||
+    generation.status === "cancelled"
+  ) {
     return false
   }
 
   return (
     generation.status === "queued" ||
     generation.status === "running" ||
-    generation.outputs.length === 0
+    generation.status === "polling"
   )
 }
 

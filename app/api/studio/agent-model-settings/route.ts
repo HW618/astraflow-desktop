@@ -37,8 +37,11 @@ const customModelSchema = z.object({
 const settingsSchema = z.object({
   runtimes: z.object({
     astraflow: runtimeModelSettingSchema,
+    "claude-native": runtimeModelSettingSchema,
     "claude-code": runtimeModelSettingSchema,
+    "codex-direct": runtimeModelSettingSchema,
     codex: runtimeModelSettingSchema,
+    "opencode-native": runtimeModelSettingSchema,
     opencode: runtimeModelSettingSchema,
   }),
   customModels: z.array(customModelSchema).default([]),

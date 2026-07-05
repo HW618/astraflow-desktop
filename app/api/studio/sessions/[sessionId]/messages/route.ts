@@ -41,12 +41,26 @@ const activitySchema = z.object({
   input: z.string().trim().max(20_000).default(""),
   output: z.string().trim().max(120_000).default(""),
   error: z.string().trim().max(10_000).nullable().default(null),
+  parentTaskId: z.string().trim().min(1).max(120).nullable().optional(),
 })
 
 const permissionOptionSchema = z.object({
   optionId: z.string().trim().min(1).max(120),
   name: z.string().trim().min(1).max(200),
   kind: z.string().trim().min(1).max(80),
+})
+
+const mediaGenerationOutputSchema = z.object({
+  id: z.string().trim().min(1).max(160),
+  index: z.number().int().nonnegative().max(1_000),
+  sessionFileId: z.string().trim().min(1).max(160).nullable().optional(),
+  contentUrl: z.string().trim().min(1).max(4_000),
+  url: z.string().trim().max(4_000).nullable().default(null),
+  storagePath: z.string().trim().max(4_000).nullable().default(null),
+  mimeType: z.string().trim().max(255).nullable().default(null),
+  width: z.number().int().positive().max(100_000).nullable().default(null),
+  height: z.number().int().positive().max(100_000).nullable().default(null),
+  durationSeconds: z.number().nonnegative().nullable().optional(),
 })
 
 const messagePartSchema = z.discriminatedUnion("type", [
@@ -84,6 +98,63 @@ const messagePartSchema = z.discriminatedUnion("type", [
         })
       )
       .max(120),
+  }),
+  z.object({
+    id: z.string().trim().min(1).max(160),
+    type: z.literal("subagent"),
+    taskId: z.string().trim().min(1).max(160),
+    name: z.string().trim().min(1).max(160),
+    status: z.enum(["running", "complete", "error", "cancelled"]),
+    taskInput: z.string().max(20_000).default(""),
+    content: z.string().max(160_000).default(""),
+    summary: z.string().max(80_000).nullable().default(null),
+    error: z.string().max(10_000).nullable().default(null),
+    todos: z
+      .array(
+        z.object({
+          text: z.string().trim().min(1).max(2_000),
+          status: z.enum(["completed", "in_progress", "pending"]),
+        })
+      )
+      .max(120)
+      .default([]),
+    activities: z.array(activitySchema).max(120).default([]),
+    parentTaskId: z.string().trim().min(1).max(120).nullable().optional(),
+  }),
+  z.object({
+    id: z.string().trim().min(1).max(160),
+    type: z.literal("file"),
+    path: z.string().trim().min(1).max(2_000),
+    kind: z.enum(["create", "edit", "delete"]),
+    status: z.enum(["complete", "error"]),
+    error: z.string().max(10_000).nullable().default(null),
+    content: z.string().max(4_000).default(""),
+    parentTaskId: z.string().trim().min(1).max(120).nullable().optional(),
+  }),
+  z.object({
+    id: z.string().trim().min(1).max(160),
+    type: z.literal("media_generation"),
+    kind: z.enum(["image", "video"]),
+    generationId: z.string().trim().min(1).max(160),
+    status: z.enum([
+      "queued",
+      "running",
+      "polling",
+      "complete",
+      "partial",
+      "error",
+      "cancelled",
+    ]),
+    modelName: z.string().trim().min(1).max(255),
+    prompt: z.string().max(8_000),
+    phase: z.string().trim().max(120).nullable().optional(),
+    progress: z.number().min(0).max(1).nullable().optional(),
+    rawStatus: z.string().trim().max(255).nullable().optional(),
+    outputs: z.array(mediaGenerationOutputSchema).max(20).default([]),
+    errorMessage: z.string().max(10_000).nullable().default(null),
+    providerTaskId: z.string().trim().min(1).max(255).nullable().optional(),
+    providerRequestId: z.string().trim().min(1).max(255).nullable().optional(),
+    parentTaskId: z.string().trim().min(1).max(120).nullable().optional(),
   }),
   z.object({
     id: z.string().trim().min(1).max(120),

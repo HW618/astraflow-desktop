@@ -61,12 +61,14 @@ export type ChatModelConfig = {
 const OPENAI_MODEL_RUNTIME_IDS = [
   "astraflow",
   "codex",
+  "codex-direct",
   "opencode",
 ] as const satisfies readonly AgentRuntimeId[]
 
 const ANTHROPIC_MODEL_RUNTIME_IDS = [
   "astraflow",
   "claude-code",
+  "claude-native",
   "opencode",
 ] as const satisfies readonly AgentRuntimeId[]
 

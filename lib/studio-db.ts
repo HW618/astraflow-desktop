@@ -12,6 +12,7 @@ import {
   removeStudioDirectory,
   removeStudioFile,
   safeFileName,
+  statStudioFile,
 } from "@/lib/studio-file-storage"
 
 import {
@@ -41,6 +42,8 @@ import type { InstalledSkill, SkillMeta } from "@/lib/skill-market"
 import { studioPermissionModes } from "@/lib/studio-types"
 import type {
   StudioAttachment,
+  StudioAgentProviderEvent,
+  StudioAgentProviderEventDirection,
   StudioMessageActivity,
   StudioImageGeneration,
   StudioImageOutput,
@@ -102,6 +105,20 @@ type DbMessageRow = {
   reasoning_duration_ms: number | null
   status: StudioMessageStatus
   attachments: string | null
+  created_at: string
+}
+
+type DbAgentProviderEventRow = {
+  id: string
+  session_id: string
+  run_id: string | null
+  assistant_message_id: string | null
+  runtime_id: string
+  provider: string
+  direction: StudioAgentProviderEventDirection
+  event_type: string
+  provider_ref: string | null
+  payload: string
   created_at: string
 }
 
@@ -291,6 +308,26 @@ type UpdateMessageSnapshotInput = {
   status?: StudioMessageStatus
 }
 
+type RecordAgentProviderEventInput = {
+  id?: string
+  sessionId: string
+  runId?: string | null
+  assistantMessageId?: string | null
+  runtimeId: string
+  provider: string
+  direction: StudioAgentProviderEventDirection
+  eventType: string
+  providerRef?: string | null
+  payload: unknown
+}
+
+type ListAgentProviderEventsInput = {
+  sessionId: string
+  runId?: string | null
+  runtimeId?: string | null
+  limit?: number
+}
+
 type UpsertSessionSandboxInput = {
   sessionId: string
   sandboxId: string
@@ -417,6 +454,14 @@ type DbImageGenerationRow = {
   prompt: string
   params: string
   status: StudioImageStatus
+  phase: string | null
+  progress: number | null
+  raw_status: string | null
+  attempt: number
+  last_polled_at: string | null
+  next_poll_at: string | null
+  lease_owner: string | null
+  lease_expires_at: string | null
   error_message: string | null
   raw_response: string | null
   created_at: string
@@ -464,6 +509,14 @@ type CreateImageGenerationInput = {
   prompt: string
   params: Record<string, unknown>
   status?: StudioImageStatus
+  phase?: string | null
+  progress?: number | null
+  rawStatus?: string | null
+  attempt?: number
+  lastPolledAt?: string | null
+  nextPollAt?: string | null
+  leaseOwner?: string | null
+  leaseExpiresAt?: string | null
 }
 
 type CreateImageOutputInput = {
@@ -485,6 +538,14 @@ type UpdateImageGenerationInput = {
   errorMessage?: string | null
   rawResponse?: unknown
   completedAt?: string | null
+  phase?: string | null
+  progress?: number | null
+  rawStatus?: string | null
+  attempt?: number
+  lastPolledAt?: string | null
+  nextPollAt?: string | null
+  leaseOwner?: string | null
+  leaseExpiresAt?: string | null
 }
 
 const DEFAULT_SESSION_TITLE = "New chat"
@@ -555,6 +616,22 @@ const studioTableColumns = {
     },
     { name: "status", definition: "status TEXT NOT NULL DEFAULT 'complete'" },
     { name: "attachments", definition: "attachments TEXT" },
+    { name: "created_at", definition: "created_at TEXT NOT NULL DEFAULT ''" },
+  ],
+  studio_agent_provider_events: [
+    { name: "id", definition: "id TEXT" },
+    { name: "session_id", definition: "session_id TEXT NOT NULL DEFAULT ''" },
+    { name: "run_id", definition: "run_id TEXT" },
+    { name: "assistant_message_id", definition: "assistant_message_id TEXT" },
+    { name: "runtime_id", definition: "runtime_id TEXT NOT NULL DEFAULT ''" },
+    { name: "provider", definition: "provider TEXT NOT NULL DEFAULT ''" },
+    {
+      name: "direction",
+      definition: "direction TEXT NOT NULL DEFAULT 'output'",
+    },
+    { name: "event_type", definition: "event_type TEXT NOT NULL DEFAULT ''" },
+    { name: "provider_ref", definition: "provider_ref TEXT" },
+    { name: "payload", definition: "payload TEXT NOT NULL DEFAULT 'null'" },
     { name: "created_at", definition: "created_at TEXT NOT NULL DEFAULT ''" },
   ],
   studio_settings: [
@@ -759,6 +836,14 @@ const studioTableColumns = {
     { name: "prompt", definition: "prompt TEXT NOT NULL DEFAULT ''" },
     { name: "params", definition: "params TEXT NOT NULL DEFAULT '{}'" },
     { name: "status", definition: "status TEXT NOT NULL DEFAULT 'queued'" },
+    { name: "phase", definition: "phase TEXT" },
+    { name: "progress", definition: "progress REAL" },
+    { name: "raw_status", definition: "raw_status TEXT" },
+    { name: "attempt", definition: "attempt INTEGER NOT NULL DEFAULT 0" },
+    { name: "last_polled_at", definition: "last_polled_at TEXT" },
+    { name: "next_poll_at", definition: "next_poll_at TEXT" },
+    { name: "lease_owner", definition: "lease_owner TEXT" },
+    { name: "lease_expires_at", definition: "lease_expires_at TEXT" },
     { name: "error_message", definition: "error_message TEXT" },
     { name: "raw_response", definition: "raw_response TEXT" },
     { name: "created_at", definition: "created_at TEXT NOT NULL DEFAULT ''" },
@@ -1013,6 +1098,22 @@ function initializeSchema(database: Database.Database) {
       FOREIGN KEY (session_id) REFERENCES studio_sessions(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS studio_agent_provider_events (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      run_id TEXT,
+      assistant_message_id TEXT,
+      runtime_id TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      direction TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      provider_ref TEXT,
+      payload TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (session_id) REFERENCES studio_sessions(id) ON DELETE CASCADE,
+      FOREIGN KEY (assistant_message_id) REFERENCES studio_messages(id) ON DELETE SET NULL
+    );
+
     CREATE TABLE IF NOT EXISTS studio_settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,
@@ -1175,6 +1276,14 @@ function initializeSchema(database: Database.Database) {
       prompt TEXT NOT NULL,
       params TEXT NOT NULL,
       status TEXT NOT NULL,
+      phase TEXT,
+      progress REAL,
+      raw_status TEXT,
+      attempt INTEGER NOT NULL DEFAULT 0,
+      last_polled_at TEXT,
+      next_poll_at TEXT,
+      lease_owner TEXT,
+      lease_expires_at TEXT,
       error_message TEXT,
       raw_response TEXT,
       created_at TEXT NOT NULL,
@@ -1239,6 +1348,15 @@ function ensureSchemaIndexes(database: Database.Database) {
     CREATE INDEX IF NOT EXISTS studio_messages_version_group_idx
       ON studio_messages(session_id, version_group_id);
 
+    CREATE INDEX IF NOT EXISTS studio_agent_provider_events_session_idx
+      ON studio_agent_provider_events(session_id, created_at ASC);
+
+    CREATE INDEX IF NOT EXISTS studio_agent_provider_events_run_idx
+      ON studio_agent_provider_events(run_id, created_at ASC);
+
+    CREATE INDEX IF NOT EXISTS studio_agent_provider_events_provider_ref_idx
+      ON studio_agent_provider_events(provider, provider_ref);
+
     CREATE INDEX IF NOT EXISTS studio_session_files_session_idx
       ON studio_session_files(session_id, created_at ASC);
 
@@ -1289,6 +1407,15 @@ function normalizeTitle(title: string | undefined) {
   }
 
   return normalized.length > 48 ? `${normalized.slice(0, 48)}...` : normalized
+}
+
+function isTerminalImageStatus(status: StudioImageStatus) {
+  return (
+    status === "complete" ||
+    status === "partial" ||
+    status === "error" ||
+    status === "cancelled"
+  )
 }
 
 function mapSession(row: DbSessionRow): StudioSession {
@@ -1594,6 +1721,42 @@ function isStudioPermissionOption(value: unknown) {
   )
 }
 
+function isStudioMessageTodo(value: unknown) {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { text?: unknown }).text === "string" &&
+    ((value as { status?: unknown }).status === "pending" ||
+      (value as { status?: unknown }).status === "in_progress" ||
+      (value as { status?: unknown }).status === "completed")
+  )
+}
+
+function isStudioMediaGenerationOutput(value: unknown) {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { id?: unknown }).id === "string" &&
+    typeof (value as { index?: unknown }).index === "number" &&
+    typeof (value as { contentUrl?: unknown }).contentUrl === "string" &&
+    (typeof (value as { url?: unknown }).url === "string" ||
+      (value as { url?: unknown }).url === null) &&
+    (typeof (value as { storagePath?: unknown }).storagePath === "string" ||
+      (value as { storagePath?: unknown }).storagePath === null) &&
+    (typeof (value as { mimeType?: unknown }).mimeType === "string" ||
+      (value as { mimeType?: unknown }).mimeType === null) &&
+    (typeof (value as { width?: unknown }).width === "number" ||
+      (value as { width?: unknown }).width === null) &&
+    (typeof (value as { height?: unknown }).height === "number" ||
+      (value as { height?: unknown }).height === null) &&
+    (typeof (value as { durationSeconds?: unknown }).durationSeconds ===
+      "number" ||
+      (value as { durationSeconds?: unknown }).durationSeconds === null ||
+      typeof (value as { durationSeconds?: unknown }).durationSeconds ===
+        "undefined")
+  )
+}
+
 function parseParts(raw: string | null): StudioMessagePart[] {
   if (!raw) {
     return []
@@ -1615,15 +1778,11 @@ function parseParts(raw: string | null): StudioMessagePart[] {
         const part = item as StudioMessagePart
 
         if (part.type === "text") {
-          return (
-            typeof part.id === "string" && typeof part.content === "string"
-          )
+          return typeof part.id === "string" && typeof part.content === "string"
         }
 
         if (part.type === "reasoning") {
-          return (
-            typeof part.id === "string" && typeof part.content === "string"
-          )
+          return typeof part.id === "string" && typeof part.content === "string"
         }
 
         if (part.type === "plan") {
@@ -1631,13 +1790,85 @@ function parseParts(raw: string | null): StudioMessagePart[] {
             typeof part.id === "string" &&
             typeof part.content === "string" &&
             Array.isArray(part.todos) &&
-            part.todos.every(
-              (todo) =>
-                typeof todo.text === "string" &&
-                (todo.status === "pending" ||
-                  todo.status === "in_progress" ||
-                  todo.status === "completed")
-            )
+            part.todos.every(isStudioMessageTodo)
+          )
+        }
+
+        if (part.type === "subagent") {
+          return (
+            typeof part.id === "string" &&
+            typeof part.taskId === "string" &&
+            typeof part.name === "string" &&
+            (part.status === "running" ||
+              part.status === "complete" ||
+              part.status === "error" ||
+              part.status === "cancelled") &&
+            typeof part.taskInput === "string" &&
+            typeof part.content === "string" &&
+            (typeof part.summary === "string" || part.summary === null) &&
+            (typeof part.error === "string" || part.error === null) &&
+            Array.isArray(part.todos) &&
+            part.todos.every(isStudioMessageTodo) &&
+            Array.isArray(part.activities) &&
+            part.activities.every(isStudioMessageActivity) &&
+            (typeof part.parentTaskId === "string" ||
+              part.parentTaskId === null ||
+              typeof part.parentTaskId === "undefined")
+          )
+        }
+
+        if (part.type === "file") {
+          return (
+            typeof part.id === "string" &&
+            typeof part.path === "string" &&
+            (part.kind === "create" ||
+              part.kind === "edit" ||
+              part.kind === "delete") &&
+            (part.status === "complete" || part.status === "error") &&
+            (typeof part.error === "string" || part.error === null) &&
+            typeof part.content === "string" &&
+            (typeof part.parentTaskId === "string" ||
+              part.parentTaskId === null ||
+              typeof part.parentTaskId === "undefined")
+          )
+        }
+
+        if (part.type === "media_generation") {
+          return (
+            typeof part.id === "string" &&
+            (part.kind === "image" || part.kind === "video") &&
+            typeof part.generationId === "string" &&
+            (part.status === "queued" ||
+              part.status === "running" ||
+              part.status === "polling" ||
+              part.status === "complete" ||
+              part.status === "partial" ||
+              part.status === "error" ||
+              part.status === "cancelled") &&
+            typeof part.modelName === "string" &&
+            typeof part.prompt === "string" &&
+            (typeof part.phase === "string" ||
+              part.phase === null ||
+              typeof part.phase === "undefined") &&
+            (typeof part.progress === "number" ||
+              part.progress === null ||
+              typeof part.progress === "undefined") &&
+            (typeof part.rawStatus === "string" ||
+              part.rawStatus === null ||
+              typeof part.rawStatus === "undefined") &&
+            Array.isArray(part.outputs) &&
+            part.outputs.every(isStudioMediaGenerationOutput) &&
+            (typeof part.errorMessage === "string" ||
+              part.errorMessage === null) &&
+            (typeof part.providerTaskId === "string" ||
+              part.providerTaskId === null ||
+              typeof part.providerTaskId === "undefined") &&
+            (typeof part.providerRequestId === "string" ||
+              part.providerRequestId === null ||
+              typeof part.providerRequestId === "undefined") &&
+            (typeof part.parentTaskId === "string" ||
+              part.parentTaskId === null ||
+              typeof part.parentTaskId === "undefined")
           )
         }
 
@@ -1699,6 +1930,125 @@ function mapMessage(row: DbMessageRow): StudioMessage {
     attachments: parseAttachments(row.attachments),
     createdAt: row.created_at,
   }
+}
+
+function mapAgentProviderEvent(
+  row: DbAgentProviderEventRow
+): StudioAgentProviderEvent {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    runId: row.run_id,
+    assistantMessageId: row.assistant_message_id,
+    runtimeId: row.runtime_id,
+    provider: row.provider,
+    direction: row.direction,
+    eventType: row.event_type,
+    providerRef: row.provider_ref,
+    payload: parseJsonValue(row.payload, null as unknown),
+    createdAt: row.created_at,
+  }
+}
+
+function stringifyProviderEventPayload(payload: unknown) {
+  try {
+    return JSON.stringify(payload)
+  } catch {
+    return JSON.stringify({
+      unsupportedPayload: String(payload),
+    })
+  }
+}
+
+export function recordStudioAgentProviderEvent({
+  id = randomUUID(),
+  sessionId,
+  runId = null,
+  assistantMessageId = null,
+  runtimeId,
+  provider,
+  direction,
+  eventType,
+  providerRef = null,
+  payload,
+}: RecordAgentProviderEventInput): StudioAgentProviderEvent {
+  const createdAt = nowIso()
+
+  getDb()
+    .prepare(
+      `
+        INSERT INTO studio_agent_provider_events
+          (id, session_id, run_id, assistant_message_id, runtime_id, provider,
+           direction, event_type, provider_ref, payload, created_at)
+        VALUES
+          (@id, @sessionId, @runId, @assistantMessageId, @runtimeId, @provider,
+           @direction, @eventType, @providerRef, @payload, @createdAt)
+      `
+    )
+    .run({
+      id,
+      sessionId,
+      runId,
+      assistantMessageId,
+      runtimeId,
+      provider,
+      direction,
+      eventType,
+      providerRef,
+      payload: stringifyProviderEventPayload(payload),
+      createdAt,
+    })
+
+  return {
+    id,
+    sessionId,
+    runId,
+    assistantMessageId,
+    runtimeId,
+    provider,
+    direction,
+    eventType,
+    providerRef,
+    payload,
+    createdAt,
+  }
+}
+
+export function listStudioAgentProviderEvents({
+  sessionId,
+  runId = null,
+  runtimeId = null,
+  limit = 500,
+}: ListAgentProviderEventsInput): StudioAgentProviderEvent[] {
+  const normalizedLimit = Math.min(Math.max(limit, 1), 5_000)
+  const clauses = ["session_id = ?"]
+  const params: unknown[] = [sessionId]
+
+  if (runId) {
+    clauses.push("run_id = ?")
+    params.push(runId)
+  }
+
+  if (runtimeId) {
+    clauses.push("runtime_id = ?")
+    params.push(runtimeId)
+  }
+
+  const rows = getDb()
+    .prepare(
+      `
+        SELECT id, session_id, run_id, assistant_message_id, runtime_id,
+               provider, direction, event_type, provider_ref, payload,
+               created_at
+        FROM studio_agent_provider_events
+        WHERE ${clauses.join(" AND ")}
+        ORDER BY created_at ASC
+        LIMIT ?
+      `
+    )
+    .all(...params, normalizedLimit) as DbAgentProviderEventRow[]
+
+  return rows.map(mapAgentProviderEvent)
 }
 
 function readStudioSetting(key: string) {
@@ -2878,9 +3228,7 @@ export function hasStudioPermissionRule({
         LIMIT 1
       `
     )
-    .get(normalizedToolName, projectId) as
-    | DbPermissionRuleRow
-    | undefined
+    .get(normalizedToolName, projectId) as DbPermissionRuleRow | undefined
 
   return Boolean(row)
 }
@@ -2926,14 +3274,11 @@ export function countStudioPermissionRules(projectId: string | null) {
       `
         SELECT COUNT(*) AS count
         FROM studio_permission_rules
-        WHERE ${
-          projectId === null ? "project_id IS NULL" : "project_id = ?"
-        }
+        WHERE ${projectId === null ? "project_id IS NULL" : "project_id = ?"}
       `
     )
     .get(...(projectId === null ? [] : [projectId])) as
-    | { count: number }
-    | undefined
+    { count: number } | undefined
 
   return row?.count ?? 0
 }
@@ -2943,9 +3288,7 @@ export function deleteStudioPermissionRules(projectId: string | null) {
     .prepare(
       `
         DELETE FROM studio_permission_rules
-        WHERE ${
-          projectId === null ? "project_id IS NULL" : "project_id = ?"
-        }
+        WHERE ${projectId === null ? "project_id IS NULL" : "project_id = ?"}
       `
     )
     .run(...(projectId === null ? [] : [projectId]))
@@ -4170,6 +4513,65 @@ export function createStudioSessionFile({
   return getStudioSessionFile(id)
 }
 
+export function getGeneratedMediaSessionFileId(
+  kind: "image" | "video",
+  outputId: string
+) {
+  return `${kind}-output-${outputId}`
+}
+
+function generatedMediaFileExtension(mimeType: string | null) {
+  if (mimeType === "image/jpeg") return "jpg"
+  if (mimeType === "image/webp") return "webp"
+  if (mimeType === "image/gif") return "gif"
+  if (mimeType === "video/mp4") return "mp4"
+  if (mimeType === "video/webm") return "webm"
+  if (mimeType === "video/quicktime") return "mov"
+  return mimeType?.startsWith("video/") ? "mp4" : "png"
+}
+
+export function createGeneratedMediaSessionFile({
+  generationId,
+  kind,
+  mimeType,
+  outputId,
+  outputIndex,
+  savedAt = nowIso(),
+  sessionId,
+  storagePath,
+}: {
+  generationId: string
+  kind: "image" | "video"
+  mimeType: string | null
+  outputId: string
+  outputIndex: number
+  savedAt?: string | null
+  sessionId: string
+  storagePath: string
+}) {
+  let size: number | null = null
+
+  try {
+    size = statStudioFile(storagePath).size
+  } catch {
+    size = null
+  }
+
+  return createStudioSessionFile({
+    id: getGeneratedMediaSessionFileId(kind, outputId),
+    sessionId,
+    kind: "generated",
+    originalName: `${kind}-${outputIndex + 1}-${outputId}.${generatedMediaFileExtension(
+      mimeType
+    )}`,
+    mimeType,
+    size,
+    storagePath,
+    sourceToolCallId: generationId,
+    savedAt,
+  })
+}
+
 export function getStudioSessionFile(fileId: string) {
   const row = getDb()
     .prepare(
@@ -4479,10 +4881,7 @@ export function getStudioAgentModelSettingsRecord() {
 }
 
 export function saveStudioAgentModelSettingsRecord(value: unknown) {
-  return writeStudioSetting(
-    STUDIO_AGENT_MODEL_SETTINGS,
-    JSON.stringify(value)
-  )
+  return writeStudioSetting(STUDIO_AGENT_MODEL_SETTINGS, JSON.stringify(value))
 }
 
 export function getSelectedUCloudProjectId() {
@@ -4613,6 +5012,14 @@ function mapImageGeneration(
     prompt: row.prompt,
     params: parseJsonRecord(row.params),
     status: row.status,
+    phase: row.phase,
+    progress: row.progress,
+    rawStatus: row.raw_status,
+    attempt: row.attempt,
+    lastPolledAt: row.last_polled_at,
+    nextPollAt: row.next_poll_at,
+    leaseOwner: row.lease_owner,
+    leaseExpiresAt: row.lease_expires_at,
     errorMessage: row.error_message,
     createdAt: row.created_at,
     completedAt: row.completed_at,
@@ -4627,7 +5034,9 @@ export function listStudioImageGenerations(sessionId: string) {
       `
         SELECT id, session_id, model_square_id, model_name, manufacturer,
                openapi_file, operation_id, prompt, params, status,
-               error_message, raw_response, created_at, completed_at
+               phase, progress, raw_status, attempt, last_polled_at,
+               next_poll_at, lease_owner, lease_expires_at, error_message,
+               raw_response, created_at, completed_at
         FROM studio_image_generations
         WHERE session_id = ?
         ORDER BY created_at ASC
@@ -4680,11 +5089,15 @@ export function createStudioImageGeneration(
           INSERT INTO studio_image_generations
             (id, session_id, model_square_id, model_name, manufacturer,
              openapi_file, operation_id, prompt, params, status,
-             error_message, raw_response, created_at, completed_at)
+             phase, progress, raw_status, attempt, last_polled_at,
+             next_poll_at, lease_owner, lease_expires_at, error_message,
+             raw_response, created_at, completed_at)
           VALUES
             (@id, @sessionId, @modelSquareId, @modelName, @manufacturer,
              @openapiFile, @operationId, @prompt, @params, @status,
-             NULL, NULL, @createdAt, NULL)
+             @phase, @progress, @rawStatus, @attempt, @lastPolledAt,
+             @nextPollAt, @leaseOwner, @leaseExpiresAt, NULL, NULL,
+             @createdAt, NULL)
         `
       )
       .run({
@@ -4698,6 +5111,14 @@ export function createStudioImageGeneration(
         prompt: input.prompt,
         params: JSON.stringify(input.params),
         status,
+        phase: input.phase ?? null,
+        progress: input.progress ?? null,
+        rawStatus: input.rawStatus ?? null,
+        attempt: input.attempt ?? 0,
+        lastPolledAt: input.lastPolledAt ?? null,
+        nextPollAt: input.nextPollAt ?? null,
+        leaseOwner: input.leaseOwner ?? null,
+        leaseExpiresAt: input.leaseExpiresAt ?? null,
         createdAt,
       })
 
@@ -4725,6 +5146,14 @@ export function createStudioImageGeneration(
     prompt: input.prompt,
     params: input.params,
     status,
+    phase: input.phase ?? null,
+    progress: input.progress ?? null,
+    rawStatus: input.rawStatus ?? null,
+    attempt: input.attempt ?? 0,
+    lastPolledAt: input.lastPolledAt ?? null,
+    nextPollAt: input.nextPollAt ?? null,
+    leaseOwner: input.leaseOwner ?? null,
+    leaseExpiresAt: input.leaseExpiresAt ?? null,
     errorMessage: null,
     createdAt,
     completedAt: null,
@@ -4736,21 +5165,39 @@ export function updateStudioImageGeneration(
   generationId: string,
   input: UpdateImageGenerationInput
 ) {
-  const completedAt = input.completedAt ?? nowIso()
+  const completedAt =
+    input.completedAt ??
+    (isTerminalImageStatus(input.status) ? nowIso() : null)
 
   getDb()
     .prepare(
       `
         UPDATE studio_image_generations
         SET status = ?,
+            phase = COALESCE(?, phase),
+            progress = COALESCE(?, progress),
+            raw_status = COALESCE(?, raw_status),
+            attempt = COALESCE(?, attempt),
+            last_polled_at = COALESCE(?, last_polled_at),
+            next_poll_at = COALESCE(?, next_poll_at),
+            lease_owner = COALESCE(?, lease_owner),
+            lease_expires_at = COALESCE(?, lease_expires_at),
             error_message = ?,
-            raw_response = ?,
-            completed_at = ?
+            raw_response = COALESCE(?, raw_response),
+            completed_at = COALESCE(?, completed_at)
         WHERE id = ?
       `
     )
     .run(
       input.status,
+      input.phase ?? null,
+      input.progress ?? null,
+      input.rawStatus ?? null,
+      input.attempt ?? null,
+      input.lastPolledAt ?? null,
+      input.nextPollAt ?? null,
+      input.leaseOwner ?? null,
+      input.leaseExpiresAt ?? null,
       input.errorMessage ?? null,
       input.rawResponse === undefined
         ? null
@@ -4793,6 +5240,35 @@ export function createStudioImageOutput(
       savedAt,
       createdAt,
     })
+
+  if (input.storagePath) {
+    try {
+      const generation = getDb()
+        .prepare(
+          `
+            SELECT session_id
+            FROM studio_image_generations
+            WHERE id = ?
+          `
+        )
+        .get(input.generationId) as { session_id: string } | undefined
+
+      if (generation?.session_id) {
+        createGeneratedMediaSessionFile({
+          generationId: input.generationId,
+          kind: "image",
+          mimeType: input.mimeType ?? null,
+          outputId: id,
+          outputIndex: input.index,
+          savedAt: savedAt ?? createdAt,
+          sessionId: generation.session_id,
+          storagePath: input.storagePath,
+        })
+      }
+    } catch {
+      // Session-file registration is best-effort; the media output row is the source of truth.
+    }
+  }
 
   return {
     id,

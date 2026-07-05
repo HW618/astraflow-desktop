@@ -5,12 +5,14 @@ import {
   createStudioMessage,
   getStudioMessage,
   getStudioSession,
+  recordStudioAgentProviderEvent,
   updateStudioMessageSnapshot,
 } from "@/lib/studio-db"
 import type {
   StudioChatRunLiveSnapshot,
   StudioChatRunSnapshot,
   StudioChatRunStatus,
+  StudioMediaGenerationOutput,
   StudioMessageActivity,
   StudioMessagePart,
   StudioMessageStatus,
@@ -31,6 +33,12 @@ type ChatStreamSnapshot = {
   reasoningContent: string
   reasoningDurationMs: number | null
 }
+
+type StudioMediaGenerationPart = Extract<
+  StudioMessagePart,
+  { type: "media_generation" }
+>
+type StudioSubagentPart = Extract<StudioMessagePart, { type: "subagent" }>
 
 type StudioChatRunRecord = StudioChatRunSnapshot & {
   abortWatchdogTimer: ReturnType<typeof setTimeout> | null
@@ -254,6 +262,177 @@ function debugIgnoredAgentEvent(
   console.debug(`[studio-chat:event] ${label}`, payload)
 }
 
+function isMediaGenerationToolName(toolName: string) {
+  return (
+    toolName === "studio_generate_image" || toolName === "studio_generate_video"
+  )
+}
+
+function parseMediaGenerationOutput(
+  value: unknown
+): StudioMediaGenerationOutput | null {
+  const record = getRecord(value)
+
+  if (!record) {
+    return null
+  }
+
+  const id = typeof record.id === "string" ? record.id : ""
+  const index = typeof record.index === "number" ? record.index : null
+  const contentUrl =
+    typeof record.contentUrl === "string" ? record.contentUrl : ""
+
+  if (!id || index === null || !contentUrl) {
+    return null
+  }
+
+  return {
+    id,
+    index,
+    sessionFileId:
+      typeof record.sessionFileId === "string" ? record.sessionFileId : null,
+    contentUrl,
+    url: typeof record.url === "string" ? record.url : null,
+    storagePath:
+      typeof record.storagePath === "string" ? record.storagePath : null,
+    mimeType: typeof record.mimeType === "string" ? record.mimeType : null,
+    width: typeof record.width === "number" ? record.width : null,
+    height: typeof record.height === "number" ? record.height : null,
+    durationSeconds:
+      typeof record.durationSeconds === "number"
+        ? record.durationSeconds
+        : record.durationSeconds === null
+          ? null
+          : undefined,
+  }
+}
+
+function parseMediaGenerationToolOutput(
+  output: string,
+  parentTaskId: string | null
+): Extract<AgentEvent, { type: "media_generation" }> | null {
+  let parsed: unknown
+
+  try {
+    parsed = JSON.parse(output)
+  } catch {
+    return null
+  }
+
+  const record = getRecord(parsed)
+  const model = getRecord(record?.model)
+  const outputs = Array.isArray(record?.outputs)
+    ? record.outputs
+        .map(parseMediaGenerationOutput)
+        .filter(isMediaGenerationOutput)
+    : []
+
+  if (
+    !record ||
+    (record.kind !== "image" && record.kind !== "video") ||
+    typeof record.generationId !== "string" ||
+    !record.generationId ||
+    (record.status !== "queued" &&
+      record.status !== "running" &&
+      record.status !== "polling" &&
+      record.status !== "complete" &&
+      record.status !== "partial" &&
+      record.status !== "error" &&
+      record.status !== "cancelled") ||
+    typeof record.prompt !== "string" ||
+    typeof model?.name !== "string"
+  ) {
+    return null
+  }
+
+  return {
+    type: "media_generation",
+    kind: record.kind,
+    generationId: record.generationId,
+    status: record.status,
+    modelName: model.name,
+    prompt: record.prompt,
+    phase: typeof record.phase === "string" ? record.phase : null,
+    progress:
+      typeof record.progress === "number" && Number.isFinite(record.progress)
+        ? Math.min(Math.max(record.progress, 0), 1)
+        : null,
+    rawStatus: typeof record.rawStatus === "string" ? record.rawStatus : null,
+    outputs,
+    errorMessage:
+      typeof record.errorMessage === "string" ? record.errorMessage : null,
+    providerTaskId:
+      typeof record.providerTaskId === "string" ? record.providerTaskId : null,
+    providerRequestId:
+      typeof record.providerRequestId === "string"
+        ? record.providerRequestId
+        : null,
+    ...(parentTaskId ? { parentTaskId } : {}),
+  }
+}
+
+function getProviderRefForAgentEvent(event: AgentEvent) {
+  switch (event.type) {
+    case "tool_call":
+    case "tool_result":
+      return event.id
+    case "subagent_start":
+    case "subagent_update":
+    case "subagent_end":
+      return event.taskId
+    case "permission_request":
+      return event.requestId
+    case "media_generation":
+      return event.generationId
+    case "file_change":
+      return event.path
+    case "run_meta":
+      return event.sessionRef ?? null
+    case "text_delta":
+    case "reasoning_delta":
+    case "plan_update":
+    case "error":
+      return null
+  }
+}
+
+function recordStructuredAgentEvent({
+  assistantMessageId,
+  event,
+  runId,
+  runtimeId,
+  sessionId,
+}: {
+  assistantMessageId: string
+  event: AgentEvent
+  runId: string
+  runtimeId: string
+  sessionId: string
+}) {
+  if (event.type === "text_delta" || event.type === "reasoning_delta") {
+    return
+  }
+
+  try {
+    recordStudioAgentProviderEvent({
+      sessionId,
+      runId,
+      assistantMessageId,
+      runtimeId,
+      provider: runtimeId,
+      direction: "output",
+      eventType: event.type,
+      providerRef: getProviderRefForAgentEvent(event),
+      payload: event,
+    })
+  } catch (error) {
+    debugIgnoredAgentEvent("provider_event_log_failed", {
+      eventType: event.type,
+      message: error instanceof Error ? error.message : String(error),
+    })
+  }
+}
+
 function createInitialSnapshot(): ChatStreamSnapshot {
   return {
     content: "",
@@ -264,31 +443,87 @@ function createInitialSnapshot(): ChatStreamSnapshot {
   }
 }
 
+function isActivityComplete(activity: StudioMessageActivity) {
+  return activity.status !== "running"
+}
+
+function isMediaGenerationOutput(
+  output: StudioMediaGenerationOutput | null
+): output is StudioMediaGenerationOutput {
+  return output !== null
+}
+
+function stopSubagentPart(part: StudioSubagentPart): StudioSubagentPart {
+  if (part.status !== "running") {
+    return {
+      ...part,
+      activities: part.activities.filter(isActivityComplete),
+    }
+  }
+
+  return {
+    ...part,
+    status: "cancelled",
+    activities: part.activities.filter(isActivityComplete),
+  }
+}
+
+function failSubagentPart(
+  part: StudioSubagentPart,
+  message: string
+): StudioSubagentPart {
+  return {
+    ...part,
+    status: part.status === "running" ? "error" : part.status,
+    error: part.status === "running" ? (part.error ?? message) : part.error,
+    activities: part.activities.map((activity) =>
+      activity.status === "running"
+        ? {
+            ...activity,
+            status: "error" as const,
+            error: activity.error ?? message,
+          }
+        : activity
+    ),
+  }
+}
+
 function toStoppedSnapshot(snapshot: ChatStreamSnapshot): ChatStreamSnapshot {
-  const completedActivities = snapshot.activities.filter(
-    (activity) => activity.status !== "running"
-  )
+  const completedActivities = snapshot.activities.filter(isActivityComplete)
   const completedActivityIds = new Set(
     completedActivities.map((activity) => activity.id)
   )
 
   const parts = snapshot.parts
-    .map((part) =>
-      part.type === "permission" && part.status === "pending"
-        ? { ...part, status: "cancelled" as const }
-        : part
-    )
+    .map((part) => {
+      if (part.type === "permission" && part.status === "pending") {
+        return { ...part, status: "cancelled" as const }
+      }
+
+      if (part.type === "subagent") {
+        return stopSubagentPart(part)
+      }
+
+      return part
+    })
     .filter((part) => {
       if (
         part.type === "text" ||
         part.type === "reasoning" ||
         part.type === "plan" ||
-        part.type === "permission"
+        part.type === "permission" ||
+        part.type === "subagent" ||
+        part.type === "file" ||
+        part.type === "media_generation"
       ) {
         return true
       }
 
-      return completedActivityIds.has(part.activity.id)
+      if (part.type === "tool") {
+        return completedActivityIds.has(part.activity.id)
+      }
+
+      return false
     })
 
   return {
@@ -508,6 +743,241 @@ function createSnapshotAccumulator() {
     }
   }
 
+  function upsertSubagentPart(update: {
+    taskId: string
+    name?: string
+    status?: StudioSubagentPart["status"]
+    taskInput?: string
+    content?: string
+    contentDelta?: string
+    summary?: string
+    error?: string
+    todos?: StudioSubagentPart["todos"]
+    parentTaskId?: string | null
+  }) {
+    markReasoningDone()
+
+    const existingIndex = snapshot.parts.findIndex(
+      (part) => part.type === "subagent" && part.taskId === update.taskId
+    )
+    const existingPart =
+      existingIndex >= 0 ? snapshot.parts[existingIndex] : null
+    const current: StudioSubagentPart =
+      existingPart?.type === "subagent"
+        ? existingPart
+        : {
+            id: `subagent:${update.taskId}`,
+            type: "subagent",
+            taskId: update.taskId,
+            name: update.name ?? update.taskId,
+            status: "running",
+            taskInput: "",
+            content: "",
+            summary: null,
+            error: null,
+            todos: [],
+            activities: [],
+            parentTaskId: null,
+          }
+
+    const part: StudioSubagentPart = {
+      ...current,
+      name: update.name ?? current.name,
+      status: update.status ?? current.status,
+      taskInput: update.taskInput ?? current.taskInput,
+      content: update.content ?? current.content + (update.contentDelta ?? ""),
+      summary: update.summary ?? current.summary,
+      error: update.error ?? current.error,
+      todos: update.todos ?? current.todos,
+      parentTaskId: update.parentTaskId ?? current.parentTaskId ?? null,
+    }
+
+    snapshot = {
+      ...snapshot,
+      parts:
+        existingIndex >= 0
+          ? snapshot.parts.map((candidate, index) =>
+              index === existingIndex ? part : candidate
+            )
+          : [...snapshot.parts, part],
+    }
+
+    return true
+  }
+
+  function upsertSubagentActivity(
+    taskId: string,
+    activity: StudioMessageActivity
+  ) {
+    const childActivity: StudioMessageActivity = {
+      ...activity,
+      parentTaskId: activity.parentTaskId ?? taskId,
+    }
+
+    upsertSubagentPart({ taskId })
+
+    snapshot = {
+      ...snapshot,
+      parts: snapshot.parts.map((part) => {
+        if (part.type !== "subagent" || part.taskId !== taskId) {
+          return part
+        }
+
+        const existingIndex = part.activities.findIndex(
+          (candidate) => candidate.id === childActivity.id
+        )
+
+        return {
+          ...part,
+          activities:
+            existingIndex >= 0
+              ? part.activities.map((candidate, index) =>
+                  index === existingIndex ? childActivity : candidate
+                )
+              : [...part.activities, childActivity],
+        }
+      }),
+    }
+  }
+
+  function closeSubagentActivities(
+    taskId: string,
+    status: "complete" | "error",
+    message?: string
+  ) {
+    const closeActivity = (activity: StudioMessageActivity) => {
+      if (activity.status !== "running") {
+        return activity
+      }
+
+      if (status === "error") {
+        return {
+          ...activity,
+          status,
+          error: activity.error ?? message ?? "Subagent failed.",
+        }
+      }
+
+      return {
+        ...activity,
+        status,
+        error: null,
+      }
+    }
+
+    snapshot = {
+      ...snapshot,
+      activities: snapshot.activities.map((activity) =>
+        activity.parentTaskId === taskId ? closeActivity(activity) : activity
+      ),
+      parts: snapshot.parts.map((part) =>
+        part.type === "subagent" && part.taskId === taskId
+          ? {
+              ...part,
+              activities: part.activities.map(closeActivity),
+            }
+          : part
+      ),
+    }
+  }
+
+  function appendFilePart(event: Extract<AgentEvent, { type: "file_change" }>) {
+    markReasoningDone()
+
+    const status = event.status ?? (event.error ? "error" : "complete")
+    const action =
+      event.kind === "create"
+        ? "Created"
+        : event.kind === "edit"
+          ? "Edited"
+          : "Deleted"
+    const content =
+      status === "error"
+        ? `Failed to ${event.kind} ${event.path}`
+        : `${action} ${event.path}`
+
+    snapshot = {
+      ...snapshot,
+      parts: [
+        ...snapshot.parts,
+        {
+          id: randomUUID(),
+          type: "file",
+          path: event.path,
+          kind: event.kind,
+          status,
+          error: event.error ?? null,
+          content,
+          parentTaskId: event.parentTaskId ?? null,
+        },
+      ],
+    }
+
+    return true
+  }
+
+  function upsertMediaGenerationPart(
+    event: Extract<AgentEvent, { type: "media_generation" }>
+  ) {
+    markReasoningDone()
+
+    const existingIndex = snapshot.parts.findIndex(
+      (part) =>
+        part.type === "media_generation" &&
+        part.generationId === event.generationId
+    )
+    const existingPart =
+      existingIndex >= 0 ? snapshot.parts[existingIndex] : null
+    const current: StudioMediaGenerationPart =
+      existingPart?.type === "media_generation"
+        ? existingPart
+        : {
+            id: `media:${event.generationId}`,
+            type: "media_generation",
+            kind: event.kind,
+            generationId: event.generationId,
+            status: event.status,
+            modelName: event.modelName,
+            prompt: event.prompt,
+            phase: event.phase ?? null,
+            progress: event.progress ?? null,
+            rawStatus: event.rawStatus ?? null,
+            outputs: [],
+            errorMessage: null,
+            providerTaskId: null,
+            providerRequestId: null,
+            parentTaskId: null,
+          }
+    const part: StudioMediaGenerationPart = {
+      ...current,
+      kind: event.kind,
+      status: event.status,
+      modelName: event.modelName || current.modelName,
+      prompt: event.prompt || current.prompt,
+      phase: event.phase ?? current.phase ?? null,
+      progress: event.progress ?? current.progress ?? null,
+      rawStatus: event.rawStatus ?? current.rawStatus ?? null,
+      outputs: event.outputs,
+      errorMessage: event.errorMessage ?? current.errorMessage,
+      providerTaskId: event.providerTaskId ?? current.providerTaskId ?? null,
+      providerRequestId:
+        event.providerRequestId ?? current.providerRequestId ?? null,
+      parentTaskId: event.parentTaskId ?? current.parentTaskId ?? null,
+    }
+
+    snapshot = {
+      ...snapshot,
+      parts:
+        existingIndex >= 0
+          ? snapshot.parts.map((candidate, index) =>
+              index === existingIndex ? part : candidate
+            )
+          : [...snapshot.parts, part],
+    }
+
+    return true
+  }
+
   function upsertPlanPart(
     todos: Extract<AgentEvent, { type: "plan_update" }>["todos"]
   ) {
@@ -613,11 +1083,13 @@ function createSnapshotAccumulator() {
         const existingById = snapshot.activities.find(
           (activity) => activity.id === event.id
         )
+        const parentTaskId =
+          existingById?.parentTaskId ?? event.parentTaskId ?? null
         const activity: StudioMessageActivity = existingById
           ? {
               ...existingById,
               input: existingById.input || event.input,
-              parentTaskId: existingById.parentTaskId ?? event.parentTaskId,
+              parentTaskId,
             }
           : {
               id: event.id,
@@ -626,7 +1098,7 @@ function createSnapshotAccumulator() {
               input: event.input,
               output: "",
               error: null,
-              parentTaskId: event.parentTaskId ?? null,
+              parentTaskId,
             }
 
         snapshot = {
@@ -642,7 +1114,11 @@ function createSnapshotAccumulator() {
                 activity,
               ],
         }
-        upsertToolPart(activity)
+        if (parentTaskId) {
+          upsertSubagentActivity(parentTaskId, activity)
+        } else {
+          upsertToolPart(activity)
+        }
         return true
       }
       case "tool_result": {
@@ -657,12 +1133,14 @@ function createSnapshotAccumulator() {
             .filter(
               ({ activity }) =>
                 activity.toolName === event.name &&
-                activity.status === "running"
+                activity.status === "running" &&
+                (!event.parentTaskId ||
+                  activity.parentTaskId === event.parentTaskId)
             )
 
           if (matchingRunningIndexes.length === 1) {
             activityIndex = matchingRunningIndexes[0].index
-          } else {
+          } else if (!event.parentTaskId) {
             console.warn("[studio-chat] tool_result_unmatched", {
               eventId: event.id,
               toolName: event.name,
@@ -672,6 +1150,12 @@ function createSnapshotAccumulator() {
           }
         }
 
+        const parentTaskId =
+          event.parentTaskId ??
+          (activityIndex >= 0
+            ? snapshot.activities[activityIndex].parentTaskId
+            : null) ??
+          null
         const nextActivity: StudioMessageActivity =
           activityIndex >= 0
             ? {
@@ -679,6 +1163,7 @@ function createSnapshotAccumulator() {
                 status: event.status,
                 output: event.output ?? "",
                 error: event.error ?? null,
+                parentTaskId,
               }
             : {
                 id: event.id,
@@ -687,6 +1172,7 @@ function createSnapshotAccumulator() {
                 input: "",
                 output: event.output ?? "",
                 error: event.error ?? null,
+                parentTaskId,
               }
 
         snapshot = {
@@ -698,29 +1184,72 @@ function createSnapshotAccumulator() {
                 )
               : [...snapshot.activities, nextActivity],
         }
-        upsertToolPart(nextActivity)
+        if (parentTaskId) {
+          upsertSubagentActivity(parentTaskId, nextActivity)
+        } else {
+          upsertToolPart(nextActivity)
+        }
+
+        if (
+          event.status === "complete" &&
+          isMediaGenerationToolName(event.name) &&
+          event.output
+        ) {
+          const mediaEvent = parseMediaGenerationToolOutput(
+            event.output,
+            parentTaskId
+          )
+
+          if (mediaEvent) {
+            upsertMediaGenerationPart(mediaEvent)
+          }
+        }
+
         return true
       }
       case "plan_update":
         return upsertPlanPart(event.todos)
       case "subagent_start":
-        debugIgnoredAgentEvent("subagent_start_ignored", {
+        return upsertSubagentPart({
           taskId: event.taskId,
           name: event.name,
+          taskInput: event.taskInput,
+          parentTaskId: event.parentTaskId ?? null,
         })
-        return false
-      case "subagent_end":
-        debugIgnoredAgentEvent("subagent_end_ignored", {
+      case "subagent_update":
+        return upsertSubagentPart({
           taskId: event.taskId,
           name: event.name,
+          status: event.status,
+          taskInput: event.taskInput,
+          content: event.content,
+          contentDelta: event.contentDelta,
+          summary: event.summary,
+          error: event.error,
+          todos: event.todos,
+          parentTaskId: event.parentTaskId ?? null,
         })
-        return false
+      case "subagent_end": {
+        const status = event.status ?? (event.error ? "error" : "complete")
+        const updated = upsertSubagentPart({
+          taskId: event.taskId,
+          name: event.name,
+          status,
+          summary: event.summary,
+          error: event.error,
+        })
+        closeSubagentActivities(
+          event.taskId,
+          status,
+          event.error ?? event.summary
+        )
+
+        return updated
+      }
       case "file_change":
-        debugIgnoredAgentEvent("file_change_ignored", {
-          path: event.path,
-          kind: event.kind,
-        })
-        return false
+        return appendFilePart(event)
+      case "media_generation":
+        return upsertMediaGenerationPart(event)
       case "permission_request":
         return upsertPermissionPart(event)
       case "run_meta":
@@ -748,38 +1277,7 @@ function createSnapshotAccumulator() {
 
   function finalizeStopped() {
     markReasoningDone()
-    const completedActivities = snapshot.activities.filter(
-      (activity) => activity.status !== "running"
-    )
-    const completedActivityIds = new Set(
-      completedActivities.map((activity) => activity.id)
-    )
-
-    const parts = snapshot.parts
-      .map((part) =>
-        part.type === "permission" && part.status === "pending"
-          ? { ...part, status: "cancelled" as const }
-          : part
-      )
-      .filter((part) => {
-        if (
-          part.type === "text" ||
-          part.type === "reasoning" ||
-          part.type === "plan" ||
-          part.type === "permission"
-        ) {
-          return true
-        }
-
-        return completedActivityIds.has(part.activity.id)
-      })
-
-    snapshot = {
-      ...snapshot,
-      activities: completedActivities,
-      parts,
-    }
-
+    snapshot = toStoppedSnapshot(snapshot)
     return snapshot
   }
 
@@ -808,6 +1306,10 @@ function createSnapshotAccumulator() {
 
       if (part.type === "permission" && part.status === "pending") {
         return { ...part, status: "cancelled" as const }
+      }
+
+      if (part.type === "subagent") {
+        return failSubagentPart(part, message)
       }
 
       return part
@@ -947,6 +1449,14 @@ async function executeAgentRun({
       if (record.abortController.signal.aborted) {
         continue
       }
+
+      recordStructuredAgentEvent({
+        assistantMessageId: record.assistantMessageId,
+        event,
+        runId: record.runId,
+        runtimeId: runtime.info.id,
+        sessionId,
+      })
 
       if (event.type === "error") {
         clearAbortWatchdog(record)

@@ -4874,10 +4874,13 @@ function getRuntimeGuideDescription(
     case DEFAULT_CHAT_RUNTIME_ID:
       return t.studioAgentRuntimeAstraflowDescription
     case "codex":
+    case "codex-direct":
       return t.studioAgentRuntimeCodexDescription
     case "claude-code":
+    case "claude-native":
       return t.studioAgentRuntimeClaudeCodeDescription
     case "opencode":
+    case "opencode-native":
       return t.studioAgentRuntimeOpenCodeDescription
     default:
       return fallback || t.studioAgentRuntimeDescription

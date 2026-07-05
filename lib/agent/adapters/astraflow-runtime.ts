@@ -6,6 +6,13 @@ import { createDeepAgent } from "deepagents"
 
 import { createStudioSkillsMiddleware } from "@/lib/ai/skills/studio-skills"
 import {
+  createGetStudioMediaGenerationTool,
+  createListStudioMediaGenerationModelsTool,
+  createListStudioMediaGenerationsTool,
+  createStudioGenerateImageTool,
+  createStudioGenerateVideoTool,
+} from "@/lib/ai/tools/media-generation"
+import {
   createSessionSandboxGetter,
   createSandboxGetHostTool,
   createSandboxStartServiceTool,
@@ -111,6 +118,7 @@ function createDeepAgentsSystemPrompt({
   hasSandboxStartService,
   hasWebFetch,
   hasWebSearch,
+  hasMediaGeneration,
   localRootDir,
   sessionFilesManifest,
 }: {
@@ -121,6 +129,7 @@ function createDeepAgentsSystemPrompt({
   hasSandboxStartService: boolean
   hasWebFetch: boolean
   hasWebSearch: boolean
+  hasMediaGeneration: boolean
   localRootDir: string | null
   sessionFilesManifest: string
 }) {
@@ -168,6 +177,12 @@ function createDeepAgentsSystemPrompt({
   if (hasMcpTools) {
     toolInstructions.push(
       "You may also have tools whose names begin with mcp_ and include a server prefix. These are user-enabled MCP tools. Use them only when they are relevant to the user's request, and treat their outputs as external tool results."
+    )
+  }
+
+  if (hasMediaGeneration) {
+    toolInstructions.push(
+      "You can create Studio image and video generations with studio_list_media_generation_models, studio_generate_image, studio_generate_video, and inspect prior jobs with the Studio media generation status tools. Use these only when the user asks to create, edit, or inspect media; generated outputs are saved in the Studio media library."
     )
   }
 
@@ -233,10 +248,32 @@ function createNativeTools({
   const tools: StructuredToolInterface[] = [
     createWebFetchTool(),
     createListInstalledMcpServersTool(),
+    createListStudioMediaGenerationModelsTool(),
+    createListStudioMediaGenerationsTool({
+      sessionId,
+      apiKey: modelverseApiKey,
+    }),
+    createGetStudioMediaGenerationTool({
+      sessionId,
+      apiKey: modelverseApiKey,
+    }),
   ]
 
   if (exaApiKey) {
     tools.push(createExaWebSearchTool(exaApiKey))
+  }
+
+  if (modelverseApiKey) {
+    tools.push(
+      createStudioGenerateImageTool({
+        sessionId,
+        apiKey: modelverseApiKey,
+      }),
+      createStudioGenerateVideoTool({
+        sessionId,
+        apiKey: modelverseApiKey,
+      })
+    )
   }
 
   if (environment === "remote" && modelverseApiKey) {
@@ -260,7 +297,9 @@ function createNativeTools({
   return tools
 }
 
-function parsePlanUpdate(input: unknown): AgentEvent | null {
+function parsePlanUpdate(
+  input: unknown
+): Extract<AgentEvent, { type: "plan_update" }> | null {
   const parsedInput =
     typeof input === "string"
       ? (() => {
@@ -310,19 +349,97 @@ function parsePlanUpdate(input: unknown): AgentEvent | null {
   }
 }
 
+function getTaskInputSummary(input: unknown) {
+  const record = getRecord(input)
+
+  if (!record) {
+    return {
+      name: "subagent",
+      taskInput: stringifyToolPayload(input),
+    }
+  }
+
+  const description =
+    typeof record.description === "string" ? record.description : ""
+  const subagentType =
+    typeof record.subagent_type === "string" ? record.subagent_type : ""
+
+  return {
+    name: subagentType || "subagent",
+    taskInput: description || stringifyToolPayload(input),
+  }
+}
+
+function getToolInputPath(input: unknown) {
+  const record = getRecord(input)
+
+  if (!record) {
+    return typeof input === "string" ? input.trim() : ""
+  }
+
+  const candidate =
+    record.file_path ?? record.filePath ?? record.path ?? record.absolute_path
+
+  return typeof candidate === "string" ? candidate.trim() : ""
+}
+
+function getFileChangeEvent({
+  input,
+  parentTaskId,
+  toolName,
+}: {
+  input: unknown
+  parentTaskId?: string
+  toolName: string
+}): Extract<AgentEvent, { type: "file_change" }> | null {
+  const path = getToolInputPath(input)
+
+  if (!path) {
+    return null
+  }
+
+  if (toolName === "write_file") {
+    return {
+      type: "file_change",
+      path,
+      kind: "create",
+      ...(parentTaskId ? { parentTaskId } : {}),
+    }
+  }
+
+  if (toolName === "edit_file") {
+    return {
+      type: "file_change",
+      path,
+      kind: "edit",
+      ...(parentTaskId ? { parentTaskId } : {}),
+    }
+  }
+
+  return null
+}
+
+function getContentBlockDelta(rawEvent: unknown) {
+  const event = getRecord(rawEvent)
+
+  if (event?.event !== "content-block-delta") {
+    return null
+  }
+
+  return getRecord(event.delta)
+}
+
 async function pumpMessageDeltas(
   messages: AsyncIterable<AsyncIterable<unknown>>,
   queue: AgentEventQueue
 ) {
   for await (const message of messages) {
     for await (const rawEvent of message) {
-      const event = getRecord(rawEvent)
+      const delta = getContentBlockDelta(rawEvent)
 
-      if (event?.event !== "content-block-delta") {
+      if (!delta) {
         continue
       }
-
-      const delta = getRecord(event.delta)
 
       if (delta?.type === "reasoning-delta") {
         queue.push({
@@ -335,6 +452,36 @@ async function pumpMessageDeltas(
         queue.push({
           type: "text_delta",
           delta: typeof delta.text === "string" ? delta.text : "",
+        })
+      }
+    }
+  }
+}
+
+async function pumpSubagentMessageDeltas(
+  messages: AsyncIterable<AsyncIterable<unknown>> | undefined,
+  queue: AgentEventQueue,
+  taskId: string
+) {
+  if (!messages) {
+    return
+  }
+
+  for await (const message of messages) {
+    for await (const rawEvent of message) {
+      const delta = getContentBlockDelta(rawEvent)
+
+      if (delta?.type !== "text-delta") {
+        continue
+      }
+
+      const contentDelta = typeof delta.text === "string" ? delta.text : ""
+
+      if (contentDelta) {
+        queue.push({
+          type: "subagent_update",
+          taskId,
+          contentDelta,
         })
       }
     }
@@ -356,15 +503,51 @@ async function pumpToolCall(
   const toolCallId = call.callId || randomUUID()
 
   if (call.name === "write_todos") {
-    if (!parentTaskId) {
-      const planEvent = parsePlanUpdate(call.input)
+    const planEvent = parsePlanUpdate(call.input)
 
-      if (planEvent) {
+    if (planEvent) {
+      if (parentTaskId) {
+        queue.push({
+          type: "subagent_update",
+          taskId: parentTaskId,
+          todos: planEvent.todos,
+        })
+      } else {
         queue.push(planEvent)
       }
     }
 
     await call.status.catch(() => "error")
+    return
+  }
+
+  if (call.name === "task") {
+    const { name, taskInput } = getTaskInputSummary(call.input)
+
+    queue.push({
+      type: "subagent_start",
+      taskId: toolCallId,
+      name,
+      taskInput,
+      ...(parentTaskId ? { parentTaskId } : {}),
+    })
+
+    const status = await call.status.catch(() => "error")
+
+    if (status === "error") {
+      const error = await call.error.catch((cause) =>
+        cause instanceof Error ? cause.message : String(cause)
+      )
+
+      queue.push({
+        type: "subagent_end",
+        taskId: toolCallId,
+        name,
+        status: "error",
+        error: error ?? "Subagent dispatch failed.",
+      })
+    }
+
     return
   }
 
@@ -389,6 +572,7 @@ async function pumpToolCall(
       name: call.name,
       status: "error",
       error: error ?? "Tool call failed.",
+      ...(parentTaskId ? { parentTaskId } : {}),
     })
     return
   }
@@ -403,7 +587,18 @@ async function pumpToolCall(
     name: call.name,
     status: "complete",
     output: stringifyToolPayload(output),
+    ...(parentTaskId ? { parentTaskId } : {}),
   })
+
+  const fileChange = getFileChangeEvent({
+    input: call.input,
+    parentTaskId,
+    toolName: call.name,
+  })
+
+  if (fileChange) {
+    queue.push(fileChange)
+  }
 }
 
 async function pumpToolCalls(
@@ -470,6 +665,7 @@ function extractSubagentSummary(output: unknown) {
 async function pumpSubagent(
   subagent: {
     cause?: unknown
+    messages?: AsyncIterable<AsyncIterable<unknown>>
     name: string
     output: Promise<unknown>
     subagents: AsyncIterable<unknown>
@@ -494,11 +690,29 @@ async function pumpSubagent(
 
   const toolCalls = pumpToolCalls(subagent.toolCalls, queue, taskId)
   const nestedSubagents = pumpSubagents(subagent.subagents, queue)
+  const messages = pumpSubagentMessageDeltas(subagent.messages, queue, taskId)
+  let subagentError: unknown = null
   const output = await subagent.output.catch((error) => {
-    throw error
+    subagentError = error
+    return null
   })
 
-  await Promise.all([toolCalls, nestedSubagents])
+  await Promise.all([toolCalls, nestedSubagents, messages])
+
+  if (subagentError) {
+    queue.push({
+      type: "subagent_end",
+      taskId,
+      name: subagent.name,
+      status: "error",
+      error:
+        subagentError instanceof Error
+          ? subagentError.message
+          : String(subagentError),
+    })
+    return
+  }
+
   queue.push({
     type: "subagent_end",
     taskId,
@@ -597,6 +811,11 @@ async function* streamDeepAgentsRun({
         isMcpToolName(agentTool.name) ||
         agentTool.name === "list_installed_mcp_servers"
     )
+    const hasMediaGeneration = tools.some(
+      (agentTool) =>
+        agentTool.name === "studio_generate_image" ||
+        agentTool.name === "studio_generate_video"
+    )
     const skillsMiddleware = createStudioSkillsMiddleware({
       sessionId,
       modelverseApiKey,
@@ -614,6 +833,7 @@ async function* streamDeepAgentsRun({
         hasSandboxStartService,
         hasWebFetch,
         hasWebSearch,
+        hasMediaGeneration,
         localRootDir,
         sessionFilesManifest:
           environment === "remote"

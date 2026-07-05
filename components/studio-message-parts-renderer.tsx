@@ -1,5 +1,6 @@
 "use client"
 
+import Image from "next/image"
 import * as React from "react"
 import {
   RiArrowDownSLine,
@@ -7,10 +8,17 @@ import {
   RiCheckLine,
   RiCloseLine,
   RiCodeLine,
+  RiDeleteBinLine,
   RiExternalLinkLine,
+  RiFileAddLine,
+  RiFileEditLine,
   RiFileTextLine,
+  RiImageLine,
+  RiRobot2Line,
   RiSearchLine,
+  RiSparklingLine,
   RiTerminalLine,
+  RiVideoLine,
 } from "@remixicon/react"
 
 import { Shimmer } from "@/components/ai-elements/shimmer"
@@ -45,6 +53,12 @@ import { cn } from "@/lib/utils"
 
 type StudioPermissionPart = Extract<StudioMessagePart, { type: "permission" }>
 type StudioPermissionStatus = StudioPermissionPart["status"]
+type StudioSubagentPart = Extract<StudioMessagePart, { type: "subagent" }>
+type StudioFilePart = Extract<StudioMessagePart, { type: "file" }>
+type StudioMediaGenerationPart = Extract<
+  StudioMessagePart,
+  { type: "media_generation" }
+>
 
 const markdownClassName =
   "prose-sm max-w-none leading-7 text-foreground dark:prose-invert prose-headings:font-heading prose-headings:text-foreground prose-h1:text-xl prose-h2:mt-4 prose-h2:text-lg prose-h3:mt-3 prose-h3:text-base prose-p:my-2 prose-a:text-primary prose-code:rounded-sm prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:font-mono prose-pre:my-3 prose-table:my-3 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2"
@@ -80,6 +94,14 @@ const skillToolNames = new Set([
   "list_installed_skills",
   "list_installed_mcp_servers",
   "load_skill",
+])
+
+const mediaToolNames = new Set([
+  "studio_list_media_generation_models",
+  "studio_list_media_generations",
+  "studio_get_media_generation",
+  "studio_generate_image",
+  "studio_generate_video",
 ])
 
 function formatReasoningDuration(locale: "en" | "zh", durationMs: number) {
@@ -641,6 +663,10 @@ function formatGenericToolActivityLabel({
       : "Called tool"
 }
 
+function isZhLocale(t: ReturnType<typeof useI18n>["t"]) {
+  return t.studioThinking === "正在思考"
+}
+
 function parseToolInputObject(input: string) {
   try {
     const parsed = JSON.parse(input) as Record<string, unknown>
@@ -850,6 +876,57 @@ function getActivityLabel(
     return activity.status === "running"
       ? t.studioToolLoadingSkill(slug)
       : t.studioToolLoadedSkill(slug)
+  }
+
+  if (activity.toolName === "studio_list_media_generation_models") {
+    const isZh = isZhLocale(t)
+
+    return activity.status === "running"
+      ? isZh
+        ? "正在查看媒体模型"
+        : "Listing media models"
+      : isZh
+        ? "已查看媒体模型"
+        : "Listed media models"
+  }
+
+  if (
+    activity.toolName === "studio_list_media_generations" ||
+    activity.toolName === "studio_get_media_generation"
+  ) {
+    const isZh = isZhLocale(t)
+
+    return activity.status === "running"
+      ? isZh
+        ? "正在查看媒体生成"
+        : "Reading media generations"
+      : isZh
+        ? "已查看媒体生成"
+        : "Read media generations"
+  }
+
+  if (activity.toolName === "studio_generate_image") {
+    const isZh = isZhLocale(t)
+
+    return activity.status === "running"
+      ? isZh
+        ? "正在生成图像"
+        : "Generating image"
+      : isZh
+        ? "已生成图像"
+        : "Generated image"
+  }
+
+  if (activity.toolName === "studio_generate_video") {
+    const isZh = isZhLocale(t)
+
+    return activity.status === "running"
+      ? isZh
+        ? "正在提交视频生成"
+        : "Submitting video generation"
+      : isZh
+        ? "已提交视频生成"
+        : "Submitted video generation"
   }
 
   if (isMcpToolName(activity.toolName)) {
@@ -1706,6 +1783,24 @@ const toolActivityRendererRegistry: ToolActivityRendererEntry[] = [
     ),
   },
   {
+    matches: (toolName) => mediaToolNames.has(toolName),
+    render: (activity) => (
+      <InlineToolActivity
+        activity={activity}
+        leftIcon={getCompletedAwareToolIcon(
+          activity,
+          activity.toolName === "studio_generate_image" ? (
+            <RiImageLine aria-hidden className="size-4" />
+          ) : activity.toolName === "studio_generate_video" ? (
+            <RiVideoLine aria-hidden className="size-4" />
+          ) : (
+            <RiSparklingLine aria-hidden className="size-4" />
+          )
+        )}
+      />
+    ),
+  },
+  {
     matches: isMcpToolName,
     render: (activity) => (
       <InlineToolActivity
@@ -1745,6 +1840,350 @@ function AssistantActivity({ activity }: { activity: StudioMessageActivity }) {
     renderer.render(activity)
   ) : (
     <GenericToolActivity activity={activity} />
+  )
+}
+
+function getSubagentLabel(
+  part: StudioSubagentPart,
+  t: ReturnType<typeof useI18n>["t"]
+) {
+  const isZh = isZhLocale(t)
+
+  if (part.status === "running") {
+    return isZh
+      ? `正在运行子代理 ${part.name}`
+      : `Running subagent ${part.name}`
+  }
+
+  if (part.status === "error") {
+    return isZh ? `子代理失败 ${part.name}` : `Subagent failed ${part.name}`
+  }
+
+  if (part.status === "cancelled") {
+    return isZh
+      ? `已取消子代理 ${part.name}`
+      : `Cancelled subagent ${part.name}`
+  }
+
+  return isZh ? `已完成子代理 ${part.name}` : `Completed subagent ${part.name}`
+}
+
+function AssistantSubagent({ part }: { part: StudioSubagentPart }) {
+  const { t } = useI18n()
+  const defaultOpen =
+    part.status === "running" ||
+    part.status === "error" ||
+    part.activities.some((activity) => activity.status === "error")
+  const { open, onOpenChange, shouldRenderDetails } =
+    useLazyToolActivityDetails(defaultOpen, part.id)
+  const body = part.summary?.trim() || part.content.trim()
+  const error = part.error?.trim()
+
+  return (
+    <ChainOfThought className={assistantTraceContainerClassName}>
+      <ChainOfThoughtStep
+        key={`${part.id}-${part.status}`}
+        open={open}
+        onOpenChange={onOpenChange}
+      >
+        <ChainOfThoughtTrigger
+          className={assistantTraceTriggerClassName}
+          leftIcon={
+            part.status === "complete" ? (
+              <RiCheckLine aria-hidden className="size-4" />
+            ) : part.status === "error" ? (
+              <RiCloseLine aria-hidden className="size-4" />
+            ) : (
+              <RiRobot2Line aria-hidden className="size-4" />
+            )
+          }
+        >
+          <span className={assistantTraceLabelClassName}>
+            {part.status === "running" ? (
+              <Shimmer as="span">{getSubagentLabel(part, t)}</Shimmer>
+            ) : (
+              getSubagentLabel(part, t)
+            )}
+          </span>
+        </ChainOfThoughtTrigger>
+
+        <ChainOfThoughtContent>
+          {shouldRenderDetails ? (
+            <div className="space-y-2 border-l pl-3">
+              {part.taskInput.trim() ? (
+                <pre className="max-h-28 overflow-auto rounded-xl bg-muted/45 px-3 py-2 font-mono text-xs leading-5 whitespace-pre-wrap text-foreground">
+                  {part.taskInput.trim()}
+                </pre>
+              ) : null}
+
+              {part.todos.length > 0 ? (
+                <AssistantPlan todos={part.todos} />
+              ) : null}
+
+              {part.activities.length > 0 ? (
+                <div className="space-y-1.5">
+                  {part.activities.map((activity) => (
+                    <AssistantActivity key={activity.id} activity={activity} />
+                  ))}
+                </div>
+              ) : null}
+
+              {body ? (
+                <MessageContent
+                  markdown
+                  streaming={part.status === "running"}
+                  className={cn(
+                    "bg-transparent p-0",
+                    markdownClassName,
+                    part.status === "running" && streamingPulseDotClassName
+                  )}
+                >
+                  {body}
+                </MessageContent>
+              ) : null}
+
+              {error ? (
+                <div className="rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                  {error}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </ChainOfThoughtContent>
+      </ChainOfThoughtStep>
+    </ChainOfThought>
+  )
+}
+
+function getFilePartIcon(part: StudioFilePart) {
+  if (part.status === "error") {
+    return <RiCloseLine aria-hidden className="size-4" />
+  }
+
+  if (part.kind === "create") {
+    return <RiFileAddLine aria-hidden className="size-4" />
+  }
+
+  if (part.kind === "delete") {
+    return <RiDeleteBinLine aria-hidden className="size-4" />
+  }
+
+  return <RiFileEditLine aria-hidden className="size-4" />
+}
+
+function getFilePartLabel(
+  part: StudioFilePart,
+  t: ReturnType<typeof useI18n>["t"]
+) {
+  const isZh = isZhLocale(t)
+
+  if (part.status === "error") {
+    return isZh
+      ? `文件变更失败 ${part.path}`
+      : `File change failed ${part.path}`
+  }
+
+  if (part.kind === "create") {
+    return isZh ? `已创建 ${part.path}` : `Created ${part.path}`
+  }
+
+  if (part.kind === "delete") {
+    return isZh ? `已删除 ${part.path}` : `Deleted ${part.path}`
+  }
+
+  return isZh ? `已编辑 ${part.path}` : `Edited ${part.path}`
+}
+
+function AssistantFileChange({ part }: { part: StudioFilePart }) {
+  const { t } = useI18n()
+  const label = getFilePartLabel(part, t)
+
+  return (
+    <div
+      className={cn(
+        assistantTraceContainerClassName,
+        "flex min-w-0 items-center gap-2 rounded-xl border border-border/70 bg-muted/30 px-3 py-1.5 text-sm text-foreground",
+        part.status === "error" && "border-destructive/30 bg-destructive/5"
+      )}
+      title={part.error ?? label}
+    >
+      <span
+        className={cn(
+          "flex size-5 shrink-0 items-center justify-center text-muted-foreground",
+          part.status === "error" && "text-destructive"
+        )}
+      >
+        {getFilePartIcon(part)}
+      </span>
+      <span className="min-w-0 truncate">{label}</span>
+    </div>
+  )
+}
+
+function getMediaGenerationLabel(
+  part: StudioMediaGenerationPart,
+  t: ReturnType<typeof useI18n>["t"]
+) {
+  const isZh = isZhLocale(t)
+  const media =
+    part.kind === "image" ? (isZh ? "图像" : "image") : isZh ? "视频" : "video"
+
+  if (
+    part.status === "running" ||
+    part.status === "queued" ||
+    part.status === "polling"
+  ) {
+    return isZh ? `正在生成${media}` : `Generating ${media}`
+  }
+
+  if (part.status === "cancelled") {
+    return isZh
+      ? `${media}生成已取消`
+      : `${media[0].toUpperCase()}${media.slice(1)} generation cancelled`
+  }
+
+  if (part.status === "error") {
+    return isZh
+      ? `${media}生成失败`
+      : `${media[0].toUpperCase()}${media.slice(1)} generation failed`
+  }
+
+  if (part.status === "partial") {
+    return isZh
+      ? `${media}部分生成完成`
+      : `${media[0].toUpperCase()}${media.slice(1)} partially generated`
+  }
+
+  return isZh ? `已生成${media}` : `Generated ${media}`
+}
+
+function AssistantMediaGeneration({
+  part,
+}: {
+  part: StudioMediaGenerationPart
+}) {
+  const { t } = useI18n()
+  const label = getMediaGenerationLabel(part, t)
+  const running =
+    part.status === "queued" ||
+    part.status === "running" ||
+    part.status === "polling"
+  const failed = part.status === "error"
+  const Icon = part.kind === "image" ? RiImageLine : RiVideoLine
+  const taskRef = part.providerTaskId || part.providerRequestId
+  const progress =
+    typeof part.progress === "number"
+      ? Math.min(Math.max(part.progress, 0), 1)
+      : null
+  const progressLabel =
+    progress === null ? null : `${Math.round(progress * 100)}%`
+
+  return (
+    <div
+      className={cn(
+        assistantTraceContainerClassName,
+        "overflow-hidden rounded-xl border border-border/70 bg-muted/30 text-sm text-foreground",
+        failed && "border-destructive/30 bg-destructive/5"
+      )}
+    >
+      <div className="flex min-w-0 items-center gap-2 px-3 py-2">
+        <span
+          className={cn(
+            "flex size-5 shrink-0 items-center justify-center text-muted-foreground",
+            failed && "text-destructive"
+          )}
+        >
+          {failed ? (
+            <RiCloseLine aria-hidden className="size-4" />
+          ) : part.status === "complete" ? (
+            <RiCheckLine aria-hidden className="size-4" />
+          ) : (
+            <Icon aria-hidden className="size-4" />
+          )}
+        </span>
+        <span className="min-w-0 flex-1 truncate">
+          {running ? <Shimmer as="span">{label}</Shimmer> : label}
+        </span>
+        <span className="shrink-0 text-xs text-muted-foreground">
+          {part.modelName}
+        </span>
+      </div>
+
+      <div className="border-t border-border/60 px-3 py-2">
+        <div className="line-clamp-2 text-xs leading-5 text-muted-foreground">
+          {part.prompt}
+        </div>
+
+        {taskRef ? (
+          <div className="mt-1 truncate font-mono text-[11px] text-muted-foreground/80">
+            {taskRef}
+          </div>
+        ) : null}
+
+        {running && (progressLabel || part.phase || part.rawStatus) ? (
+          <div className="mt-2 space-y-1.5">
+            <div className="flex min-w-0 items-center justify-between gap-2 text-[11px] text-muted-foreground">
+              <span className="min-w-0 truncate">
+                {part.phase ?? part.rawStatus ?? label}
+              </span>
+              {progressLabel ? (
+                <span className="shrink-0 tabular-nums">{progressLabel}</span>
+              ) : null}
+            </div>
+            {progress !== null ? (
+              <div className="h-1 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full bg-primary transition-[width]"
+                  style={{ width: `${Math.max(progress * 100, 4)}%` }}
+                />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {part.outputs.length > 0 ? (
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            {part.outputs.map((output) => (
+              <a
+                key={output.id}
+                href={output.contentUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="group relative block overflow-hidden rounded-lg border bg-background"
+              >
+                {part.kind === "image" ? (
+                  <Image
+                    src={output.contentUrl}
+                    alt={part.prompt}
+                    className="aspect-video w-full object-cover"
+                    width={640}
+                    height={360}
+                    sizes="(min-width: 640px) 50vw, 100vw"
+                    unoptimized
+                  />
+                ) : (
+                  <video
+                    src={output.contentUrl}
+                    className="aspect-video w-full bg-black object-contain"
+                    controls
+                    preload="metadata"
+                  />
+                )}
+                <span className="absolute right-2 bottom-2 flex size-7 items-center justify-center rounded-full bg-background/90 text-muted-foreground opacity-0 shadow-sm ring-1 ring-border transition-opacity group-hover:opacity-100">
+                  <RiExternalLinkLine aria-hidden className="size-4" />
+                </span>
+              </a>
+            ))}
+          </div>
+        ) : null}
+
+        {failed && part.errorMessage ? (
+          <div className="mt-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+            {part.errorMessage}
+          </div>
+        ) : null}
+      </div>
+    </div>
   )
 }
 
@@ -1799,6 +2238,18 @@ export const MessagePartsRenderer = React.memo(function MessagePartsRenderer({
 
         if (part.type === "permission") {
           return null
+        }
+
+        if (part.type === "subagent") {
+          return <AssistantSubagent key={part.id} part={part} />
+        }
+
+        if (part.type === "file") {
+          return <AssistantFileChange key={part.id} part={part} />
+        }
+
+        if (part.type === "media_generation") {
+          return <AssistantMediaGeneration key={part.id} part={part} />
         }
 
         if (!part.content.trim()) {

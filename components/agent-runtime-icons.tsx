@@ -37,9 +37,9 @@ function AgentRuntimeIcon({ runtimeId, className }: AgentRuntimeIconProps) {
   }
 
   const Icon =
-    runtimeId === "codex"
+    runtimeId === "codex" || runtimeId === "codex-direct"
       ? RiOpenaiFill
-      : runtimeId === "claude-code"
+      : runtimeId === "claude-code" || runtimeId === "claude-native"
         ? RiClaudeFill
         : Bot
 

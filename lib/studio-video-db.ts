@@ -2,6 +2,7 @@ import Database from "better-sqlite3"
 import { randomUUID } from "node:crypto"
 
 import {
+  createGeneratedMediaSessionFile,
   ensureSqliteTableColumns,
   getStudioDatabase,
   type SqliteColumnDefinition,
@@ -27,6 +28,14 @@ type DbVideoGenerationRow = {
   prompt: string
   params: string
   status: StudioVideoStatus
+  phase: string | null
+  progress: number | null
+  raw_status: string | null
+  attempt: number
+  last_polled_at: string | null
+  next_poll_at: string | null
+  lease_owner: string | null
+  lease_expires_at: string | null
   error_message: string | null
   raw_response: string | null
   created_at: string
@@ -80,6 +89,14 @@ type CreateVideoGenerationInput = {
   prompt: string
   params: Record<string, unknown>
   status?: StudioVideoStatus
+  phase?: string | null
+  progress?: number | null
+  rawStatus?: string | null
+  attempt?: number
+  lastPolledAt?: string | null
+  nextPollAt?: string | null
+  leaseOwner?: string | null
+  leaseExpiresAt?: string | null
 }
 
 type CreateVideoOutputInput = {
@@ -104,6 +121,14 @@ type UpdateVideoGenerationInput = {
   completedAt?: string | null
   providerTaskId?: string | null
   providerRequestId?: string | null
+  phase?: string | null
+  progress?: number | null
+  rawStatus?: string | null
+  attempt?: number
+  lastPolledAt?: string | null
+  nextPollAt?: string | null
+  leaseOwner?: string | null
+  leaseExpiresAt?: string | null
 }
 
 type RecordVideoGenerationTaskInput = {
@@ -130,6 +155,14 @@ const videoTableColumns = {
     { name: "prompt", definition: "prompt TEXT NOT NULL DEFAULT ''" },
     { name: "params", definition: "params TEXT NOT NULL DEFAULT '{}'" },
     { name: "status", definition: "status TEXT NOT NULL DEFAULT 'queued'" },
+    { name: "phase", definition: "phase TEXT" },
+    { name: "progress", definition: "progress REAL" },
+    { name: "raw_status", definition: "raw_status TEXT" },
+    { name: "attempt", definition: "attempt INTEGER NOT NULL DEFAULT 0" },
+    { name: "last_polled_at", definition: "last_polled_at TEXT" },
+    { name: "next_poll_at", definition: "next_poll_at TEXT" },
+    { name: "lease_owner", definition: "lease_owner TEXT" },
+    { name: "lease_expires_at", definition: "lease_expires_at TEXT" },
     { name: "error_message", definition: "error_message TEXT" },
     { name: "raw_response", definition: "raw_response TEXT" },
     { name: "created_at", definition: "created_at TEXT NOT NULL DEFAULT ''" },
@@ -162,6 +195,15 @@ function nowIso() {
   return new Date().toISOString()
 }
 
+function isTerminalVideoStatus(status: StudioVideoStatus) {
+  return (
+    status === "complete" ||
+    status === "partial" ||
+    status === "error" ||
+    status === "cancelled"
+  )
+}
+
 function getVideoDb() {
   const database = getStudioDatabase()
 
@@ -188,6 +230,14 @@ function initializeVideoSchema(database: Database.Database) {
       prompt TEXT NOT NULL,
       params TEXT NOT NULL,
       status TEXT NOT NULL,
+      phase TEXT,
+      progress REAL,
+      raw_status TEXT,
+      attempt INTEGER NOT NULL DEFAULT 0,
+      last_polled_at TEXT,
+      next_poll_at TEXT,
+      lease_owner TEXT,
+      lease_expires_at TEXT,
       error_message TEXT,
       raw_response TEXT,
       created_at TEXT NOT NULL,
@@ -287,6 +337,14 @@ function mapVideoGeneration(
     prompt: row.prompt,
     params: parseJsonRecord(row.params),
     status: row.status,
+    phase: row.phase,
+    progress: row.progress,
+    rawStatus: row.raw_status,
+    attempt: row.attempt,
+    lastPolledAt: row.last_polled_at,
+    nextPollAt: row.next_poll_at,
+    leaseOwner: row.lease_owner,
+    leaseExpiresAt: row.lease_expires_at,
     errorMessage: row.error_message,
     createdAt: row.created_at,
     completedAt: row.completed_at,
@@ -302,7 +360,9 @@ export function listStudioVideoGenerations(sessionId: string) {
         SELECT id, session_id, model_square_id, model_name, manufacturer,
                openapi_file, operation_id, provider_task_id,
                provider_request_id, prompt, params, status, error_message,
-               raw_response, created_at, completed_at
+               phase, progress, raw_status, attempt, last_polled_at,
+               next_poll_at, lease_owner, lease_expires_at, raw_response,
+               created_at, completed_at
         FROM studio_video_generations
         WHERE session_id = ?
         ORDER BY created_at ASC
@@ -356,12 +416,15 @@ export function createStudioVideoGeneration(
             (id, session_id, model_square_id, model_name, manufacturer,
              openapi_file, operation_id, provider_task_id,
              provider_request_id, prompt, params, status, error_message,
-             raw_response, created_at, completed_at)
+             raw_response, phase, progress, raw_status, attempt,
+             last_polled_at, next_poll_at, lease_owner, lease_expires_at,
+             created_at, completed_at)
           VALUES
             (@id, @sessionId, @modelSquareId, @modelName, @manufacturer,
              @openapiFile, @operationId, @providerTaskId,
              @providerRequestId, @prompt, @params, @status, NULL, NULL,
-             @createdAt, NULL)
+             @phase, @progress, @rawStatus, @attempt, @lastPolledAt,
+             @nextPollAt, @leaseOwner, @leaseExpiresAt, @createdAt, NULL)
         `
       )
       .run({
@@ -377,6 +440,14 @@ export function createStudioVideoGeneration(
         prompt: input.prompt,
         params: JSON.stringify(input.params),
         status,
+        phase: input.phase ?? null,
+        progress: input.progress ?? null,
+        rawStatus: input.rawStatus ?? null,
+        attempt: input.attempt ?? 0,
+        lastPolledAt: input.lastPolledAt ?? null,
+        nextPollAt: input.nextPollAt ?? null,
+        leaseOwner: input.leaseOwner ?? null,
+        leaseExpiresAt: input.leaseExpiresAt ?? null,
         createdAt,
       })
 
@@ -406,6 +477,14 @@ export function createStudioVideoGeneration(
     prompt: input.prompt,
     params: input.params,
     status,
+    phase: input.phase ?? null,
+    progress: input.progress ?? null,
+    rawStatus: input.rawStatus ?? null,
+    attempt: input.attempt ?? 0,
+    lastPolledAt: input.lastPolledAt ?? null,
+    nextPollAt: input.nextPollAt ?? null,
+    leaseOwner: input.leaseOwner ?? null,
+    leaseExpiresAt: input.leaseExpiresAt ?? null,
     errorMessage: null,
     createdAt,
     completedAt: null,
@@ -417,23 +496,41 @@ export function updateStudioVideoGeneration(
   generationId: string,
   input: UpdateVideoGenerationInput
 ) {
-  const completedAt = input.completedAt ?? nowIso()
+  const completedAt =
+    input.completedAt ??
+    (isTerminalVideoStatus(input.status) ? nowIso() : null)
 
   getVideoDb()
     .prepare(
       `
         UPDATE studio_video_generations
         SET status = ?,
+            phase = COALESCE(?, phase),
+            progress = COALESCE(?, progress),
+            raw_status = COALESCE(?, raw_status),
+            attempt = COALESCE(?, attempt),
+            last_polled_at = COALESCE(?, last_polled_at),
+            next_poll_at = COALESCE(?, next_poll_at),
+            lease_owner = COALESCE(?, lease_owner),
+            lease_expires_at = COALESCE(?, lease_expires_at),
             error_message = ?,
-            raw_response = ?,
+            raw_response = COALESCE(?, raw_response),
             provider_task_id = COALESCE(?, provider_task_id),
             provider_request_id = COALESCE(?, provider_request_id),
-            completed_at = ?
+            completed_at = COALESCE(?, completed_at)
         WHERE id = ?
       `
     )
     .run(
       input.status,
+      input.phase ?? null,
+      input.progress ?? null,
+      input.rawStatus ?? null,
+      input.attempt ?? null,
+      input.lastPolledAt ?? null,
+      input.nextPollAt ?? null,
+      input.leaseOwner ?? null,
+      input.leaseExpiresAt ?? null,
       input.errorMessage ?? null,
       input.rawResponse === undefined
         ? null
@@ -505,6 +602,35 @@ export function createStudioVideoOutput(
       savedAt,
       createdAt,
     })
+
+  if (input.storagePath) {
+    try {
+      const generation = getVideoDb()
+        .prepare(
+          `
+            SELECT session_id
+            FROM studio_video_generations
+            WHERE id = ?
+          `
+        )
+        .get(input.generationId) as { session_id: string } | undefined
+
+      if (generation?.session_id) {
+        createGeneratedMediaSessionFile({
+          generationId: input.generationId,
+          kind: "video",
+          mimeType: input.mimeType ?? null,
+          outputId: id,
+          outputIndex: input.index,
+          savedAt: savedAt ?? createdAt,
+          sessionId: generation.session_id,
+          storagePath: input.storagePath,
+        })
+      }
+    } catch {
+      // Session-file registration is best-effort; the video output row is the source of truth.
+    }
+  }
 
   return {
     id,

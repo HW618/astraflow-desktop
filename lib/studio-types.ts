@@ -10,6 +10,22 @@ export type StudioMessageRole = "user" | "assistant"
 
 export type StudioMessageStatus = "complete" | "streaming" | "error"
 
+export type StudioAgentProviderEventDirection = "input" | "output" | "internal"
+
+export type StudioAgentProviderEvent = {
+  id: string
+  sessionId: string
+  runId: string | null
+  assistantMessageId: string | null
+  runtimeId: string
+  provider: string
+  direction: StudioAgentProviderEventDirection
+  eventType: string
+  providerRef: string | null
+  payload: unknown
+  createdAt: string
+}
+
 export type StudioMessageActivity = {
   id: string
   toolName: string
@@ -18,6 +34,33 @@ export type StudioMessageActivity = {
   output: string
   error: string | null
   parentTaskId?: string | null
+}
+
+export type StudioMessageTodo = {
+  text: string
+  status: "pending" | "in_progress" | "completed"
+}
+
+export type StudioMediaGenerationStatus =
+  | "queued"
+  | "running"
+  | "polling"
+  | "complete"
+  | "partial"
+  | "error"
+  | "cancelled"
+
+export type StudioMediaGenerationOutput = {
+  id: string
+  index: number
+  sessionFileId?: string | null
+  contentUrl: string
+  url: string | null
+  storagePath: string | null
+  mimeType: string | null
+  width: number | null
+  height: number | null
+  durationSeconds?: number | null
 }
 
 export type StudioPermissionOption = {
@@ -47,10 +90,48 @@ export type StudioMessagePart =
       id: string
       type: "plan"
       content: string
-      todos: {
-        text: string
-        status: "pending" | "in_progress" | "completed"
-      }[]
+      todos: StudioMessageTodo[]
+    }
+  | {
+      id: string
+      type: "subagent"
+      taskId: string
+      name: string
+      status: "running" | "complete" | "error" | "cancelled"
+      taskInput: string
+      content: string
+      summary: string | null
+      error: string | null
+      todos: StudioMessageTodo[]
+      activities: StudioMessageActivity[]
+      parentTaskId?: string | null
+    }
+  | {
+      id: string
+      type: "file"
+      path: string
+      kind: "create" | "edit" | "delete"
+      status: "complete" | "error"
+      error: string | null
+      content: string
+      parentTaskId?: string | null
+    }
+  | {
+      id: string
+      type: "media_generation"
+      kind: "image" | "video"
+      generationId: string
+      status: StudioMediaGenerationStatus
+      modelName: string
+      prompt: string
+      phase?: string | null
+      progress?: number | null
+      rawStatus?: string | null
+      outputs: StudioMediaGenerationOutput[]
+      errorMessage: string | null
+      providerTaskId?: string | null
+      providerRequestId?: string | null
+      parentTaskId?: string | null
     }
   | {
       id: string
@@ -272,7 +353,13 @@ export type StudioImageModelOption = {
 }
 
 export type StudioImageStatus =
-  "queued" | "running" | "complete" | "partial" | "error"
+  | "queued"
+  | "running"
+  | "polling"
+  | "complete"
+  | "partial"
+  | "error"
+  | "cancelled"
 
 export type StudioImageOutput = {
   id: string
@@ -386,6 +473,14 @@ export type StudioImageGeneration = {
   prompt: string
   params: Record<string, unknown>
   status: StudioImageStatus
+  phase: string | null
+  progress: number | null
+  rawStatus: string | null
+  attempt: number
+  lastPolledAt: string | null
+  nextPollAt: string | null
+  leaseOwner: string | null
+  leaseExpiresAt: string | null
   errorMessage: string | null
   createdAt: string
   completedAt: string | null

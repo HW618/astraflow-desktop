@@ -55,7 +55,13 @@ export type StudioVideoModelOption = {
 }
 
 export type StudioVideoStatus =
-  "queued" | "running" | "complete" | "partial" | "error"
+  | "queued"
+  | "running"
+  | "polling"
+  | "complete"
+  | "partial"
+  | "error"
+  | "cancelled"
 
 export type StudioVideoOutput = {
   id: string
@@ -86,6 +92,14 @@ export type StudioVideoGeneration = {
   prompt: string
   params: Record<string, unknown>
   status: StudioVideoStatus
+  phase: string | null
+  progress: number | null
+  rawStatus: string | null
+  attempt: number
+  lastPolledAt: string | null
+  nextPollAt: string | null
+  leaseOwner: string | null
+  leaseExpiresAt: string | null
   errorMessage: string | null
   createdAt: string
   completedAt: string | null

@@ -527,6 +527,14 @@ function StudioImageWorkbench({
       prompt: promptText,
       params: promptParams,
       status: "running",
+      phase: "submitting",
+      progress: 0,
+      rawStatus: null,
+      attempt: 0,
+      lastPolledAt: null,
+      nextPollAt: null,
+      leaseOwner: null,
+      leaseExpiresAt: null,
       errorMessage: null,
       createdAt: new Date().toISOString(),
       completedAt: null,
@@ -1148,7 +1156,10 @@ function buildCanvasTiles(generations: StudioImageGeneration[]): CanvasTile[] {
 
   for (const generation of generations) {
     if (generation.outputs.length === 0) {
-      if (generation.status === "running") {
+      if (
+        generation.status === "running" ||
+        generation.status === "polling"
+      ) {
         tiles.push({
           kind: "pending",
           key: `pending-${generation.id}`,
@@ -1434,9 +1445,11 @@ function StatusBadge({ generation }: { generation: StudioImageGeneration }) {
   const labelMap: Record<StudioImageGeneration["status"], string> = {
     queued: t.studioImageQueued,
     running: t.studioImageRunning,
+    polling: t.studioImageRunning,
     complete: t.studioImageComplete,
     partial: t.studioImageComplete,
     error: t.studioImageFailed,
+    cancelled: t.studioImageFailed,
   }
   return (
     <span

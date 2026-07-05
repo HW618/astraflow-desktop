@@ -286,6 +286,7 @@ function isVideoGenerationPending(generation: StudioVideoGeneration) {
     generation.id.startsWith("pending-") ||
     generation.status === "queued" ||
     generation.status === "running" ||
+    generation.status === "polling" ||
     (generation.status !== "error" && generation.outputs.length === 0)
   )
 }
@@ -561,6 +562,14 @@ function StudioVideoWorkbench({
       prompt: promptText,
       params: promptParams,
       status: "running",
+      phase: "submitting",
+      progress: 0,
+      rawStatus: null,
+      attempt: 0,
+      lastPolledAt: null,
+      nextPollAt: null,
+      leaseOwner: null,
+      leaseExpiresAt: null,
       errorMessage: null,
       createdAt: new Date().toISOString(),
       completedAt: null,
@@ -1122,7 +1131,11 @@ function buildCanvasTiles(generations: StudioVideoGeneration[]): CanvasTile[] {
 
   for (const generation of generations) {
     if (generation.outputs.length === 0) {
-      if (generation.status === "queued" || generation.status === "running") {
+      if (
+        generation.status === "queued" ||
+        generation.status === "running" ||
+        generation.status === "polling"
+      ) {
         tiles.push({
           kind: "pending",
           key: `pending-${generation.id}`,
@@ -1422,9 +1435,11 @@ function StatusBadge({ generation }: { generation: StudioVideoGeneration }) {
   const labelMap: Record<StudioVideoGeneration["status"], string> = {
     queued: copy.queued,
     running: copy.running,
+    polling: copy.running,
     complete: copy.complete,
     partial: copy.complete,
     error: copy.failed,
+    cancelled: copy.failed,
   }
   return (
     <span

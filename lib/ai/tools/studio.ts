@@ -8,6 +8,13 @@ import {
 } from "@/lib/ai/tools/web"
 import { createListInstalledMcpServersTool } from "@/lib/ai/tools/mcp"
 import {
+  createGetStudioMediaGenerationTool,
+  createListStudioMediaGenerationModelsTool,
+  createListStudioMediaGenerationsTool,
+  createStudioGenerateImageTool,
+  createStudioGenerateVideoTool,
+} from "@/lib/ai/tools/media-generation"
+import {
   createCodeInterpreterTool,
   createDownloadFileTool,
   createListFilesTool,
@@ -45,6 +52,23 @@ export function createStudioAgentTools(options: StudioAgentToolsOptions = {}) {
     })
 
     tools.push(
+      createListStudioMediaGenerationModelsTool(),
+      createListStudioMediaGenerationsTool({
+        sessionId: options.sessionId,
+        apiKey: modelverseApiKey,
+      }),
+      createGetStudioMediaGenerationTool({
+        sessionId: options.sessionId,
+        apiKey: modelverseApiKey,
+      }),
+      createStudioGenerateImageTool({
+        sessionId: options.sessionId,
+        apiKey: modelverseApiKey,
+      }),
+      createStudioGenerateVideoTool({
+        sessionId: options.sessionId,
+        apiKey: modelverseApiKey,
+      }),
       createUploadFileTool({
         sessionId: options.sessionId,
         apiKey: modelverseApiKey,

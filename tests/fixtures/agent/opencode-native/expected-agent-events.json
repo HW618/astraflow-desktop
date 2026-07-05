@@ -1,0 +1,85 @@
+[
+  {
+    "type": "text_delta",
+    "delta": "Hello "
+  },
+  {
+    "type": "text_delta",
+    "delta": "world"
+  },
+  {
+    "type": "reasoning_delta",
+    "delta": "checking plan"
+  },
+  {
+    "type": "plan_update",
+    "todos": [
+      {
+        "text": "Inspect OpenCode events",
+        "status": "completed"
+      },
+      {
+        "text": "Map native events",
+        "status": "in_progress"
+      }
+    ]
+  },
+  {
+    "type": "tool_call",
+    "id": "call_read",
+    "name": "read",
+    "input": "{\n  \"file\": \"README.md\"\n}"
+  },
+  {
+    "type": "tool_result",
+    "id": "call_read",
+    "name": "read",
+    "status": "complete",
+    "output": "read ok"
+  },
+  {
+    "type": "permission_request",
+    "requestId": "per_edit",
+    "toolName": "edit",
+    "input": "{\n  \"action\": \"edit\",\n  \"resources\": [\n    \"lib/agent/adapters/opencode-native-runtime.ts\"\n  ],\n  \"metadata\": {\n    \"reason\": \"fixture\"\n  },\n  \"source\": {\n    \"type\": \"tool\",\n    \"messageID\": \"msg_assistant\",\n    \"callID\": \"call_edit\"\n  }\n}",
+    "decisions": ["once", "always", "reject"],
+    "options": [
+      {
+        "optionId": "once",
+        "name": "Allow once",
+        "kind": "allow"
+      },
+      {
+        "optionId": "always",
+        "name": "Always allow",
+        "kind": "allow"
+      },
+      {
+        "optionId": "reject",
+        "name": "Reject",
+        "kind": "reject"
+      }
+    ],
+    "selectedOptionId": null,
+    "status": "pending"
+  },
+  {
+    "type": "permission_request",
+    "requestId": "per_edit",
+    "toolName": "",
+    "input": "",
+    "selectedOptionId": "once",
+    "status": "resolved"
+  },
+  {
+    "type": "file_change",
+    "path": "lib/agent/adapters/opencode-native-runtime.ts",
+    "kind": "edit"
+  },
+  {
+    "type": "subagent_start",
+    "taskId": "prt_subtask",
+    "name": "explore",
+    "taskInput": "Check schema"
+  }
+]

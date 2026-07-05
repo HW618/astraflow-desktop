@@ -509,6 +509,41 @@ function applyLineWindow(
   return lines.slice(start, end).join("\n")
 }
 
+async function getSafeWriteChange(
+  workspace: string,
+  safePath: string,
+  nextContent: string
+): Promise<Extract<AgentEvent, { type: "file_change" }> | null> {
+  let previousContent: string | null = null
+
+  try {
+    previousContent = await readFile(safePath, "utf8")
+  } catch (error) {
+    if (!isNotFoundError(error)) {
+      throw error
+    }
+  }
+
+  if (previousContent === nextContent) {
+    return null
+  }
+
+  const workspaceRealPath = await realpath(workspace)
+  const pathFromWorkspace = relative(workspaceRealPath, safePath)
+  const displayPath =
+    pathFromWorkspace &&
+    !pathFromWorkspace.startsWith("..") &&
+    !isAbsolute(pathFromWorkspace)
+      ? pathFromWorkspace
+      : safePath
+
+  return {
+    type: "file_change",
+    path: displayPath,
+    kind: previousContent === null ? "create" : "edit",
+  }
+}
+
 export function createAcpClientApp({
   debugLabel,
   emitEvent,
@@ -533,11 +568,26 @@ export function createAcpClientApp({
     })
     .onRequest(methods.client.fs.writeTextFile, async ({ params }) => {
       const safePath = await resolveSafeWritePath(workspace, params.path)
+      const fileChange = await getSafeWriteChange(
+        workspace,
+        safePath,
+        params.content
+      )
 
       await writeFile(safePath, params.content, {
         encoding: "utf8",
         flag: ACP_SAFE_WRITE_FLAGS,
       })
+
+      if (fileChange) {
+        emitEvent?.(fileChange)
+        debugAcp("fs_write_text_file", {
+          debugLabel,
+          kind: fileChange.kind,
+          path: fileChange.path,
+          sessionId: params.sessionId,
+        })
+      }
     })
     .onRequest(
       methods.client.session.requestPermission,
@@ -924,6 +974,24 @@ function getContentText(content: unknown) {
     : null
 }
 
+function compactObject(entries: Array<[string, unknown]>) {
+  const result: Record<string, unknown> = {}
+
+  for (const [key, value] of entries) {
+    if (value === undefined || value === null) {
+      continue
+    }
+
+    if (Array.isArray(value) && value.length === 0) {
+      continue
+    }
+
+    result[key] = value
+  }
+
+  return Object.keys(result).length ? result : null
+}
+
 function getToolName(
   update: {
     kind?: string | null
@@ -932,12 +1000,20 @@ function getToolName(
   },
   state: AcpSessionState
 ) {
-  return (
-    update.kind ??
-    update.title ??
-    state.toolNames.get(update.toolCallId) ??
-    "tool"
-  )
+  const existing = state.toolNames.get(update.toolCallId)
+
+  if (existing && existing !== "tool") {
+    return existing
+  }
+
+  const candidate =
+    update.kind && update.kind !== "other"
+      ? update.kind
+      : update.title?.trim() || update.kind || existing || "tool"
+
+  state.toolNames.set(update.toolCallId, candidate)
+
+  return candidate
 }
 
 function toolOutputToString(update: {
@@ -951,15 +1027,46 @@ function toolOutputToString(update: {
   return stringifyPayload(update.content)
 }
 
+function toolInputToString(update: {
+  content?: unknown
+  kind?: string | null
+  locations?: unknown
+  rawInput?: unknown
+  status?: string | null
+  title?: string | null
+}) {
+  if (update.rawInput !== undefined) {
+    return stringifyPayload(update.rawInput)
+  }
+
+  return stringifyPayload(
+    compactObject([
+      ["kind", update.kind],
+      ["title", update.title],
+      ["status", update.status],
+      ["locations", update.locations],
+      ["content", update.content],
+    ])
+  )
+}
+
 function synthesizeToolCallFromUpdate(
-  update: { toolCallId: string; rawInput?: unknown },
+  update: {
+    content?: unknown
+    kind?: string | null
+    locations?: unknown
+    rawInput?: unknown
+    status?: string | null
+    title?: string | null
+    toolCallId: string
+  },
   name: string
 ): AgentEvent {
   return {
     type: "tool_call",
     id: update.toolCallId,
     name,
-    input: stringifyPayload(update.rawInput),
+    input: toolInputToString(update),
   }
 }
 
@@ -1016,7 +1123,6 @@ function mapAcpSessionUpdate(
   if (update.sessionUpdate === "tool_call") {
     const name = getToolName(update, state)
 
-    state.toolNames.set(update.toolCallId, name)
     state.toolCallIds.add(update.toolCallId)
 
     return [
@@ -1024,7 +1130,7 @@ function mapAcpSessionUpdate(
         type: "tool_call",
         id: update.toolCallId,
         name,
-        input: stringifyPayload(update.rawInput),
+        input: toolInputToString(update),
       },
     ]
   }
@@ -1032,10 +1138,6 @@ function mapAcpSessionUpdate(
   if (update.sessionUpdate === "tool_call_update") {
     const name = getToolName(update, state)
     const hasToolCall = state.toolCallIds.has(update.toolCallId)
-
-    if (update.kind || update.title) {
-      state.toolNames.set(update.toolCallId, name)
-    }
 
     if (update.status === "completed") {
       const result = {
@@ -1079,7 +1181,27 @@ function mapAcpSessionUpdate(
       ]
     }
 
+    if (!hasToolCall && (update.rawInput !== undefined || update.status)) {
+      state.toolCallIds.add(update.toolCallId)
+
+      return [synthesizeToolCallFromUpdate(update, name)]
+    }
+
+    debugAcp("tool_call_update_ignored", {
+      hasContent: Array.isArray(update.content)
+        ? update.content.length > 0
+        : Boolean(update.content),
+      hasRawInput: update.rawInput !== undefined,
+      hasRawOutput: update.rawOutput !== undefined,
+      status: update.status ?? null,
+      toolCallId: update.toolCallId,
+    })
+
     return []
+  }
+
+  if (update.sessionUpdate === "usage_update") {
+    return [{ type: "run_meta", usage: update }]
   }
 
   if (update.sessionUpdate === "plan") {
@@ -1095,6 +1217,7 @@ function mapAcpSessionUpdate(
   }
 
   debugAcp("unknown_session_update_ignored", {
+    keys: Object.keys(update).sort(),
     sessionUpdate: update.sessionUpdate,
   })
 

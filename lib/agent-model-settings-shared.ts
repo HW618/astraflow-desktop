@@ -2,8 +2,11 @@ import type { ChatReasoningEffort } from "@/lib/chat-models"
 
 export const AGENT_RUNTIME_IDS = [
   "astraflow",
+  "claude-native",
   "claude-code",
+  "codex-direct",
   "codex",
+  "opencode-native",
   "opencode",
 ] as const
 
