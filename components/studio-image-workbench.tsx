@@ -640,8 +640,8 @@ function StudioImageWorkbench({
   }
 
   return (
-    <section className="flex h-full min-h-0 flex-1 overflow-hidden bg-background">
-      <aside className="flex w-[340px] shrink-0 flex-col overflow-y-auto border-r bg-background px-4 py-4 lg:w-[380px]">
+    <section className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background xl:flex-row">
+      <aside className="flex max-h-[min(44vh,30rem)] min-h-0 w-full shrink-0 flex-col overflow-y-auto border-b bg-background px-4 py-4 xl:h-full xl:max-h-none xl:w-[380px] xl:border-r xl:border-b-0">
         <div className="flex flex-col gap-1.5">
           <label className="text-xs font-medium text-muted-foreground">
             {t.studioImageModel}
@@ -1125,24 +1125,6 @@ function ReferenceImagesField({
   )
 }
 
-function getOutputGridConfig(count: number) {
-  if (count <= 1) {
-    return { cols: 1, rows: 1, aspect: "1 / 1" }
-  }
-  if (count === 2) {
-    return { cols: 2, rows: 1, aspect: "2 / 1" }
-  }
-  if (count === 3) {
-    return { cols: 3, rows: 1, aspect: "3 / 1" }
-  }
-  if (count === 4) {
-    return { cols: 2, rows: 2, aspect: "1 / 1" }
-  }
-  const cols = Math.ceil(Math.sqrt(count))
-  const rows = Math.ceil(count / cols)
-  return { cols, rows, aspect: `${cols} / ${rows}` }
-}
-
 type CanvasTile =
   | {
       kind: "output"
@@ -1224,19 +1206,9 @@ function OutputCanvas({
     )
   }
 
-  const grid = getOutputGridConfig(tiles.length)
-
   return (
-    <div className="flex min-h-0 flex-1 items-center justify-center">
-      <div
-        className="grid max-h-full max-w-full gap-3"
-        style={{
-          aspectRatio: grid.aspect,
-          height: "min(100%, 44rem)",
-          gridTemplateColumns: `repeat(${grid.cols}, minmax(0, 1fr))`,
-          gridTemplateRows: `repeat(${grid.rows}, minmax(0, 1fr))`,
-        }}
-      >
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="grid w-full grid-cols-1 gap-3 pb-4 sm:grid-cols-2 2xl:grid-cols-3">
         {tiles.map((tile) =>
           tile.kind === "output" ? (
             <CanvasOutputTile
@@ -1291,7 +1263,7 @@ function CanvasOutputTile({
   const failed = failedSrc === src
 
   return (
-    <div className="group relative flex min-h-0 flex-col overflow-hidden rounded-2xl border bg-muted">
+    <div className="group relative flex aspect-square min-h-72 flex-col overflow-hidden rounded-2xl border bg-muted">
       <button
         type="button"
         onClick={onSelect}
@@ -1389,7 +1361,7 @@ function CanvasPendingTile({
   generation: StudioImageGeneration
 }) {
   return (
-    <div className="relative flex min-h-0 flex-col overflow-hidden rounded-2xl border bg-muted text-muted-foreground">
+    <div className="relative flex aspect-square min-h-72 flex-col overflow-hidden rounded-2xl border bg-muted text-muted-foreground">
       <div className="absolute inset-0 animate-pulse bg-gradient-to-br from-muted via-muted/40 to-muted" />
       <div className="relative z-10 flex flex-1 items-center justify-center">
         <RiLoader4Line className="size-8 animate-spin" aria-hidden />
@@ -1422,7 +1394,7 @@ function CanvasErrorTile({
   return (
     <div
       onDoubleClick={onSelect}
-      className="relative flex min-h-0 flex-col overflow-hidden rounded-2xl border border-destructive/30 bg-destructive/5 text-foreground"
+      className="relative flex aspect-square min-h-72 flex-col overflow-hidden rounded-2xl border border-destructive/30 bg-destructive/5 text-foreground"
     >
       <div className="relative z-10 flex flex-1 items-center justify-center p-6">
         <div className="flex max-w-full flex-col items-center gap-3 text-center">

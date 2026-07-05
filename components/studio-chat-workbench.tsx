@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import dynamic from "next/dynamic"
 import {
   RiAddLine,
   RiArrowDownSLine,
@@ -87,7 +88,6 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { useI18n } from "@/components/i18n-provider"
-import { SkillsMarketPage } from "@/components/skills-market-page"
 import {
   StudioTerminalPanel,
   StudioTerminalSurface,
@@ -4937,6 +4937,30 @@ function FileAttachmentChip({
   )
 }
 
+type SkillsMarketPageProps = {
+  embedded?: boolean
+  initialView?: "market" | "mine"
+}
+
+function SkillsMarketPageLoading() {
+  return (
+    <div className="flex h-full min-h-0 items-center justify-center">
+      <div
+        aria-hidden
+        className="size-6 animate-spin rounded-full border-2 border-muted-foreground/20 border-t-muted-foreground/70"
+      />
+    </div>
+  )
+}
+
+const LazySkillsMarketPage = dynamic<SkillsMarketPageProps>(
+  () =>
+    import("@/components/skills-market-page").then(
+      (mod) => mod.SkillsMarketPage
+    ),
+  { loading: SkillsMarketPageLoading }
+)
+
 function ChatComposerPluginsButton() {
   const { t } = useI18n()
   const [open, setOpen] = React.useState(false)
@@ -5037,7 +5061,7 @@ function ChatComposerPluginsButton() {
         </DialogHeader>
 
         <div className="min-h-0 flex-1 overflow-hidden">
-          <SkillsMarketPage embedded initialView="mine" />
+          {open ? <LazySkillsMarketPage embedded initialView="mine" /> : null}
         </div>
       </DialogContent>
     </Dialog>

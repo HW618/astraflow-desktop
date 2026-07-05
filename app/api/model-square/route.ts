@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { NextResponse } from "next/server"
 
 import {
@@ -85,6 +86,8 @@ type ListUFSquareModelResponse = {
 }
 
 const LIST_PAGE_SIZE = 50
+const MODEL_CATALOG_CACHE_TTL = 60_000
+const MODEL_CATALOG_CACHE_MAX_ENTRIES = 12
 const orderByOptions = new Set(["HfUpdateTime", "Name"])
 const orderOptions = new Set(["Desc", "Asc"])
 const outputTypeOptions = new Set(["text", "image", "video", "audio"])
@@ -97,6 +100,14 @@ const contextLengthOptionValues = new Set([
   "all",
   ...Object.keys(contextLengthOptions),
 ])
+
+type ModelCatalogCacheEntry = {
+  expiresAt: number
+  models: SquareModel[]
+}
+
+const modelCatalogCache = new Map<string, ModelCatalogCacheEntry>()
+const pendingModelCatalogFetches = new Map<string, Promise<SquareModel[]>>()
 
 function readString(value: string | null) {
   return typeof value === "string" ? value.trim() : ""
@@ -322,7 +333,78 @@ function sortModels(models: SquareModel[], orderBy: string, order: string) {
   })
 }
 
-async function fetchAllModels({
+function hashCachePart(value: string) {
+  return createHash("sha256").update(value).digest("hex").slice(0, 16)
+}
+
+function getCredentialsCacheKey(credentials: UCloudCredentials) {
+  if (credentials.mode === "oauth") {
+    return `oauth:${credentials.tokenType}:${hashCachePart(
+      credentials.accessToken
+    )}`
+  }
+
+  return `signature:${hashCachePart(credentials.accessKey)}`
+}
+
+function getModelCatalogCacheKey({
+  credentials,
+  projectId,
+  orderBy,
+  order,
+  apiLanguage,
+}: {
+  credentials: UCloudCredentials
+  projectId: string
+  orderBy: string
+  order: string
+  apiLanguage?: string
+}) {
+  return [
+    getCredentialsCacheKey(credentials),
+    projectId,
+    orderBy,
+    order,
+    apiLanguage ?? "",
+  ].join("\u0000")
+}
+
+function readCachedModelCatalog(cacheKey: string) {
+  const cached = modelCatalogCache.get(cacheKey)
+
+  if (!cached) {
+    return null
+  }
+
+  if (cached.expiresAt <= Date.now()) {
+    modelCatalogCache.delete(cacheKey)
+    return null
+  }
+
+  modelCatalogCache.delete(cacheKey)
+  modelCatalogCache.set(cacheKey, cached)
+
+  return cached.models.slice()
+}
+
+function writeCachedModelCatalog(cacheKey: string, models: SquareModel[]) {
+  modelCatalogCache.set(cacheKey, {
+    expiresAt: Date.now() + MODEL_CATALOG_CACHE_TTL,
+    models: models.slice(),
+  })
+
+  while (modelCatalogCache.size > MODEL_CATALOG_CACHE_MAX_ENTRIES) {
+    const oldestKey = modelCatalogCache.keys().next().value
+
+    if (!oldestKey) {
+      break
+    }
+
+    modelCatalogCache.delete(oldestKey)
+  }
+}
+
+async function fetchAllModelsFromUCloud({
   credentials,
   projectId,
   orderBy,
@@ -363,6 +445,57 @@ async function fetchAllModels({
   }
 
   return models
+}
+
+async function fetchAllModels({
+  credentials,
+  projectId,
+  orderBy,
+  order,
+  apiLanguage,
+}: {
+  credentials: UCloudCredentials
+  projectId: string
+  orderBy: string
+  order: string
+  apiLanguage?: string
+}) {
+  const cacheKey = getModelCatalogCacheKey({
+    credentials,
+    projectId,
+    orderBy,
+    order,
+    apiLanguage,
+  })
+  const cached = readCachedModelCatalog(cacheKey)
+
+  if (cached) {
+    return cached
+  }
+
+  let pending = pendingModelCatalogFetches.get(cacheKey)
+
+  if (!pending) {
+    pending = fetchAllModelsFromUCloud({
+      credentials,
+      projectId,
+      orderBy,
+      order,
+      apiLanguage,
+    })
+      .then((models) => {
+        writeCachedModelCatalog(cacheKey, models)
+        return models
+      })
+      .finally(() => {
+        pendingModelCatalogFetches.delete(cacheKey)
+      })
+    pendingModelCatalogFetches.set(cacheKey, pending)
+  }
+
+  const models = await pending
+
+  return models.slice()
 }
 
 function toErrorResponse(error: unknown) {

@@ -155,26 +155,25 @@ function scoreEntry({
   return 0
 }
 
-function findVideoOpenapiEntry({
+function findVideoOpenapiEntries({
   modelId,
   modelName,
 }: {
   modelId: string
   modelName: string
 }) {
-  let best: StudioVideoOpenapiModelEntry | null = null
-  let bestScore = 0
+  return VIDEO_OPENAPI_MODELS.map((entry, index) => ({
+    entry,
+    index,
+    score: scoreEntry({ entry, modelId, modelName }),
+  }))
+    .filter((candidate) => candidate.score > 0)
+    .sort((left, right) => {
+      const score = right.score - left.score
 
-  for (const entry of VIDEO_OPENAPI_MODELS) {
-    const score = scoreEntry({ entry, modelId, modelName })
-
-    if (score > bestScore) {
-      best = entry
-      bestScore = score
-    }
-  }
-
-  return best
+      return score || left.index - right.index
+    })
+    .map((candidate) => candidate.entry)
 }
 
 function selectModelConstant(
@@ -195,10 +194,83 @@ function getGeneratedFieldsKey(entry: StudioVideoOpenapiModelEntry) {
   return `${entry.file}#${entry.operationId}`
 }
 
+function splitVideoOperationId(value: string | null | undefined) {
+  const trimmed = value?.trim()
+
+  if (!trimmed) {
+    return { file: null, operationId: null }
+  }
+
+  const separator = trimmed.lastIndexOf("#")
+
+  if (separator <= 0) {
+    return { file: null, operationId: trimmed }
+  }
+
+  return {
+    file: trimmed.slice(0, separator),
+    operationId: trimmed.slice(separator + 1),
+  }
+}
+
 export function loadVideoModelFields(
   entry: StudioVideoOpenapiModelEntry
 ): StudioVideoParameterField[] {
   return cloneFields(generatedFields[getGeneratedFieldsKey(entry)] ?? [])
+}
+
+export function resolveVideoModelOperation({
+  modelId,
+  modelName,
+  file,
+  operationId,
+}: {
+  modelId: string
+  modelName: string
+  file?: string | null
+  operationId?: string | null
+}) {
+  const entries = findVideoOpenapiEntries({ modelId, modelName })
+
+  if (entries.length === 0) {
+    return null
+  }
+
+  const operationMetadata = splitVideoOperationId(operationId)
+  const requestedFile = file?.trim() || operationMetadata.file
+  const requestedOperationId = operationMetadata.operationId
+
+  if (
+    file?.trim() &&
+    operationMetadata.file &&
+    file.trim() !== operationMetadata.file
+  ) {
+    return null
+  }
+
+  const entry = requestedOperationId
+    ? (entries.find(
+        (candidate) =>
+          candidate.operationId === requestedOperationId &&
+          (!requestedFile || candidate.file === requestedFile)
+      ) ?? null)
+    : requestedFile
+      ? (entries.find((candidate) => candidate.file === requestedFile) ?? null)
+      : entries[0]
+
+  if (!entry) {
+    return null
+  }
+
+  const modelConstant = selectModelConstant(entry, modelId, modelName)
+
+  return {
+    openapi: {
+      ...entry,
+      modelConstant,
+    },
+    fields: loadVideoModelFields(entry),
+  }
 }
 
 export function buildVideoModelOption({
@@ -222,10 +294,11 @@ export function buildVideoModelOption({
     name,
     getVideoModelDisplayName(id, label)
   )
-  const entry = findVideoOpenapiEntry({
-    modelId: id,
-    modelName: name,
-  })
+  const entry =
+    findVideoOpenapiEntries({
+      modelId: id,
+      modelName: name,
+    })[0] ?? null
 
   if (!entry) {
     return {

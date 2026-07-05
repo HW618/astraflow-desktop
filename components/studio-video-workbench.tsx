@@ -647,8 +647,8 @@ function StudioVideoWorkbench({
   }
 
   return (
-    <section className="flex h-full min-h-0 flex-1 overflow-hidden bg-background">
-      <aside className="flex w-[340px] shrink-0 flex-col overflow-y-auto border-r bg-background px-4 py-4 lg:w-[380px]">
+    <section className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background xl:flex-row">
+      <aside className="flex max-h-[min(44vh,30rem)] min-h-0 w-full shrink-0 flex-col overflow-y-auto border-b bg-background px-4 py-4 xl:h-full xl:max-h-none xl:w-[380px] xl:border-r xl:border-b-0">
         <div className="flex flex-col gap-1.5">
           <label className="text-xs font-medium text-muted-foreground">
             {copy.model}

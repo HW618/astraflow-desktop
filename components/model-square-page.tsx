@@ -190,6 +190,7 @@ const MODEL_PRICE_CACHE_TTL = 1000 * 60 * 30
 const PRICE_TABLE_CACHE_PREFIX = "astraflow:model-square-price-table"
 const PRICE_TABLE_CACHE_TTL = 1000 * 60 * 10
 const PRICE_SUMMARY_TIER_COUNT = 2
+const MODEL_SEARCH_DEBOUNCE_MS = 250
 
 const outputTypeOptions = [
   { value: "all", icon: RiAppsLine, labelKey: "allTypes" },
@@ -213,6 +214,22 @@ const sortOptions = [
   { value: "nameAsc", orderBy: "Name", order: "Asc" },
   { value: "nameDesc", orderBy: "Name", order: "Desc" },
 ] as const
+
+function useDebouncedValue<T>(value: T, delayMs: number) {
+  const [debounced, setDebounced] = React.useState(value)
+
+  React.useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setDebounced(value)
+    }, delayMs)
+
+    return () => {
+      window.clearTimeout(timeout)
+    }
+  }, [delayMs, value])
+
+  return debounced
+}
 
 async function readJson<T>(response: Response): Promise<T> {
   const payload = (await response.json()) as {
@@ -1112,18 +1129,22 @@ function ModelSquarePage({ projectId }: { projectId?: string }) {
   const [status, setStatus] = React.useState<"loading" | "success" | "error">(
     "loading"
   )
+  const debouncedKeyword = useDebouncedValue(
+    keyword,
+    MODEL_SEARCH_DEBOUNCE_MS
+  )
 
   const queryUrl = React.useMemo(
     () =>
       buildModelSquareUrl({
-        keyword,
+        keyword: debouncedKeyword,
         outputType,
         contextLength,
         vendor,
         sort,
         projectId,
       }),
-    [keyword, outputType, contextLength, vendor, sort, projectId]
+    [debouncedKeyword, outputType, contextLength, vendor, sort, projectId]
   )
 
   React.useEffect(() => {
@@ -1397,8 +1418,8 @@ function ModelSquarePage({ projectId }: { projectId?: string }) {
           </div>
         </section>
 
-        <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
-          <aside className="sticky top-0 h-full min-h-0 overflow-auto rounded-4xl border bg-card p-3 shadow-sm">
+        <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] gap-4 lg:grid-cols-[240px_minmax(0,1fr)] lg:grid-rows-1">
+          <aside className="max-h-[min(36vh,22rem)] min-h-0 overflow-auto rounded-4xl border bg-card p-3 shadow-sm lg:sticky lg:top-0 lg:h-full lg:max-h-none">
             <div className="mb-3 pl-3 text-sm font-medium">{t.modelTypes}</div>
             <ToggleGroup
               type="single"

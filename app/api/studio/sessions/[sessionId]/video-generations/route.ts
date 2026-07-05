@@ -41,6 +41,7 @@ import {
   getVideoOpenapiEntry,
   getVideoModelEndpoint,
   getVideoTaskStatusEndpoint,
+  resolveVideoModelOperation,
 } from "@/lib/video-openapi"
 
 export const runtime = "nodejs"
@@ -79,29 +80,30 @@ const mediaAttachmentSchema = z.object({
   url: z.string().trim().url().max(4_000).optional(),
 })
 
+const openapiMetadataSchema = z
+  .object({
+    file: z.string().trim().min(1).optional(),
+    operationId: z.string().trim().min(1).optional(),
+  })
+  .passthrough()
+
 const submitSchema = z.object({
   modelId: z.string().trim().min(1),
   modelName: z.string().trim().min(1),
+  operationId: z.string().trim().min(1).optional(),
   prompt: z.string().trim().min(1).max(8_000),
   params: paramsSchema.default({}),
-  openapi: z.object({
-    file: z.string().trim().min(1),
-    title: z.string().trim().min(1),
-    operationId: z.string().trim().min(1),
-    method: z.literal("POST"),
-    path: z.string().trim().min(1),
-    statusPath: z.string().trim().min(1),
-    contentType: z.enum(["application/json", "multipart/form-data"]),
-    adapter: z.enum(["async-task", "openai-video"]),
-    modelValues: z.array(z.string()),
-    modelConstant: z.string().trim().min(1),
-  }),
+  openapi: openapiMetadataSchema.optional(),
   fields: z.array(z.custom<StudioVideoParameterField>()).default([]),
   media: z.record(z.string(), z.array(mediaAttachmentSchema)).default({}),
   attachments: z.array(mediaAttachmentSchema).default([]),
 })
 
 type SubmitInput = z.infer<typeof submitSchema>
+type ResolvedSubmitInput = Omit<SubmitInput, "fields" | "openapi"> & {
+  openapi: StudioVideoModelOpenapi
+  fields: StudioVideoParameterField[]
+}
 type SubmitAttachment = z.infer<typeof mediaAttachmentSchema>
 type ProviderResponse = { ok: boolean; status: number; body: unknown }
 
@@ -816,7 +818,7 @@ async function completeStudioVideoGeneration({
   apiKey,
 }: {
   generation: StudioVideoGeneration
-  input: SubmitInput
+  input: ResolvedSubmitInput
   apiKey: string
 }) {
   const endpointUrl = getVideoModelEndpoint(input.openapi)
@@ -1306,6 +1308,27 @@ export async function POST(request: Request, context: RouteContext) {
     )
   }
 
+  const resolvedOperation = resolveVideoModelOperation({
+    modelId: parsed.data.modelId,
+    modelName: parsed.data.modelName,
+    file: parsed.data.openapi?.file,
+    operationId: parsed.data.operationId ?? parsed.data.openapi?.operationId,
+  })
+
+  if (!resolvedOperation) {
+    return NextResponse.json(
+      { ok: false, error: "Video operation is not supported for this model." },
+      { status: 400 }
+    )
+  }
+
+  if (resolvedOperation.fields.length === 0) {
+    return NextResponse.json(
+      { ok: false, error: "Video operation fields are not available." },
+      { status: 400 }
+    )
+  }
+
   const apiKey = getStoredModelverseApiKey()
 
   if (!apiKey) {
@@ -1319,17 +1342,23 @@ export async function POST(request: Request, context: RouteContext) {
     sessionId,
     modelSquareId: parsed.data.modelId,
     modelName: parsed.data.modelName,
-    openapiFile: parsed.data.openapi.file,
-    operationId: parsed.data.openapi.operationId,
+    openapiFile: resolvedOperation.openapi.file,
+    operationId: resolvedOperation.openapi.operationId,
     prompt: parsed.data.prompt,
     params: parsed.data.params,
     status: "running",
   })
 
+  const input: ResolvedSubmitInput = {
+    ...parsed.data,
+    openapi: resolvedOperation.openapi,
+    fields: resolvedOperation.fields,
+  }
+
   scheduleVideoGenerationTask(generation.id, () =>
     completeStudioVideoGeneration({
       generation,
-      input: parsed.data,
+      input,
       apiKey,
     })
   )

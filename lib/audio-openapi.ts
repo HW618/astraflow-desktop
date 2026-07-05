@@ -189,10 +189,75 @@ function getGeneratedFieldsKey(entry: StudioAudioOpenapiModelEntry) {
   return `${entry.file}#${entry.operationId}`
 }
 
+function splitAudioOperationId(value: string | null | undefined) {
+  const trimmed = value?.trim()
+
+  if (!trimmed) {
+    return { file: null, operationId: null }
+  }
+
+  const separator = trimmed.lastIndexOf("#")
+
+  if (separator <= 0) {
+    return { file: null, operationId: trimmed }
+  }
+
+  return {
+    file: trimmed.slice(0, separator),
+    operationId: trimmed.slice(separator + 1),
+  }
+}
+
 export function loadAudioModelFields(
   entry: StudioAudioOpenapiModelEntry
 ): StudioAudioParameterField[] {
   return cloneFields(generatedFields[getGeneratedFieldsKey(entry)] ?? [])
+}
+
+export function resolveAudioModelOperation({
+  modelId,
+  modelName,
+  file,
+  operationId,
+}: {
+  modelId: string
+  modelName: string
+  file?: string | null
+  operationId?: string | null
+}): StudioAudioModelOperation | null {
+  const entries = findAudioOpenapiEntries({ modelId, modelName })
+
+  if (entries.length === 0) {
+    return null
+  }
+
+  const operationMetadata = splitAudioOperationId(operationId)
+  const requestedFile = file?.trim() || operationMetadata.file
+  const requestedOperationId = operationMetadata.operationId
+
+  if (
+    file?.trim() &&
+    operationMetadata.file &&
+    file.trim() !== operationMetadata.file
+  ) {
+    return null
+  }
+
+  const entry = requestedOperationId
+    ? (entries.find(
+        (candidate) =>
+          candidate.operationId === requestedOperationId &&
+          (!requestedFile || candidate.file === requestedFile)
+      ) ?? null)
+    : requestedFile
+      ? (entries.find((candidate) => candidate.file === requestedFile) ?? null)
+      : entries[0]
+
+  if (!entry) {
+    return null
+  }
+
+  return buildAudioModelOperation({ entry, modelId, modelName })
 }
 
 function buildAudioModelOperation({

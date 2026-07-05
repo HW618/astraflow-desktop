@@ -373,10 +373,12 @@ function MarkdownCodeBlock({
   code,
   language,
   autoPreviewHtml,
+  streaming,
 }: {
   code: string
   language: string
   autoPreviewHtml: boolean
+  streaming: boolean
 }) {
   const canPreview = isHtmlLanguage(language)
   const [view, setView] = useState<"code" | "preview">(
@@ -444,7 +446,11 @@ function MarkdownCodeBlock({
             />
           </div>
         ) : (
-          <CodeBlockCode code={code} language={language} />
+          <CodeBlockCode
+            code={code}
+            language={language}
+            streaming={streaming}
+          />
         )}
       </CodeBlock>
     </TooltipProvider>
@@ -453,7 +459,8 @@ function MarkdownCodeBlock({
 
 function createMarkdownComponents(
   autoPreviewHtml: boolean,
-  openLinksInWorkspace: boolean
+  openLinksInWorkspace: boolean,
+  streaming: boolean
 ): Partial<Components> {
   return {
     a: function LinkComponent(props) {
@@ -561,6 +568,7 @@ function createMarkdownComponents(
           code={code}
           language={language}
           autoPreviewHtml={autoPreviewHtml}
+          streaming={streaming}
         />
       )
     },
@@ -575,19 +583,25 @@ const MarkdownBlockRenderer = memo(
     content,
     autoPreviewHtml,
     openLinksInWorkspace,
+    streaming,
     components,
   }: {
     content: string
     autoPreviewHtml: boolean
     openLinksInWorkspace: boolean
+    streaming: boolean
     components?: Partial<Components>
   }) {
     const markdownComponents = useMemo(
       () => ({
-        ...createMarkdownComponents(autoPreviewHtml, openLinksInWorkspace),
+        ...createMarkdownComponents(
+          autoPreviewHtml,
+          openLinksInWorkspace,
+          streaming
+        ),
         ...components,
       }),
-      [autoPreviewHtml, components, openLinksInWorkspace]
+      [autoPreviewHtml, components, openLinksInWorkspace, streaming]
     )
 
     return (
@@ -604,6 +618,7 @@ const MarkdownBlockRenderer = memo(
       prevProps.content === nextProps.content &&
       prevProps.autoPreviewHtml === nextProps.autoPreviewHtml &&
       prevProps.openLinksInWorkspace === nextProps.openLinksInWorkspace &&
+      prevProps.streaming === nextProps.streaming &&
       prevProps.components === nextProps.components
     )
   }
@@ -639,6 +654,7 @@ function MarkdownComponent({
             isCompleteHtmlFenceBlock(block.content)
           }
           openLinksInWorkspace={openLinksInWorkspace}
+          streaming={block.mutable}
           components={components}
         />
       ))}

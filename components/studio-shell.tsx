@@ -1,12 +1,9 @@
 "use client"
 
 import * as React from "react"
+import dynamic from "next/dynamic"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 
-import { StudioAudioWorkbench } from "@/components/studio-audio-workbench"
-import { StudioChatWorkbench } from "@/components/studio-chat-workbench"
-import { StudioImageWorkbench } from "@/components/studio-image-workbench"
-import { StudioVideoWorkbench } from "@/components/studio-video-workbench"
 import { dispatchStudioSessionsChanged } from "@/lib/studio-session-events"
 import { studioModes, type StudioMode } from "@/lib/studio-types"
 
@@ -14,6 +11,55 @@ type StudioShellProps = {
   initialMode?: StudioMode
   initialSessionId?: string
 }
+
+type StudioWorkbenchProps = {
+  sessionId: string
+  onSessionChange: (sessionId: string) => void
+  onSessionsChange: () => void
+}
+
+function StudioWorkbenchLoading() {
+  return (
+    <div className="flex h-full min-h-0 w-full flex-1 items-center justify-center">
+      <div
+        aria-hidden
+        className="size-6 animate-spin rounded-full border-2 border-muted-foreground/20 border-t-muted-foreground/70"
+      />
+    </div>
+  )
+}
+
+const StudioChatWorkbench = dynamic<StudioWorkbenchProps>(
+  () =>
+    import("@/components/studio-chat-workbench").then(
+      (mod) => mod.StudioChatWorkbench
+    ),
+  { loading: StudioWorkbenchLoading }
+)
+
+const StudioImageWorkbench = dynamic<StudioWorkbenchProps>(
+  () =>
+    import("@/components/studio-image-workbench").then(
+      (mod) => mod.StudioImageWorkbench
+    ),
+  { loading: StudioWorkbenchLoading }
+)
+
+const StudioVideoWorkbench = dynamic<StudioWorkbenchProps>(
+  () =>
+    import("@/components/studio-video-workbench").then(
+      (mod) => mod.StudioVideoWorkbench
+    ),
+  { loading: StudioWorkbenchLoading }
+)
+
+const StudioAudioWorkbench = dynamic<StudioWorkbenchProps>(
+  () =>
+    import("@/components/studio-audio-workbench").then(
+      (mod) => mod.StudioAudioWorkbench
+    ),
+  { loading: StudioWorkbenchLoading }
+)
 
 function isStudioMode(value: unknown): value is StudioMode {
   return typeof value === "string" && studioModes.includes(value as StudioMode)

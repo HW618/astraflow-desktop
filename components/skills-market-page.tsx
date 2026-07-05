@@ -95,6 +95,11 @@ type SkillDetailState = {
   skillMd: string
 }
 
+type ParsedSkillMarkdown = {
+  body: string
+  metadata: Record<string, string>
+}
+
 type SkillsView = "market" | "mine"
 type PluginType = "skills" | "mcp"
 type SkillCardSize = "default" | "large"
@@ -152,6 +157,109 @@ function createEmptyMcpForm(): McpManualFormState {
     headers: [],
     env: "",
     localCommandConfirmed: false,
+  }
+}
+
+function cleanSkillYamlScalar(value: string) {
+  const trimmed = value.trim()
+
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1).trim()
+  }
+
+  return trimmed
+}
+
+function parseSkillMetadataLines(lines: string[]) {
+  const metadata: Record<string, string> = {}
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const rawLine = lines[index]
+    const trimmed = rawLine.trim()
+
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue
+    }
+
+    const scalarMatch = rawLine.match(/^([A-Za-z0-9_-]+):\s*(.*)$/)
+
+    if (!scalarMatch) {
+      continue
+    }
+
+    const key = scalarMatch[1]
+    const value = scalarMatch[2]
+    const normalizedValue = value.trim()
+
+    if (normalizedValue === "|" || normalizedValue === ">") {
+      const blockLines: string[] = []
+      let nextIndex = index + 1
+
+      while (nextIndex < lines.length) {
+        const nextLine = lines[nextIndex]
+
+        if (/^[A-Za-z0-9_-]+:\s*/.test(nextLine)) {
+          break
+        }
+
+        blockLines.push(nextLine.replace(/^\s{2,}/, ""))
+        nextIndex += 1
+      }
+
+      metadata[key] =
+        normalizedValue === ">"
+          ? blockLines.map((line) => line.trim()).join(" ").trim()
+          : blockLines.join("\n").trim()
+      index = nextIndex - 1
+      continue
+    }
+
+    metadata[key] = cleanSkillYamlScalar(value)
+  }
+
+  return metadata
+}
+
+function parseSkillMarkdown(skillMd: string): ParsedSkillMarkdown {
+  const normalized = skillMd.replace(/^\uFEFF/, "")
+  const delimitedMatch = normalized.match(
+    /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/
+  )
+
+  if (delimitedMatch) {
+    return {
+      body: normalized.slice(delimitedMatch[0].length).trimStart(),
+      metadata: parseSkillMetadataLines(delimitedMatch[1].split(/\r?\n/)),
+    }
+  }
+
+  const lines = normalized.split(/\r?\n/)
+  const startsWithSkillMetadata = /^\s*name\s*:/i.test(lines[0] ?? "")
+
+  if (!startsWithSkillMetadata) {
+    return { body: normalized, metadata: {} }
+  }
+
+  const bodyStartIndex = lines.findIndex(
+    (line, index) => index > 0 && /^#{1,6}\s+/.test(line)
+  )
+
+  if (bodyStartIndex <= 0) {
+    return { body: normalized, metadata: {} }
+  }
+
+  const metadata = parseSkillMetadataLines(lines.slice(0, bodyStartIndex))
+
+  if (!metadata.name && !metadata.description) {
+    return { body: normalized, metadata: {} }
+  }
+
+  return {
+    body: lines.slice(bodyStartIndex).join("\n").trimStart(),
+    metadata,
   }
 }
 
@@ -1658,9 +1766,19 @@ function SkillDetailDialog({
 }) {
   const { locale, t } = useI18n()
   const activeSkill = detail?.skill ?? skill
+  const skillMd = detail?.skillMd ?? ""
+  const parsedSkillMd = React.useMemo(
+    () => (skillMd ? parseSkillMarkdown(skillMd) : null),
+    [skillMd]
+  )
   const title = activeSkill ? getSkillTitle(activeSkill) : t.skills
   const description = activeSkill
-    ? getSkillDescription(activeSkill, locale)
+    ? getSkillDescription(activeSkill, locale) ||
+      parsedSkillMd?.metadata.description ||
+      ""
+    : ""
+  const skillReadme = parsedSkillMd
+    ? parsedSkillMd.body.trim() || parsedSkillMd.metadata.description || ""
     : ""
 
   return (
@@ -1738,9 +1856,9 @@ function SkillDetailDialog({
               <AlertTitle>{t.requestFailed}</AlertTitle>
               <AlertDescription>{error}</AlertDescription>
             </Alert>
-          ) : detail?.skillMd ? (
+          ) : skillMd && skillReadme ? (
             <Markdown className="prose-sm max-w-none dark:prose-invert prose-headings:font-heading prose-headings:text-foreground prose-a:text-primary prose-code:rounded-sm prose-code:bg-muted prose-code:px-1 prose-code:py-0.5">
-              {detail.skillMd}
+              {skillReadme}
             </Markdown>
           ) : (
             <p className="text-sm text-muted-foreground">{t.skillNoReadme}</p>

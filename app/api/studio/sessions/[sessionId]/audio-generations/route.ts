@@ -5,6 +5,7 @@ import { z } from "zod"
 import {
   getAudioModelEndpoint,
   getAudioTaskStatusEndpoint,
+  resolveAudioModelOperation,
 } from "@/lib/audio-openapi"
 import { requireAuthenticatedRequest } from "@/lib/app-auth"
 import { getStoredModelverseApiKey } from "@/lib/modelverse-openai"
@@ -63,29 +64,20 @@ const attachmentSchema = z.object({
     .optional(),
 })
 
+const openapiMetadataSchema = z
+  .object({
+    file: z.string().trim().min(1).optional(),
+    operationId: z.string().trim().min(1).optional(),
+  })
+  .passthrough()
+
 const submitSchema = z.object({
   modelId: z.string().trim().min(1),
   modelName: z.string().trim().min(1),
+  operationId: z.string().trim().min(1).optional(),
   prompt: z.string().trim().min(1).max(10_000),
   params: z.record(z.string(), z.unknown()).default({}),
-  openapi: z.object({
-    file: z.string().trim().min(1),
-    title: z.string().trim().min(1),
-    operationId: z.string().trim().min(1),
-    method: z.literal("POST"),
-    path: z.string().trim().min(1),
-    statusPath: z.string().trim().min(1).optional(),
-    contentType: z.enum(["application/json", "multipart/form-data"]),
-    adapter: z.enum([
-      "audio-json",
-      "audio-binary",
-      "audio-multipart",
-      "async-task",
-    ]),
-    responseKind: z.enum(["binary", "json", "async"]),
-    modelValues: z.array(z.string()),
-    modelConstant: z.string().trim().min(1),
-  }),
+  openapi: openapiMetadataSchema.optional(),
   fields: z.array(z.custom<StudioAudioParameterField>()).default([]),
   promptFieldKey: z.string().trim().min(1).nullable().optional(),
   attachments: z.record(z.string(), z.array(attachmentSchema)).default({}),
@@ -130,6 +122,21 @@ function getActivePromptFieldKey(
     fields.find((field) => field.kind === "prompt")?.payloadPath.join(".") ??
     null
   )
+}
+
+function validatePromptFieldKey(
+  fields: StudioAudioParameterField[],
+  promptFieldKey?: string | null
+) {
+  if (!promptFieldKey) {
+    return null
+  }
+
+  return fields.some(
+    (field) => field.kind === "prompt" && getFieldKey(field) === promptFieldKey
+  )
+    ? promptFieldKey
+    : undefined
 }
 
 function coerceFieldValue(
@@ -775,6 +782,39 @@ export async function POST(request: Request, context: RouteContext) {
     )
   }
 
+  const resolvedOperation = resolveAudioModelOperation({
+    modelId: parsed.data.modelId,
+    modelName: parsed.data.modelName,
+    file: parsed.data.openapi?.file,
+    operationId: parsed.data.operationId ?? parsed.data.openapi?.operationId,
+  })
+
+  if (!resolvedOperation) {
+    return NextResponse.json(
+      { ok: false, error: "Audio operation is not supported for this model." },
+      { status: 400 }
+    )
+  }
+
+  if (resolvedOperation.fields.length === 0) {
+    return NextResponse.json(
+      { ok: false, error: "Audio operation fields are not available." },
+      { status: 400 }
+    )
+  }
+
+  const promptFieldKey = validatePromptFieldKey(
+    resolvedOperation.fields,
+    parsed.data.promptFieldKey
+  )
+
+  if (promptFieldKey === undefined) {
+    return NextResponse.json(
+      { ok: false, error: "Audio prompt field is not supported." },
+      { status: 400 }
+    )
+  }
+
   const apiKey = getStoredModelverseApiKey()
 
   if (!apiKey) {
@@ -788,25 +828,25 @@ export async function POST(request: Request, context: RouteContext) {
     sessionId,
     modelSquareId: parsed.data.modelId,
     modelName: parsed.data.modelName,
-    openapiFile: parsed.data.openapi.file,
-    operationId: parsed.data.openapi.operationId,
+    openapiFile: resolvedOperation.openapi.file,
+    operationId: resolvedOperation.openapi.operationId,
     prompt: parsed.data.prompt,
     params: parsed.data.params,
     status: "running",
   })
 
-  const endpointUrl = getAudioModelEndpoint(parsed.data.openapi)
+  const endpointUrl = getAudioModelEndpoint(resolvedOperation.openapi)
 
   try {
     let providerResponse: { ok: boolean; status: number; body: unknown }
 
-    if (parsed.data.openapi.contentType === "multipart/form-data") {
+    if (resolvedOperation.openapi.contentType === "multipart/form-data") {
       const formData = buildFormData({
-        openapi: parsed.data.openapi,
-        fields: parsed.data.fields,
+        openapi: resolvedOperation.openapi,
+        fields: resolvedOperation.fields,
         prompt: parsed.data.prompt,
         params: parsed.data.params,
-        promptFieldKey: parsed.data.promptFieldKey,
+        promptFieldKey,
         attachments: parsed.data.attachments,
       })
 
@@ -817,11 +857,11 @@ export async function POST(request: Request, context: RouteContext) {
       })
     } else {
       const payload = buildJsonPayload({
-        openapi: parsed.data.openapi,
-        fields: parsed.data.fields,
+        openapi: resolvedOperation.openapi,
+        fields: resolvedOperation.fields,
         prompt: parsed.data.prompt,
         params: parsed.data.params,
-        promptFieldKey: parsed.data.promptFieldKey,
+        promptFieldKey,
       })
 
       providerResponse = await callProviderJson({
@@ -831,9 +871,12 @@ export async function POST(request: Request, context: RouteContext) {
       })
     }
 
-    if (providerResponse.ok && parsed.data.openapi.adapter === "async-task") {
+    if (
+      providerResponse.ok &&
+      resolvedOperation.openapi.adapter === "async-task"
+    ) {
       const taskId = getAsyncTaskId(providerResponse.body)
-      const statusUrl = getAudioTaskStatusEndpoint(parsed.data.openapi)
+      const statusUrl = getAudioTaskStatusEndpoint(resolvedOperation.openapi)
 
       if (!taskId || !statusUrl) {
         providerResponse = {
