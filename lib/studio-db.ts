@@ -118,6 +118,13 @@ type DbAgentProviderEventRow = {
   direction: StudioAgentProviderEventDirection
   event_type: string
   provider_ref: string | null
+  provider_session_id: string | null
+  thread_id: string | null
+  turn_id: string | null
+  item_id: string | null
+  parent_thread_id: string | null
+  schema_version: string | null
+  package_version: string | null
   payload: string
   created_at: string
 }
@@ -318,6 +325,13 @@ type RecordAgentProviderEventInput = {
   direction: StudioAgentProviderEventDirection
   eventType: string
   providerRef?: string | null
+  providerSessionId?: string | null
+  threadId?: string | null
+  turnId?: string | null
+  itemId?: string | null
+  parentThreadId?: string | null
+  schemaVersion?: string | null
+  packageVersion?: string | null
   payload: unknown
 }
 
@@ -631,6 +645,13 @@ const studioTableColumns = {
     },
     { name: "event_type", definition: "event_type TEXT NOT NULL DEFAULT ''" },
     { name: "provider_ref", definition: "provider_ref TEXT" },
+    { name: "provider_session_id", definition: "provider_session_id TEXT" },
+    { name: "thread_id", definition: "thread_id TEXT" },
+    { name: "turn_id", definition: "turn_id TEXT" },
+    { name: "item_id", definition: "item_id TEXT" },
+    { name: "parent_thread_id", definition: "parent_thread_id TEXT" },
+    { name: "schema_version", definition: "schema_version TEXT" },
+    { name: "package_version", definition: "package_version TEXT" },
     { name: "payload", definition: "payload TEXT NOT NULL DEFAULT 'null'" },
     { name: "created_at", definition: "created_at TEXT NOT NULL DEFAULT ''" },
   ],
@@ -1108,6 +1129,13 @@ function initializeSchema(database: Database.Database) {
       direction TEXT NOT NULL,
       event_type TEXT NOT NULL,
       provider_ref TEXT,
+      provider_session_id TEXT,
+      thread_id TEXT,
+      turn_id TEXT,
+      item_id TEXT,
+      parent_thread_id TEXT,
+      schema_version TEXT,
+      package_version TEXT,
       payload TEXT NOT NULL,
       created_at TEXT NOT NULL,
       FOREIGN KEY (session_id) REFERENCES studio_sessions(id) ON DELETE CASCADE,
@@ -1356,6 +1384,9 @@ function ensureSchemaIndexes(database: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS studio_agent_provider_events_provider_ref_idx
       ON studio_agent_provider_events(provider, provider_ref);
+
+    CREATE INDEX IF NOT EXISTS studio_agent_provider_events_trace_idx
+      ON studio_agent_provider_events(provider, thread_id, turn_id, item_id);
 
     CREATE INDEX IF NOT EXISTS studio_session_files_session_idx
       ON studio_session_files(session_id, created_at ASC);
@@ -1712,23 +1743,99 @@ function isStudioMessageActivity(
 }
 
 function isStudioPermissionOption(value: unknown) {
+  const option = value as {
+    _meta?: unknown
+    kind?: unknown
+    name?: unknown
+    optionId?: unknown
+  }
+
   return (
     typeof value === "object" &&
     value !== null &&
-    typeof (value as { optionId?: unknown }).optionId === "string" &&
-    typeof (value as { name?: unknown }).name === "string" &&
-    typeof (value as { kind?: unknown }).kind === "string"
+    typeof option.optionId === "string" &&
+    typeof option.name === "string" &&
+    typeof option.kind === "string" &&
+    (typeof option._meta === "undefined" ||
+      option._meta === null ||
+      (typeof option._meta === "object" && !Array.isArray(option._meta)))
+  )
+}
+
+function isStudioUserInputOption(value: unknown) {
+  const option = value as {
+    description?: unknown
+    label?: unknown
+    optionId?: unknown
+  }
+
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof option.optionId === "string" &&
+    typeof option.label === "string" &&
+    typeof option.description === "string"
+  )
+}
+
+function isStudioUserInputQuestion(value: unknown) {
+  const question = value as {
+    allowOther?: unknown
+    header?: unknown
+    id?: unknown
+    isSecret?: unknown
+    options?: unknown
+    question?: unknown
+  }
+
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof question.id === "string" &&
+    typeof question.header === "string" &&
+    typeof question.question === "string" &&
+    Array.isArray(question.options) &&
+    question.options.every(isStudioUserInputOption) &&
+    typeof question.allowOther === "boolean" &&
+    typeof question.isSecret === "boolean"
+  )
+}
+
+function isStudioUserInputAnswer(value: unknown) {
+  const answer = value as {
+    label?: unknown
+    optionId?: unknown
+    questionId?: unknown
+    text?: unknown
+  }
+
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof answer.questionId === "string" &&
+    (typeof answer.optionId === "string" || answer.optionId === null) &&
+    (typeof answer.label === "string" || answer.label === null) &&
+    typeof answer.text === "string"
   )
 }
 
 function isStudioMessageTodo(value: unknown) {
+  const todo = value as {
+    priority?: unknown
+    status?: unknown
+    text?: unknown
+  }
+
   return (
     typeof value === "object" &&
     value !== null &&
-    typeof (value as { text?: unknown }).text === "string" &&
-    ((value as { status?: unknown }).status === "pending" ||
-      (value as { status?: unknown }).status === "in_progress" ||
-      (value as { status?: unknown }).status === "completed")
+    typeof todo.text === "string" &&
+    (todo.status === "pending" ||
+      todo.status === "in_progress" ||
+      todo.status === "completed") &&
+    (typeof todo.priority === "string" ||
+      todo.priority === null ||
+      typeof todo.priority === "undefined")
   )
 }
 
@@ -1888,6 +1995,21 @@ function parseParts(raw: string | null): StudioMessagePart[] {
           )
         }
 
+        if (part.type === "user_input") {
+          return (
+            typeof part.id === "string" &&
+            (part.status === "pending" ||
+              part.status === "answered" ||
+              part.status === "cancelled") &&
+            Array.isArray(part.questions) &&
+            part.questions.every(isStudioUserInputQuestion) &&
+            Array.isArray(part.answers) &&
+            part.answers.every(isStudioUserInputAnswer) &&
+            (typeof part.autoResolutionMs === "number" ||
+              part.autoResolutionMs === null)
+          )
+        }
+
         return (
           part.type === "tool" &&
           typeof part.id === "string" &&
@@ -1945,6 +2067,13 @@ function mapAgentProviderEvent(
     direction: row.direction,
     eventType: row.event_type,
     providerRef: row.provider_ref,
+    providerSessionId: row.provider_session_id,
+    threadId: row.thread_id,
+    turnId: row.turn_id,
+    itemId: row.item_id,
+    parentThreadId: row.parent_thread_id,
+    schemaVersion: row.schema_version,
+    packageVersion: row.package_version,
     payload: parseJsonValue(row.payload, null as unknown),
     createdAt: row.created_at,
   }
@@ -1970,6 +2099,13 @@ export function recordStudioAgentProviderEvent({
   direction,
   eventType,
   providerRef = null,
+  providerSessionId = null,
+  threadId = null,
+  turnId = null,
+  itemId = null,
+  parentThreadId = null,
+  schemaVersion = null,
+  packageVersion = null,
   payload,
 }: RecordAgentProviderEventInput): StudioAgentProviderEvent {
   const createdAt = nowIso()
@@ -1979,10 +2115,14 @@ export function recordStudioAgentProviderEvent({
       `
         INSERT INTO studio_agent_provider_events
           (id, session_id, run_id, assistant_message_id, runtime_id, provider,
-           direction, event_type, provider_ref, payload, created_at)
+           direction, event_type, provider_ref, provider_session_id, thread_id,
+           turn_id, item_id, parent_thread_id, schema_version, package_version,
+           payload, created_at)
         VALUES
           (@id, @sessionId, @runId, @assistantMessageId, @runtimeId, @provider,
-           @direction, @eventType, @providerRef, @payload, @createdAt)
+           @direction, @eventType, @providerRef, @providerSessionId, @threadId,
+           @turnId, @itemId, @parentThreadId, @schemaVersion, @packageVersion,
+           @payload, @createdAt)
       `
     )
     .run({
@@ -1995,6 +2135,13 @@ export function recordStudioAgentProviderEvent({
       direction,
       eventType,
       providerRef,
+      providerSessionId,
+      threadId,
+      turnId,
+      itemId,
+      parentThreadId,
+      schemaVersion,
+      packageVersion,
       payload: stringifyProviderEventPayload(payload),
       createdAt,
     })
@@ -2009,6 +2156,13 @@ export function recordStudioAgentProviderEvent({
     direction,
     eventType,
     providerRef,
+    providerSessionId,
+    threadId,
+    turnId,
+    itemId,
+    parentThreadId,
+    schemaVersion,
+    packageVersion,
     payload,
     createdAt,
   }
@@ -2038,7 +2192,9 @@ export function listStudioAgentProviderEvents({
     .prepare(
       `
         SELECT id, session_id, run_id, assistant_message_id, runtime_id,
-               provider, direction, event_type, provider_ref, payload,
+               provider, direction, event_type, provider_ref,
+               provider_session_id, thread_id, turn_id, item_id,
+               parent_thread_id, schema_version, package_version, payload,
                created_at
         FROM studio_agent_provider_events
         WHERE ${clauses.join(" AND ")}

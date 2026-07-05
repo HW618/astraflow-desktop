@@ -7,8 +7,10 @@ import { createDeepAgent } from "deepagents"
 import { createStudioSkillsMiddleware } from "@/lib/ai/skills/studio-skills"
 import {
   createGetStudioMediaGenerationTool,
+  createListStudioImageModelsTool,
   createListStudioMediaGenerationModelsTool,
   createListStudioMediaGenerationsTool,
+  createListStudioVideoModelsTool,
   createStudioGenerateImageTool,
   createStudioGenerateVideoTool,
 } from "@/lib/ai/tools/media-generation"
@@ -26,6 +28,7 @@ import {
   createWebFetchTool,
   getStoredExaApiKey,
 } from "@/lib/ai/tools/web"
+import { createRequestUserInputTool } from "@/lib/ai/tools/user-input"
 import { DeepAgentsE2BBackend } from "@/lib/agent/deepagents-e2b-backend"
 import { DeepAgentsLocalBackend } from "@/lib/agent/deepagents-local-backend"
 import { AgentEventQueue } from "@/lib/agent/event-queue"
@@ -34,6 +37,7 @@ import {
   type PermissionGatewayContext,
   wrapToolsWithPermissionGateway,
 } from "@/lib/agent/permission-gateway"
+import { cancelSessionUserInputs } from "@/lib/agent/user-input-broker"
 import {
   registerAgentRuntime,
   type AgentRunEnvironment,
@@ -52,6 +56,7 @@ import {
 
 const STUDIO_CHAT_DEBUG = process.env.ASTRAFLOW_STUDIO_CHAT_DEBUG === "1"
 const DEEPAGENTS_RECURSION_LIMIT = 200
+const SUBAGENT_SUMMARY_MAX_CHARS = 4_000
 const DEEPAGENTS_BUILTIN_TOOL_NAMES = new Set([
   "ls",
   "read_file",
@@ -65,6 +70,23 @@ const DEEPAGENTS_BUILTIN_TOOL_NAMES = new Set([
 ])
 
 type AgentTodo = Extract<AgentEvent, { type: "plan_update" }>["todos"][number]
+type DeepAgentsToolCallStream = {
+  callId?: string
+  error: Promise<string | undefined>
+  input: unknown
+  name: string
+  output: Promise<unknown>
+  status: Promise<string>
+}
+type DeepAgentsSubagentStream = {
+  cause?: unknown
+  messages?: AsyncIterable<AsyncIterable<unknown>>
+  name: string
+  output: Promise<unknown>
+  subagents?: AsyncIterable<unknown>
+  toolCalls?: AsyncIterable<DeepAgentsToolCallStream>
+  values?: AsyncIterable<unknown>
+}
 
 function getRecord(value: unknown) {
   return typeof value === "object" && value !== null
@@ -119,6 +141,7 @@ function createDeepAgentsSystemPrompt({
   hasWebFetch,
   hasWebSearch,
   hasMediaGeneration,
+  hasUserInputRequest,
   localRootDir,
   sessionFilesManifest,
 }: {
@@ -130,6 +153,7 @@ function createDeepAgentsSystemPrompt({
   hasWebFetch: boolean
   hasWebSearch: boolean
   hasMediaGeneration: boolean
+  hasUserInputRequest: boolean
   localRootDir: string | null
   sessionFilesManifest: string
 }) {
@@ -182,7 +206,13 @@ function createDeepAgentsSystemPrompt({
 
   if (hasMediaGeneration) {
     toolInstructions.push(
-      "You can create Studio image and video generations with studio_list_media_generation_models, studio_generate_image, studio_generate_video, and inspect prior jobs with the Studio media generation status tools. Use these only when the user asks to create, edit, or inspect media; generated outputs are saved in the Studio media library."
+      "You can create and edit Studio images and submit Studio video generations directly in chat with studio_list_image_models, studio_list_video_models, studio_list_media_generation_models, studio_generate_image, studio_generate_video, and the Studio media status tools. If the user asks what AstraFlow can do, or asks for images, image edits, videos, Seedream, Seedance, or media model choices, tell them this is available and use these tools. When the user asks for image or video generation and did not explicitly choose a model, list the available media models if needed, then use request_user_input to ask which model they want instead of silently guessing. Generated media appears as chat media cards, can be downloaded, can be saved to the Files library, and can be referenced in later prompts. Use media generation only when relevant to the user's request."
+    )
+  }
+
+  if (hasUserInputRequest) {
+    toolInstructions.push(
+      "You can ask the user a structured question with request_user_input. Use it proactively when a choice materially affects the result and guessing would be poor, especially when choosing between chat, image, video, or media models. Keep questions short, put the recommended option first for multiple-choice questions, and set options to [] with isOther true for short free-form questions."
     )
   }
 
@@ -248,6 +278,8 @@ function createNativeTools({
   const tools: StructuredToolInterface[] = [
     createWebFetchTool(),
     createListInstalledMcpServersTool(),
+    createListStudioImageModelsTool(),
+    createListStudioVideoModelsTool(),
     createListStudioMediaGenerationModelsTool(),
     createListStudioMediaGenerationsTool({
       sessionId,
@@ -327,6 +359,7 @@ function parsePlanUpdate(
             ? item.text
             : ""
       const status = item?.status
+      const priority = item?.priority
 
       if (
         status !== "pending" &&
@@ -339,6 +372,9 @@ function parsePlanUpdate(
       return {
         text,
         status,
+        ...(typeof priority === "string" || priority === null
+          ? { priority }
+          : {}),
       }
     })
     .filter((todo): todo is AgentTodo => Boolean(todo && todo.text.trim()))
@@ -602,17 +638,14 @@ async function pumpToolCall(
 }
 
 async function pumpToolCalls(
-  toolCalls: AsyncIterable<{
-    callId?: string
-    error: Promise<string | undefined>
-    input: unknown
-    name: string
-    output: Promise<unknown>
-    status: Promise<string>
-  }>,
+  toolCalls: AsyncIterable<DeepAgentsToolCallStream> | undefined,
   queue: AgentEventQueue,
   parentTaskId?: string
 ) {
+  if (!toolCalls) {
+    return
+  }
+
   const pending: Promise<void>[] = []
 
   for await (const call of toolCalls) {
@@ -632,12 +665,17 @@ function getSubagentTaskId(subagent: { cause?: unknown; name: string }) {
   return toolCallId || `${subagent.name}:${randomUUID()}`
 }
 
-function extractSubagentSummary(output: unknown) {
-  const record = getRecord(output)
-  const messages = Array.isArray(record?.messages) ? record.messages : []
-  const last = messages.at(-1)
-  const content = getRecord(last)?.content ?? last
+function truncateSubagentSummary(summary: string) {
+  if (summary.length <= SUBAGENT_SUMMARY_MAX_CHARS) {
+    return summary
+  }
 
+  return `${summary.slice(0, SUBAGENT_SUMMARY_MAX_CHARS)}\n...[truncated ${
+    summary.length - SUBAGENT_SUMMARY_MAX_CHARS
+  } chars]`
+}
+
+function extractContentText(content: unknown): string | undefined {
   if (typeof content === "string") {
     return content.trim() || undefined
   }
@@ -651,7 +689,15 @@ function extractSubagentSummary(output: unknown) {
 
         const record = getRecord(part)
 
-        return typeof record?.text === "string" ? record.text : ""
+        if (typeof record?.text === "string") {
+          return record.text
+        }
+
+        if (typeof record?.content === "string") {
+          return record.content
+        }
+
+        return ""
       })
       .join("")
       .trim()
@@ -662,23 +708,149 @@ function extractSubagentSummary(output: unknown) {
   return undefined
 }
 
+function extractSubagentSummary(output: unknown) {
+  if (typeof output === "string") {
+    return truncateSubagentSummary(output.trim()) || undefined
+  }
+
+  const record = getRecord(output)
+  const directSummary =
+    typeof record?.summary === "string"
+      ? record.summary
+      : typeof record?.finalResponse === "string"
+        ? record.finalResponse
+        : typeof record?.final_response === "string"
+          ? record.final_response
+          : typeof record?.output === "string"
+            ? record.output
+            : typeof record?.result === "string"
+              ? record.result
+              : null
+
+  if (directSummary) {
+    return truncateSubagentSummary(directSummary.trim()) || undefined
+  }
+
+  const directContent = extractContentText(record?.content)
+
+  if (directContent) {
+    return truncateSubagentSummary(directContent)
+  }
+
+  const messages = Array.isArray(record?.messages) ? record.messages : []
+  const last = messages.at(-1)
+  const content = getRecord(last)?.content ?? last
+  const messageContent = extractContentText(content)
+
+  if (messageContent) {
+    return truncateSubagentSummary(messageContent)
+  }
+
+  return undefined
+}
+
+function normalizeSubagentStatus(value: unknown) {
+  if (value === "running" || value === "complete" || value === "error") {
+    return value
+  }
+
+  if (value === "completed" || value === "success") {
+    return "complete"
+  }
+
+  if (value === "failed") {
+    return "error"
+  }
+
+  return null
+}
+
+export function mapDeepAgentsSubagentValueForReplay(
+  value: unknown,
+  taskId: string,
+  parentTaskId?: string
+): Extract<AgentEvent, { type: "subagent_update" }> | null {
+  const record = getRecord(value)
+
+  if (!record) {
+    return null
+  }
+
+  const planEvent = parsePlanUpdate(record)
+  const summary = extractSubagentSummary(record)
+  const status = normalizeSubagentStatus(record.status)
+  const event: Extract<AgentEvent, { type: "subagent_update" }> = {
+    type: "subagent_update",
+    taskId,
+    ...(status ? { status } : {}),
+    ...(summary ? { summary } : {}),
+    ...(planEvent?.todos.length ? { todos: planEvent.todos } : {}),
+    ...(parentTaskId ? { parentTaskId } : {}),
+  }
+
+  return event.status || event.summary || event.todos ? event : null
+}
+
+async function pumpSubagentValues(
+  values: AsyncIterable<unknown> | undefined,
+  queue: AgentEventQueue,
+  taskId: string,
+  parentTaskId?: string
+) {
+  if (!values) {
+    return
+  }
+
+  let lastStatus: string | null = null
+  let lastSummary: string | null = null
+  let lastTodos: string | null = null
+
+  for await (const value of values) {
+    const update = mapDeepAgentsSubagentValueForReplay(
+      value,
+      taskId,
+      parentTaskId
+    )
+
+    if (!update) {
+      continue
+    }
+
+    const deduped: Extract<AgentEvent, { type: "subagent_update" }> = {
+      type: "subagent_update",
+      taskId,
+      ...(parentTaskId ? { parentTaskId } : {}),
+    }
+
+    if (update.status && update.status !== lastStatus) {
+      deduped.status = update.status
+      lastStatus = update.status
+    }
+
+    if (update.summary && update.summary !== lastSummary) {
+      deduped.summary = update.summary
+      lastSummary = update.summary
+    }
+
+    if (update.todos) {
+      const todosKey = JSON.stringify(update.todos)
+
+      if (todosKey !== lastTodos) {
+        deduped.todos = update.todos
+        lastTodos = todosKey
+      }
+    }
+
+    if (deduped.status || deduped.summary || deduped.todos) {
+      queue.push(deduped)
+    }
+  }
+}
+
 async function pumpSubagent(
-  subagent: {
-    cause?: unknown
-    messages?: AsyncIterable<AsyncIterable<unknown>>
-    name: string
-    output: Promise<unknown>
-    subagents: AsyncIterable<unknown>
-    toolCalls: AsyncIterable<{
-      callId?: string
-      error: Promise<string | undefined>
-      input: unknown
-      name: string
-      output: Promise<unknown>
-      status: Promise<string>
-    }>
-  },
-  queue: AgentEventQueue
+  subagent: DeepAgentsSubagentStream,
+  queue: AgentEventQueue,
+  parentTaskId?: string
 ) {
   const taskId = getSubagentTaskId(subagent)
 
@@ -686,18 +858,25 @@ async function pumpSubagent(
     type: "subagent_start",
     taskId,
     name: subagent.name,
+    ...(parentTaskId ? { parentTaskId } : {}),
   })
 
   const toolCalls = pumpToolCalls(subagent.toolCalls, queue, taskId)
-  const nestedSubagents = pumpSubagents(subagent.subagents, queue)
+  const nestedSubagents = pumpSubagents(subagent.subagents, queue, taskId)
   const messages = pumpSubagentMessageDeltas(subagent.messages, queue, taskId)
+  const values = pumpSubagentValues(
+    subagent.values,
+    queue,
+    taskId,
+    parentTaskId
+  )
   let subagentError: unknown = null
   const output = await subagent.output.catch((error) => {
     subagentError = error
     return null
   })
 
-  await Promise.all([toolCalls, nestedSubagents, messages])
+  await Promise.all([toolCalls, nestedSubagents, messages, values])
 
   if (subagentError) {
     queue.push({
@@ -722,14 +901,19 @@ async function pumpSubagent(
 }
 
 async function pumpSubagents(
-  subagents: AsyncIterable<unknown>,
-  queue: AgentEventQueue
+  subagents: AsyncIterable<unknown> | undefined,
+  queue: AgentEventQueue,
+  parentTaskId?: string
 ) {
+  if (!subagents) {
+    return
+  }
+
   const pending: Promise<void>[] = []
 
   for await (const rawSubagent of subagents) {
-    const subagent = rawSubagent as Parameters<typeof pumpSubagent>[0]
-    pending.push(pumpSubagent(subagent, queue))
+    const subagent = rawSubagent as DeepAgentsSubagentStream
+    pending.push(pumpSubagent(subagent, queue, parentTaskId))
   }
 
   await Promise.all(pending)
@@ -756,12 +940,19 @@ async function* streamDeepAgentsRun({
       reasoningEffort ?? DEFAULT_CHAT_REASONING_EFFORT
     )
     const modelverseApiKey = getStudioModelverseApiKey()?.key ?? null
+    const queue = new AgentEventQueue()
     const nativeTools = createNativeTools({
       environment,
       modelverseApiKey,
       sessionId,
     })
-    const queue = new AgentEventQueue()
+    nativeTools.push(
+      createRequestUserInputTool({
+        emit: (event) => queue.push(event),
+        sessionId,
+        signal,
+      })
+    )
     const permissionContext: PermissionGatewayContext = {
       sessionId,
       permissionMode: session?.permissionMode ?? "ask",
@@ -816,6 +1007,9 @@ async function* streamDeepAgentsRun({
         agentTool.name === "studio_generate_image" ||
         agentTool.name === "studio_generate_video"
     )
+    const hasUserInputRequest = tools.some(
+      (agentTool) => agentTool.name === "request_user_input"
+    )
     const skillsMiddleware = createStudioSkillsMiddleware({
       sessionId,
       modelverseApiKey,
@@ -834,6 +1028,7 @@ async function* streamDeepAgentsRun({
         hasWebFetch,
         hasWebSearch,
         hasMediaGeneration,
+        hasUserInputRequest,
         localRootDir,
         sessionFilesManifest:
           environment === "remote"
@@ -904,6 +1099,7 @@ async function* streamDeepAgentsRun({
 
     throw error
   } finally {
+    cancelSessionUserInputs(sessionId)
     await mcpToolClient?.close().catch((error) => {
       console.warn("[studio-mcp] close_failed", error)
     })

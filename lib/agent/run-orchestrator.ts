@@ -18,6 +18,7 @@ import type {
   StudioMessageStatus,
 } from "@/lib/studio-types"
 import type { AgentEvent } from "@/lib/agent/events"
+import { getAgentRuntimeProviderMetadata } from "@/lib/agent/provider-metadata"
 import type { AgentRunInput, AgentRuntime } from "@/lib/agent/runtime"
 
 const STUDIO_CHAT_DEBUG = process.env.ASTRAFLOW_STUDIO_CHAT_DEBUG === "1"
@@ -382,6 +383,8 @@ function getProviderRefForAgentEvent(event: AgentEvent) {
       return event.taskId
     case "permission_request":
       return event.requestId
+    case "user_input_request":
+      return event.requestId
     case "media_generation":
       return event.generationId
     case "file_change":
@@ -414,15 +417,27 @@ function recordStructuredAgentEvent({
   }
 
   try {
+    const metadata = getAgentRuntimeProviderMetadata(runtimeId)
+    const trace = event.trace
+
     recordStudioAgentProviderEvent({
       sessionId,
       runId,
       assistantMessageId,
       runtimeId,
-      provider: runtimeId,
+      provider: trace?.provider ?? metadata?.provider ?? runtimeId,
       direction: "output",
       eventType: event.type,
       providerRef: getProviderRefForAgentEvent(event),
+      providerSessionId:
+        trace?.providerSessionId ??
+        (event.type === "run_meta" ? (event.sessionRef ?? null) : null),
+      threadId: trace?.threadId ?? null,
+      turnId: trace?.turnId ?? null,
+      itemId: trace?.itemId ?? null,
+      parentThreadId: trace?.parentThreadId ?? null,
+      schemaVersion: metadata?.schemaVersion ?? null,
+      packageVersion: metadata?.packageVersion ?? null,
       payload: event,
     })
   } catch (error) {
@@ -500,6 +515,10 @@ function toStoppedSnapshot(snapshot: ChatStreamSnapshot): ChatStreamSnapshot {
         return { ...part, status: "cancelled" as const }
       }
 
+      if (part.type === "user_input" && part.status === "pending") {
+        return { ...part, status: "cancelled" as const }
+      }
+
       if (part.type === "subagent") {
         return stopSubagentPart(part)
       }
@@ -512,6 +531,7 @@ function toStoppedSnapshot(snapshot: ChatStreamSnapshot): ChatStreamSnapshot {
         part.type === "reasoning" ||
         part.type === "plan" ||
         part.type === "permission" ||
+        part.type === "user_input" ||
         part.type === "subagent" ||
         part.type === "file" ||
         part.type === "media_generation"
@@ -1068,6 +1088,54 @@ function createSnapshotAccumulator() {
     return true
   }
 
+  function upsertUserInputPart(
+    event: Extract<AgentEvent, { type: "user_input_request" }>
+  ) {
+    markReasoningDone()
+
+    const existingIndex = snapshot.parts.findIndex(
+      (part) => part.type === "user_input" && part.id === event.requestId
+    )
+    const existingPart =
+      existingIndex >= 0 ? snapshot.parts[existingIndex] : null
+    const questions =
+      event.questions ??
+      (existingPart?.type === "user_input" ? existingPart.questions : [])
+    const answers =
+      event.answers ??
+      (existingPart?.type === "user_input" ? existingPart.answers : [])
+    const status =
+      event.status === "resolved"
+        ? answers.length > 0
+          ? ("answered" as const)
+          : ("cancelled" as const)
+        : ("pending" as const)
+    const part: StudioMessagePart = {
+      id: event.requestId,
+      type: "user_input",
+      status,
+      questions,
+      answers,
+      autoResolutionMs:
+        event.autoResolutionMs ??
+        (existingPart?.type === "user_input"
+          ? existingPart.autoResolutionMs
+          : null),
+    }
+
+    snapshot = {
+      ...snapshot,
+      parts:
+        existingIndex >= 0
+          ? snapshot.parts.map((candidate, index) =>
+              index === existingIndex ? part : candidate
+            )
+          : [...snapshot.parts, part],
+    }
+
+    return true
+  }
+
   function handleEvent(event: AgentEvent) {
     switch (event.type) {
       case "reasoning_delta":
@@ -1252,6 +1320,8 @@ function createSnapshotAccumulator() {
         return upsertMediaGenerationPart(event)
       case "permission_request":
         return upsertPermissionPart(event)
+      case "user_input_request":
+        return upsertUserInputPart(event)
       case "run_meta":
         debugIgnoredAgentEvent("run_meta_ignored", {
           sessionRef: event.sessionRef,
@@ -1305,6 +1375,10 @@ function createSnapshotAccumulator() {
       }
 
       if (part.type === "permission" && part.status === "pending") {
+        return { ...part, status: "cancelled" as const }
+      }
+
+      if (part.type === "user_input" && part.status === "pending") {
         return { ...part, status: "cancelled" as const }
       }
 

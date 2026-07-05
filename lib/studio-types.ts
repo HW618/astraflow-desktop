@@ -22,6 +22,13 @@ export type StudioAgentProviderEvent = {
   direction: StudioAgentProviderEventDirection
   eventType: string
   providerRef: string | null
+  providerSessionId: string | null
+  threadId: string | null
+  turnId: string | null
+  itemId: string | null
+  parentThreadId: string | null
+  schemaVersion: string | null
+  packageVersion: string | null
   payload: unknown
   createdAt: string
 }
@@ -39,6 +46,7 @@ export type StudioMessageActivity = {
 export type StudioMessageTodo = {
   text: string
   status: "pending" | "in_progress" | "completed"
+  priority?: string | null
 }
 
 export type StudioMediaGenerationStatus =
@@ -67,6 +75,29 @@ export type StudioPermissionOption = {
   optionId: string
   name: string
   kind: string
+  _meta?: Record<string, unknown> | null
+}
+
+export type StudioUserInputOption = {
+  optionId: string
+  label: string
+  description: string
+}
+
+export type StudioUserInputQuestion = {
+  id: string
+  header: string
+  question: string
+  options: StudioUserInputOption[]
+  allowOther: boolean
+  isSecret: boolean
+}
+
+export type StudioUserInputAnswer = {
+  questionId: string
+  optionId: string | null
+  label: string | null
+  text: string
 }
 
 export type StudioMessagePart =
@@ -141,6 +172,14 @@ export type StudioMessagePart =
       status: "pending" | "approved" | "denied" | "cancelled"
       options: StudioPermissionOption[]
       selectedOptionId: string | null
+    }
+  | {
+      id: string
+      type: "user_input"
+      status: "pending" | "answered" | "cancelled"
+      questions: StudioUserInputQuestion[]
+      answers: StudioUserInputAnswer[]
+      autoResolutionMs: number | null
     }
 
 export type StudioAttachmentKind = "image" | "file"

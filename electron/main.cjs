@@ -23,6 +23,7 @@ const { randomBytes } = require("node:crypto")
 const { get } = require("node:http")
 const { createServer } = require("node:net")
 const { homedir } = require("node:os")
+const { fileURLToPath } = require("node:url")
 const {
   basename,
   dirname,
@@ -724,7 +725,7 @@ function readSidePanelTextFile(filePath) {
     throw new Error("File path is required.")
   }
 
-  const resolved = resolve(filePath)
+  const resolved = resolveSidePanelFilePath(filePath)
   const stats = statSync(resolved)
 
   if (!stats.isFile()) {
@@ -748,6 +749,24 @@ function readSidePanelTextFile(filePath) {
   }
 }
 
+function resolveSidePanelFilePath(filePath) {
+  const trimmedPath = filePath.trim()
+
+  if (trimmedPath.startsWith("/api/") || /^https?:\/\//i.test(trimmedPath)) {
+    throw new Error("Selected target is not a local file.")
+  }
+
+  if (/^[a-z][a-z\d+.-]*:/i.test(trimmedPath)) {
+    if (trimmedPath.startsWith("file://")) {
+      return fileURLToPath(trimmedPath)
+    }
+
+    throw new Error("Selected target is not a local file.")
+  }
+
+  return resolve(trimmedPath)
+}
+
 function getSidePanelMimeType(filePath) {
   const extension = extname(filePath).replace(/^\./, "").toLowerCase()
   const mimeTypes = {
@@ -769,7 +788,7 @@ function readSidePanelDataUrlFile(filePath) {
     throw new Error("File path is required.")
   }
 
-  const resolved = resolve(filePath)
+  const resolved = resolveSidePanelFilePath(filePath)
   const stats = statSync(resolved)
 
   if (!stats.isFile()) {
@@ -799,8 +818,12 @@ function showSidePanelPathInFolder(path) {
     return false
   }
 
-  shell.showItemInFolder(resolve(path))
-  return true
+  try {
+    shell.showItemInFolder(resolveSidePanelFilePath(path))
+    return true
+  } catch {
+    return false
+  }
 }
 
 async function clearSidePanelBrowserData() {

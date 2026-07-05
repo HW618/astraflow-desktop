@@ -96,6 +96,7 @@ import {
   AssistantReasoning,
   MessagePartsRenderer,
   PendingPermissionApprovalPanel,
+  PendingUserInputPanel,
   hasRenderableReasoningParts,
 } from "@/components/studio-message-parts-renderer"
 import {
@@ -134,6 +135,7 @@ import type {
   StudioPermissionMode,
   StudioPermissionOption,
   StudioSession,
+  StudioUserInputAnswer,
 } from "@/lib/studio-types"
 import {
   dispatchStudioSessionsChanged,
@@ -446,8 +448,16 @@ function formatSidePanelFileSize(bytes: number | null | undefined) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+function isVirtualSidePanelPath(path: string) {
+  return path.startsWith("/api/") || /^https?:\/\//i.test(path)
+}
+
 function isLikelyTextEntry(entry: AstraFlowSidePanelDirectoryEntry) {
   if (entry.kind !== "file") {
+    return false
+  }
+
+  if (isVirtualSidePanelPath(entry.path)) {
     return false
   }
 
@@ -455,7 +465,11 @@ function isLikelyTextEntry(entry: AstraFlowSidePanelDirectoryEntry) {
 }
 
 function isImageEntry(entry: AstraFlowSidePanelDirectoryEntry) {
-  return entry.kind === "file" && IMAGE_FILE_EXTENSIONS.has(entry.extension)
+  return (
+    entry.kind === "file" &&
+    !isVirtualSidePanelPath(entry.path) &&
+    IMAGE_FILE_EXTENSIONS.has(entry.extension)
+  )
 }
 
 function isPreviewableSidePanelEntry(entry: AstraFlowSidePanelDirectoryEntry) {
@@ -670,6 +684,10 @@ function getMarkdownTargetFilePath(href: string) {
     return null
   }
 
+  if (trimmedHref.startsWith("/api/")) {
+    return null
+  }
+
   if (trimmedHref.startsWith("file://")) {
     try {
       return decodeURIComponent(new URL(trimmedHref).pathname)
@@ -690,6 +708,10 @@ function getMarkdownTargetBrowserUrl(href: string) {
 
   if (!trimmedHref) {
     return null
+  }
+
+  if (trimmedHref.startsWith("/api/")) {
+    return new URL(trimmedHref, window.location.href).toString()
   }
 
   try {
@@ -1374,6 +1396,21 @@ async function sendPermissionDecision(input: {
   return readJson<{ resolved: boolean }>(response)
 }
 
+async function sendUserInputDecision(input: {
+  sessionId: string
+  requestId: string
+  answers: StudioUserInputAnswer[]
+  cancelled?: boolean
+}) {
+  const response = await fetch("/api/studio/chat/user-input", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  })
+
+  return readJson<{ resolved: boolean }>(response)
+}
+
 async function listMessages(sessionId: string) {
   const response = await fetch(`/api/studio/sessions/${sessionId}/messages`)
 
@@ -1640,6 +1677,42 @@ function getPendingPermissionPart(messages: StudioMessage[]) {
   return null
 }
 
+function getPendingUserInputPart(messages: StudioMessage[]) {
+  for (
+    let messageIndex = messages.length - 1;
+    messageIndex >= 0;
+    messageIndex -= 1
+  ) {
+    const message = messages[messageIndex]
+
+    for (
+      let partIndex = message.parts.length - 1;
+      partIndex >= 0;
+      partIndex -= 1
+    ) {
+      const part = message.parts[partIndex]
+
+      if (part.type === "user_input" && part.status === "pending") {
+        return part
+      }
+    }
+  }
+
+  return null
+}
+
+function hasActiveMediaGenerationPart(messages: StudioMessage[]) {
+  return messages.some((message) =>
+    message.parts.some(
+      (part) =>
+        part.type === "media_generation" &&
+        (part.status === "queued" ||
+          part.status === "running" ||
+          part.status === "polling")
+    )
+  )
+}
+
 function StudioChatWorkbench({
   sessionId,
   onSessionChange,
@@ -1711,6 +1784,14 @@ function StudioChatWorkbench({
   )
   const pendingPermissionPart = React.useMemo(
     () => getPendingPermissionPart(visibleMessages),
+    [visibleMessages]
+  )
+  const pendingUserInputPart = React.useMemo(
+    () => getPendingUserInputPart(visibleMessages),
+    [visibleMessages]
+  )
+  const hasActiveMediaGeneration = React.useMemo(
+    () => hasActiveMediaGenerationPart(visibleMessages),
     [visibleMessages]
   )
   const resolvedRuntimeId = resolveChatRuntimeId(
@@ -2215,6 +2296,40 @@ function StudioChatWorkbench({
     sessionId,
   ])
 
+  React.useEffect(() => {
+    if (!sessionId || !hasActiveMediaGeneration) {
+      return
+    }
+
+    let cancelled = false
+    const poll = () => {
+      void reloadMessages(sessionId)
+        .then((nextMessages) => {
+          if (cancelled) {
+            return
+          }
+
+          if (!hasActiveMediaGenerationPart(nextMessages)) {
+            onSessionsChange()
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setLoadFailed(true)
+          }
+        })
+    }
+
+    const timer = window.setInterval(poll, 3000)
+
+    poll()
+
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [hasActiveMediaGeneration, onSessionsChange, reloadMessages, sessionId])
+
   const handleLiveSnapshot = React.useCallback(
     (snapshot: StudioChatRunLiveSnapshot) => {
       if (sessionIdRef.current !== snapshot.sessionId) {
@@ -2497,6 +2612,48 @@ function StudioChatWorkbench({
         feedback,
       }).catch(() => {
         toast.error(t.studioPermissionDecisionFailed)
+        void reloadMessages(sessionId)
+      })
+    },
+    [reloadMessages, sessionId, t]
+  )
+
+  const handleUserInputDecision = React.useCallback(
+    (
+      requestId: string,
+      answers: StudioUserInputAnswer[],
+      status: Extract<StudioMessagePart, { type: "user_input" }>["status"]
+    ) => {
+      if (!sessionId) {
+        return
+      }
+
+      setMessages((currentMessages) =>
+        currentMessages.map((message) =>
+          message.sessionId !== sessionId
+            ? message
+            : {
+                ...message,
+                parts: message.parts.map((part) =>
+                  part.type === "user_input" && part.id === requestId
+                    ? {
+                        ...part,
+                        status,
+                        answers,
+                      }
+                    : part
+                ),
+              }
+        )
+      )
+
+      void sendUserInputDecision({
+        sessionId,
+        requestId,
+        answers,
+        cancelled: status === "cancelled",
+      }).catch(() => {
+        toast.error(t.requestFailed)
         void reloadMessages(sessionId)
       })
     },
@@ -2806,7 +2963,13 @@ function StudioChatWorkbench({
         {hasMessages ? (
           <div className="shrink-0 px-8 pb-5">
             <div className="mx-auto flex w-full max-w-5xl flex-col gap-2">
-              {pendingPermissionPart ? (
+              {pendingUserInputPart ? (
+                <PendingUserInputPanel
+                  key={pendingUserInputPart.id}
+                  part={pendingUserInputPart}
+                  onDecision={handleUserInputDecision}
+                />
+              ) : pendingPermissionPart ? (
                 <PendingPermissionApprovalPanel
                   part={pendingPermissionPart}
                   onDecision={handlePermissionDecision}
@@ -5881,6 +6044,7 @@ function MessageVersionsDialog({
             content={activeVersion.content}
             activities={activeVersion.activities}
             parts={activeVersion.parts}
+            sessionId={activeVersion.sessionId}
           />
         </div>
       </DialogContent>
@@ -5932,6 +6096,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
             content={message.content}
             activities={message.activities}
             parts={message.parts}
+            sessionId={message.sessionId}
             streaming={isStreaming}
           />
         )}

@@ -9,17 +9,21 @@ import {
   RiCloseLine,
   RiCodeLine,
   RiDeleteBinLine,
+  RiDownloadLine,
   RiExternalLinkLine,
   RiFileAddLine,
   RiFileEditLine,
   RiFileTextLine,
   RiImageLine,
+  RiQuestionLine,
   RiRobot2Line,
+  RiSaveLine,
   RiSearchLine,
   RiSparklingLine,
   RiTerminalLine,
   RiVideoLine,
 } from "@remixicon/react"
+import { toast } from "sonner"
 
 import { Shimmer } from "@/components/ai-elements/shimmer"
 import {
@@ -48,11 +52,15 @@ import type {
   StudioMessageActivity,
   StudioMessagePart,
   StudioPermissionOption,
+  StudioUserInputAnswer,
+  StudioUserInputOption,
 } from "@/lib/studio-types"
 import { cn } from "@/lib/utils"
 
 type StudioPermissionPart = Extract<StudioMessagePart, { type: "permission" }>
 type StudioPermissionStatus = StudioPermissionPart["status"]
+type StudioUserInputPart = Extract<StudioMessagePart, { type: "user_input" }>
+type StudioUserInputStatus = StudioUserInputPart["status"]
 type StudioSubagentPart = Extract<StudioMessagePart, { type: "subagent" }>
 type StudioFilePart = Extract<StudioMessagePart, { type: "file" }>
 type StudioMediaGenerationPart = Extract<
@@ -97,6 +105,8 @@ const skillToolNames = new Set([
 ])
 
 const mediaToolNames = new Set([
+  "studio_list_image_models",
+  "studio_list_video_models",
   "studio_list_media_generation_models",
   "studio_list_media_generations",
   "studio_get_media_generation",
@@ -472,6 +482,289 @@ export function PendingPermissionApprovalPanel({
           className="h-8 rounded-full bg-foreground px-4 text-xs text-background hover:bg-foreground/85"
           disabled={!selectedOption}
           onClick={() => submitOption(selectedOption)}
+        >
+          {t.studioPermissionSubmit}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+const USER_INPUT_OTHER_OPTION_ID = "__other__"
+
+type UserInputSelection = {
+  optionId: string
+  text: string
+}
+
+function getDefaultUserInputOption(options: StudioUserInputOption[]) {
+  return options[0] ?? null
+}
+
+function getUserInputCopy(t: ReturnType<typeof useI18n>["t"]) {
+  const isZh = t.studioThinking === "正在思考"
+
+  return isZh
+    ? {
+        title: "请选择后继续",
+        description: "AstraFlow 需要你确认一个偏好后继续。",
+        other: "其他",
+        otherPlaceholder: "输入你的选择",
+        skip: "取消",
+      }
+    : {
+        title: "Choose before continuing",
+        description: "AstraFlow needs one preference before it continues.",
+        other: "Other",
+        otherPlaceholder: "Type your choice",
+        skip: "Cancel",
+      }
+}
+
+function createUserInputSelections(
+  part: StudioUserInputPart
+): Record<string, UserInputSelection> {
+  return Object.fromEntries(
+    part.questions.map((question) => {
+      const defaultOption = getDefaultUserInputOption(question.options)
+
+      return [
+        question.id,
+        {
+          optionId:
+            defaultOption?.optionId ??
+            (question.allowOther ? USER_INPUT_OTHER_OPTION_ID : ""),
+          text: "",
+        },
+      ]
+    })
+  )
+}
+
+export function PendingUserInputPanel({
+  part,
+  onDecision,
+}: {
+  part: StudioUserInputPart
+  onDecision: (
+    requestId: string,
+    answers: StudioUserInputAnswer[],
+    status: StudioUserInputStatus
+  ) => void
+}) {
+  const { t } = useI18n()
+  const copy = getUserInputCopy(t)
+  const [selections, setSelections] = React.useState(() =>
+    createUserInputSelections(part)
+  )
+
+  function updateSelection(questionId: string, selection: UserInputSelection) {
+    setSelections((current) => ({
+      ...current,
+      [questionId]: selection,
+    }))
+  }
+
+  function buildAnswers() {
+    return part.questions
+      .map((question) => {
+        const selection = selections[question.id]
+        const isOther = selection?.optionId === USER_INPUT_OTHER_OPTION_ID
+        const option = isOther
+          ? null
+          : question.options.find(
+              (candidate) => candidate.optionId === selection?.optionId
+            ) ?? null
+        const text = isOther ? selection.text.trim() : (option?.label ?? "")
+
+        if (!text) {
+          return null
+        }
+
+        return {
+          questionId: question.id,
+          optionId: option?.optionId ?? null,
+          label: option?.label ?? null,
+          text,
+        } satisfies StudioUserInputAnswer
+      })
+      .filter((answer): answer is StudioUserInputAnswer => Boolean(answer))
+  }
+
+  const answers = buildAnswers()
+  const canSubmit = answers.length === part.questions.length
+
+  return (
+    <div className="animate-in rounded-3xl border bg-background/98 p-3 shadow-xl ring-1 shadow-foreground/10 ring-foreground/5 duration-200 fade-in-0 zoom-in-95 slide-in-from-bottom-2">
+      <div className="flex min-w-0 items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-sm leading-5 font-semibold text-foreground">
+            {copy.title}
+          </h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {copy.description}
+          </p>
+        </div>
+        <Badge
+          variant="outline"
+          className="h-6 shrink-0 rounded-full px-2 text-xs"
+        >
+          request_user_input
+        </Badge>
+      </div>
+
+      <div className="mt-3 space-y-3">
+        {part.questions.map((question) => {
+          const selection = selections[question.id] ?? {
+            optionId: "",
+            text: "",
+          }
+
+          return (
+            <section key={question.id} className="space-y-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground">
+                  <RiQuestionLine aria-hidden className="size-3.5" />
+                </span>
+                <div className="min-w-0">
+                  <div className="text-xs font-medium text-muted-foreground">
+                    {question.header}
+                  </div>
+                  <div className="text-sm font-semibold text-foreground">
+                    {question.question}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1 rounded-2xl bg-muted/45 p-1">
+                {question.options.map((option, index) => {
+                  const selected = selection.optionId === option.optionId
+
+                  return (
+                    <button
+                      key={option.optionId}
+                      type="button"
+                      aria-pressed={selected}
+                      title={option.description || option.label}
+                      className={cn(
+                        "flex min-h-10 w-full min-w-0 items-center gap-2.5 rounded-xl px-2.5 text-left text-sm transition-all duration-150",
+                        selected
+                          ? "bg-background text-foreground shadow-sm ring-1 ring-border/70"
+                          : "text-muted-foreground hover:-translate-y-px hover:bg-background/70 hover:text-foreground"
+                      )}
+                      onClick={() =>
+                        updateSelection(question.id, {
+                          optionId: option.optionId,
+                          text: selection.text,
+                        })
+                      }
+                    >
+                      <span
+                        className={cn(
+                          "flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold transition-colors",
+                          selected
+                            ? "bg-foreground text-background"
+                            : "bg-background text-muted-foreground ring-1 ring-border"
+                        )}
+                      >
+                        {index + 1}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate">{option.label}</span>
+                        {option.description ? (
+                          <span className="block truncate text-xs text-muted-foreground">
+                            {option.description}
+                          </span>
+                        ) : null}
+                      </span>
+                    </button>
+                  )
+                })}
+
+                {question.allowOther ? (
+                  <div
+                    role="button"
+                    aria-pressed={
+                      selection.optionId === USER_INPUT_OTHER_OPTION_ID
+                    }
+                    tabIndex={0}
+                    className={cn(
+                      "flex min-h-10 w-full min-w-0 items-center gap-2.5 rounded-xl px-2.5 text-left transition-all duration-150",
+                      selection.optionId === USER_INPUT_OTHER_OPTION_ID
+                        ? "bg-background text-foreground shadow-sm ring-1 ring-border/70"
+                        : "text-muted-foreground hover:-translate-y-px hover:bg-background/70 hover:text-foreground"
+                    )}
+                    onClick={() =>
+                      updateSelection(question.id, {
+                        optionId: USER_INPUT_OTHER_OPTION_ID,
+                        text: selection.text,
+                      })
+                    }
+                    onKeyDown={(event) => {
+                      if (event.target !== event.currentTarget) {
+                        return
+                      }
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault()
+                        updateSelection(question.id, {
+                          optionId: USER_INPUT_OTHER_OPTION_ID,
+                          text: selection.text,
+                        })
+                      }
+                    }}
+                  >
+                    <span
+                      className={cn(
+                        "flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold transition-colors",
+                        selection.optionId === USER_INPUT_OTHER_OPTION_ID
+                          ? "bg-foreground text-background"
+                          : "bg-background text-muted-foreground ring-1 ring-border"
+                      )}
+                    >
+                      {question.options.length + 1}
+                    </span>
+                    <input
+                      type={question.isSecret ? "password" : "text"}
+                      value={selection.text}
+                      placeholder={`${copy.other}: ${copy.otherPlaceholder}`}
+                      className="h-8 min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
+                      onFocus={() =>
+                        updateSelection(question.id, {
+                          optionId: USER_INPUT_OTHER_OPTION_ID,
+                          text: selection.text,
+                        })
+                      }
+                      onChange={(event) =>
+                        updateSelection(question.id, {
+                          optionId: USER_INPUT_OTHER_OPTION_ID,
+                          text: event.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                ) : null}
+              </div>
+            </section>
+          )
+        })}
+      </div>
+
+      <div className="mt-2.5 flex items-center justify-end gap-2">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-8 rounded-full px-3 text-xs text-muted-foreground"
+          onClick={() => onDecision(part.id, [], "cancelled")}
+        >
+          {copy.skip}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          className="h-8 rounded-full bg-foreground px-4 text-xs text-background hover:bg-foreground/85"
+          disabled={!canSubmit}
+          onClick={() => onDecision(part.id, answers, "answered")}
         >
           {t.studioPermissionSubmit}
         </Button>
@@ -878,16 +1171,32 @@ function getActivityLabel(
       : t.studioToolLoadedSkill(slug)
   }
 
-  if (activity.toolName === "studio_list_media_generation_models") {
+  if (
+    activity.toolName === "studio_list_image_models" ||
+    activity.toolName === "studio_list_video_models" ||
+    activity.toolName === "studio_list_media_generation_models"
+  ) {
     const isZh = isZhLocale(t)
+    const label =
+      activity.toolName === "studio_list_image_models"
+        ? isZh
+          ? "图像模型"
+          : "image models"
+        : activity.toolName === "studio_list_video_models"
+          ? isZh
+            ? "视频模型"
+            : "video models"
+          : isZh
+            ? "媒体模型"
+            : "media models"
 
     return activity.status === "running"
       ? isZh
-        ? "正在查看媒体模型"
-        : "Listing media models"
+        ? `正在查看${label}`
+        : `Listing ${label}`
       : isZh
-        ? "已查看媒体模型"
-        : "Listed media models"
+        ? `已查看${label}`
+        : `Listed ${label}`
   }
 
   if (
@@ -1352,20 +1661,20 @@ function ToolActivityDetails({
   )
 }
 
-function useLazyToolActivityDetails(defaultOpen: boolean, activityId: string) {
-  const previousActivityIdRef = React.useRef(activityId)
+function useLazyToolActivityDetails(defaultOpen: boolean, resetKey: string) {
+  const previousResetKeyRef = React.useRef(resetKey)
   const [open, setOpen] = React.useState(defaultOpen)
   const [hasOpened, setHasOpened] = React.useState(defaultOpen)
 
   React.useEffect(() => {
-    if (previousActivityIdRef.current === activityId) {
+    if (previousResetKeyRef.current === resetKey) {
       return
     }
 
-    previousActivityIdRef.current = activityId
+    previousResetKeyRef.current = resetKey
     setOpen(defaultOpen)
     setHasOpened(defaultOpen)
-  }, [activityId, defaultOpen])
+  }, [defaultOpen, resetKey])
 
   const handleOpenChange = React.useCallback((nextOpen: boolean) => {
     setOpen(nextOpen)
@@ -1390,10 +1699,9 @@ function InlineToolActivity({
   leftIcon: React.ReactNode
 }) {
   const { t } = useI18n()
-  const defaultOpen =
-    activity.status === "running" || activity.status === "error"
+  const defaultOpen = activity.status === "error"
   const { open, onOpenChange, shouldRenderDetails } =
-    useLazyToolActivityDetails(defaultOpen, activity.id)
+    useLazyToolActivityDetails(defaultOpen, `${activity.id}:${activity.status}`)
 
   return (
     <ChainOfThought className={assistantTraceContainerClassName}>
@@ -1439,10 +1747,9 @@ function GenericToolActivity({
   activity: StudioMessageActivity
 }) {
   const { t } = useI18n()
-  const defaultOpen =
-    activity.status === "running" || activity.status === "error"
+  const defaultOpen = activity.status === "error"
   const { open, onOpenChange, shouldRenderDetails } =
-    useLazyToolActivityDetails(defaultOpen, activity.id)
+    useLazyToolActivityDetails(defaultOpen, `${activity.id}:${activity.status}`)
 
   return (
     <ChainOfThought className={assistantTraceContainerClassName}>
@@ -1546,10 +1853,9 @@ function RunCommandActivity({ activity }: { activity: StudioMessageActivity }) {
     activity.status === "error"
       ? getActivityFailureOutput(activity, t)
       : activity.output.trim()
-  const defaultOpen =
-    activity.status === "running" || activity.status === "error"
+  const defaultOpen = activity.status === "error"
   const { open, onOpenChange, shouldRenderDetails } =
-    useLazyToolActivityDetails(defaultOpen, activity.id)
+    useLazyToolActivityDetails(defaultOpen, `${activity.id}:${activity.status}`)
 
   return (
     <ChainOfThought className={assistantTraceContainerClassName}>
@@ -1599,10 +1905,9 @@ function RunCodeActivity({ activity }: { activity: StudioMessageActivity }) {
       : payload.autoPause
         ? t.studioToolAutoPause
         : t.studioToolKillAfterRun
-  const defaultOpen =
-    activity.status === "running" || activity.status === "error"
+  const defaultOpen = activity.status === "error"
   const { open, onOpenChange, shouldRenderDetails } =
-    useLazyToolActivityDetails(defaultOpen, activity.id)
+    useLazyToolActivityDetails(defaultOpen, `${activity.id}:${activity.status}`)
 
   return (
     <ChainOfThought className={assistantTraceContainerClassName}>
@@ -1688,16 +1993,9 @@ function SandboxHostActivity({
   activity: StudioMessageActivity
 }) {
   const { t } = useI18n()
-  const output =
-    activity.status === "error"
-      ? getActivityFailureOutput(activity, t)
-      : activity.output.trim()
-  const defaultOpen =
-    activity.status === "running" ||
-    activity.status === "error" ||
-    Boolean(output)
+  const defaultOpen = activity.status === "error"
   const { open, onOpenChange, shouldRenderDetails } =
-    useLazyToolActivityDetails(defaultOpen, activity.id)
+    useLazyToolActivityDetails(defaultOpen, `${activity.id}:${activity.status}`)
 
   return (
     <ChainOfThought className={assistantTraceContainerClassName}>
@@ -2057,6 +2355,188 @@ function getMediaGenerationLabel(
   return isZh ? `已生成${media}` : `Generated ${media}`
 }
 
+function withDownloadParam(href: string) {
+  try {
+    const url = new URL(href, window.location.href)
+    url.searchParams.set("download", "1")
+
+    return href.startsWith("/") ? `${url.pathname}${url.search}` : url.toString()
+  } catch {
+    const separator = href.includes("?") ? "&" : "?"
+    return `${href}${separator}download=1`
+  }
+}
+
+function getMediaOutputExtension(
+  kind: StudioMediaGenerationPart["kind"],
+  mimeType: string | null
+) {
+  if (mimeType === "image/jpeg") return "jpg"
+  if (mimeType === "image/webp") return "webp"
+  if (mimeType === "image/gif") return "gif"
+  if (mimeType === "video/webm") return "webm"
+  if (mimeType === "video/quicktime") return "mov"
+
+  return kind === "image" ? "png" : "mp4"
+}
+
+function getMediaOutputSaveUrl(
+  kind: StudioMediaGenerationPart["kind"],
+  outputId: string
+) {
+  const segment = kind === "image" ? "image-outputs" : "video-outputs"
+
+  return `/api/studio/${segment}/${encodeURIComponent(outputId)}/save`
+}
+
+function MediaOutputActions({
+  kind,
+  output,
+}: {
+  kind: StudioMediaGenerationPart["kind"]
+  output: StudioMediaGenerationPart["outputs"][number]
+}) {
+  const { t } = useI18n()
+  const [saving, setSaving] = React.useState(false)
+  const [saved, setSaved] = React.useState(Boolean(output.storagePath))
+  const downloadUrl = withDownloadParam(output.contentUrl)
+  const filename = `${kind}-${output.index + 1}-${output.id}.${getMediaOutputExtension(
+    kind,
+    output.mimeType
+  )}`
+
+  async function handleSave(event: React.MouseEvent<HTMLButtonElement>) {
+    event.preventDefault()
+    event.stopPropagation()
+
+    if (saving || saved) {
+      return
+    }
+
+    setSaving(true)
+
+    try {
+      const response = await fetch(getMediaOutputSaveUrl(kind, output.id), {
+        method: "POST",
+      })
+      const payload = (await response.json().catch(() => null)) as {
+        error?: string
+      } | null
+
+      if (!response.ok) {
+        throw new Error(payload?.error ?? t.requestFailed)
+      }
+
+      setSaved(true)
+      toast.success(t.studioImageSaved)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t.requestFailed)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="absolute top-2 right-2 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+      <Button
+        asChild
+        variant="secondary"
+        size="icon-sm"
+        className="size-8 rounded-full bg-background/90 text-muted-foreground shadow-sm hover:bg-background hover:text-foreground"
+        aria-label={t.fileLibraryDownload}
+        title={t.fileLibraryDownload}
+      >
+        <a
+          href={downloadUrl}
+          download={filename}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <RiDownloadLine aria-hidden className="size-4" />
+        </a>
+      </Button>
+      <Button
+        type="button"
+        variant="secondary"
+        size="icon-sm"
+        className="size-8 rounded-full bg-background/90 text-muted-foreground shadow-sm hover:bg-background hover:text-foreground"
+        aria-label={saved ? t.studioImageSaved : t.studioImageSave}
+        title={saved ? t.studioImageSaved : t.studioImageSave}
+        disabled={saving || saved}
+        onClick={handleSave}
+      >
+        {saved ? (
+          <RiCheckLine aria-hidden className="size-4" />
+        ) : (
+          <RiSaveLine aria-hidden className="size-4" />
+        )}
+      </Button>
+      <Button
+        asChild
+        variant="secondary"
+        size="icon-sm"
+        className="size-8 rounded-full bg-background/90 text-muted-foreground shadow-sm hover:bg-background hover:text-foreground"
+        aria-label={t.codeboxOpen}
+        title={t.codeboxOpen}
+      >
+        <a
+          href={output.contentUrl}
+          target="_blank"
+          rel="noreferrer"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <RiExternalLinkLine aria-hidden className="size-4" />
+        </a>
+      </Button>
+    </div>
+  )
+}
+
+function getMediaUrlMapKeys(url: string) {
+  const keys = [url]
+
+  try {
+    const baseUrl =
+      typeof window === "undefined" ? "http://localhost" : window.location.href
+    const parsed = new URL(url, baseUrl)
+
+    keys.push(parsed.toString(), `${parsed.origin}${parsed.pathname}`)
+
+    if (url.startsWith("/")) {
+      keys.push(parsed.pathname)
+    }
+  } catch {
+    // Use the raw URL only.
+  }
+
+  return keys
+}
+
+function createMediaUrlMap(parts: StudioMessagePart[]) {
+  const urlMap: Record<string, string> = {}
+
+  for (const part of parts) {
+    if (part.type !== "media_generation") {
+      continue
+    }
+
+    for (const output of part.outputs) {
+      for (const key of getMediaUrlMapKeys(output.contentUrl)) {
+        urlMap[key] = output.contentUrl
+      }
+
+      if (!output.url) {
+        continue
+      }
+
+      for (const key of getMediaUrlMapKeys(output.url)) {
+        urlMap[key] = output.contentUrl
+      }
+    }
+  }
+
+  return urlMap
+}
+
 function AssistantMediaGeneration({
   part,
 }: {
@@ -2077,6 +2557,10 @@ function AssistantMediaGeneration({
       : null
   const progressLabel =
     progress === null ? null : `${Math.round(progress * 100)}%`
+  const headerLabel =
+    part.status === "complete" || part.status === "partial"
+      ? part.modelName || label
+      : label
 
   return (
     <div
@@ -2102,10 +2586,7 @@ function AssistantMediaGeneration({
           )}
         </span>
         <span className="min-w-0 flex-1 truncate">
-          {running ? <Shimmer as="span">{label}</Shimmer> : label}
-        </span>
-        <span className="shrink-0 text-xs text-muted-foreground">
-          {part.modelName}
+          {running ? <Shimmer as="span">{headerLabel}</Shimmer> : headerLabel}
         </span>
       </div>
 
@@ -2144,35 +2625,37 @@ function AssistantMediaGeneration({
         {part.outputs.length > 0 ? (
           <div className="mt-2 grid gap-2 sm:grid-cols-2">
             {part.outputs.map((output) => (
-              <a
+              <div
                 key={output.id}
-                href={output.contentUrl}
-                target="_blank"
-                rel="noreferrer"
                 className="group relative block overflow-hidden rounded-lg border bg-background"
               >
-                {part.kind === "image" ? (
-                  <Image
-                    src={output.contentUrl}
-                    alt={part.prompt}
-                    className="aspect-video w-full object-cover"
-                    width={640}
-                    height={360}
-                    sizes="(min-width: 640px) 50vw, 100vw"
-                    unoptimized
-                  />
-                ) : (
-                  <video
-                    src={output.contentUrl}
-                    className="aspect-video w-full bg-black object-contain"
-                    controls
-                    preload="metadata"
-                  />
-                )}
-                <span className="absolute right-2 bottom-2 flex size-7 items-center justify-center rounded-full bg-background/90 text-muted-foreground opacity-0 shadow-sm ring-1 ring-border transition-opacity group-hover:opacity-100">
-                  <RiExternalLinkLine aria-hidden className="size-4" />
-                </span>
-              </a>
+                <a
+                  href={output.contentUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block"
+                >
+                  {part.kind === "image" ? (
+                    <Image
+                      src={output.contentUrl}
+                      alt={part.prompt}
+                      className="aspect-video w-full object-cover"
+                      width={640}
+                      height={360}
+                      sizes="(min-width: 640px) 50vw, 100vw"
+                      unoptimized
+                    />
+                  ) : (
+                    <video
+                      src={output.contentUrl}
+                      className="aspect-video w-full bg-black object-contain"
+                      controls
+                      preload="metadata"
+                    />
+                  )}
+                </a>
+                <MediaOutputActions kind={part.kind} output={output} />
+              </div>
             ))}
           </div>
         ) : null}
@@ -2191,11 +2674,13 @@ export const MessagePartsRenderer = React.memo(function MessagePartsRenderer({
   content,
   activities,
   parts,
+  sessionId,
   streaming = false,
 }: {
   content: string
   activities: StudioMessageActivity[]
   parts: StudioMessagePart[]
+  sessionId?: string | null
   streaming?: boolean
 }) {
   const renderableParts = getRenderableMessageParts({
@@ -2208,6 +2693,10 @@ export const MessagePartsRenderer = React.memo(function MessagePartsRenderer({
   )
   const lastReasoningPartIndex = renderableParts.findLastIndex(
     (part) => part.type === "reasoning" && part.content.trim()
+  )
+  const mediaUrlMap = React.useMemo(
+    () => createMediaUrlMap(renderableParts),
+    [renderableParts]
   )
 
   return (
@@ -2240,6 +2729,10 @@ export const MessagePartsRenderer = React.memo(function MessagePartsRenderer({
           return null
         }
 
+        if (part.type === "user_input") {
+          return null
+        }
+
         if (part.type === "subagent") {
           return <AssistantSubagent key={part.id} part={part} />
         }
@@ -2257,11 +2750,13 @@ export const MessagePartsRenderer = React.memo(function MessagePartsRenderer({
         }
 
         return (
-          <MessageContent
-            key={part.id}
-            markdown
-            streaming={streaming && index === lastTextPartIndex}
-            className={cn(
+            <MessageContent
+              key={part.id}
+              markdown
+              mediaSaveSessionId={sessionId}
+              mediaUrlMap={mediaUrlMap}
+              streaming={streaming && index === lastTextPartIndex}
+              className={cn(
               "bg-transparent p-0",
               markdownClassName,
               streaming &&

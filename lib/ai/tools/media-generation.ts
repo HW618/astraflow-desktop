@@ -332,6 +332,84 @@ export function createListStudioMediaGenerationModelsTool() {
   )
 }
 
+export function createListStudioImageModelsTool() {
+  return tool(
+    async ({ query, maxResults }) => {
+      const normalizedQuery = normalizeModelQuery(query)
+      const count = Math.min(Math.max(maxResults ?? 20, 1), 50)
+
+      return JSON.stringify(
+        {
+          models: imageModelRows(normalizedQuery, count),
+          note:
+            "Use modelName for generation. Pass operationId when selecting a non-default operation.",
+        },
+        null,
+        2
+      )
+    },
+    {
+      name: "studio_list_image_models",
+      description:
+        "List supported Studio image generation models and OpenAPI operation IDs available to chat agents.",
+      schema: z.object({
+        query: z
+          .string()
+          .trim()
+          .optional()
+          .describe("Optional case-insensitive model or operation filter."),
+        maxResults: z
+          .number()
+          .int()
+          .min(1)
+          .max(50)
+          .optional()
+          .default(20)
+          .describe("Maximum number of models to return."),
+      }),
+    }
+  )
+}
+
+export function createListStudioVideoModelsTool() {
+  return tool(
+    async ({ query, maxResults }) => {
+      const normalizedQuery = normalizeModelQuery(query)
+      const count = Math.min(Math.max(maxResults ?? 20, 1), 50)
+
+      return JSON.stringify(
+        {
+          models: videoModelRows(normalizedQuery, count),
+          note:
+            "Use modelName for generation. Pass operationId and openapiFile when selecting a non-default operation.",
+        },
+        null,
+        2
+      )
+    },
+    {
+      name: "studio_list_video_models",
+      description:
+        "List supported Studio video generation models and OpenAPI operation IDs available to chat agents.",
+      schema: z.object({
+        query: z
+          .string()
+          .trim()
+          .optional()
+          .describe("Optional case-insensitive model or operation filter."),
+        maxResults: z
+          .number()
+          .int()
+          .min(1)
+          .max(50)
+          .optional()
+          .default(20)
+          .describe("Maximum number of models to return."),
+      }),
+    }
+  )
+}
+
 export function createListStudioMediaGenerationsTool({
   apiKey,
   sessionId,

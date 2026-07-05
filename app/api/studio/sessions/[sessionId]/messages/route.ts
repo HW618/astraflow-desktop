@@ -15,6 +15,7 @@ import {
   parseDataUrl,
   writeStudioFile,
 } from "@/lib/studio-file-storage"
+import { syncStudioMessageMediaParts } from "@/lib/studio-message-media-sync"
 import type { StudioAttachment } from "@/lib/studio-types"
 
 export const runtime = "nodejs"
@@ -48,6 +49,29 @@ const permissionOptionSchema = z.object({
   optionId: z.string().trim().min(1).max(120),
   name: z.string().trim().min(1).max(200),
   kind: z.string().trim().min(1).max(80),
+  _meta: z.record(z.string(), z.unknown()).nullable().optional(),
+})
+
+const userInputOptionSchema = z.object({
+  optionId: z.string().trim().min(1).max(120),
+  label: z.string().trim().min(1).max(200),
+  description: z.string().trim().max(500).default(""),
+})
+
+const userInputQuestionSchema = z.object({
+  id: z.string().trim().min(1).max(120),
+  header: z.string().trim().min(1).max(80),
+  question: z.string().trim().min(1).max(1_000),
+  options: z.array(userInputOptionSchema).max(8).default([]),
+  allowOther: z.boolean().default(true),
+  isSecret: z.boolean().default(false),
+})
+
+const userInputAnswerSchema = z.object({
+  questionId: z.string().trim().min(1).max(120),
+  optionId: z.string().trim().min(1).max(120).nullable(),
+  label: z.string().trim().max(200).nullable(),
+  text: z.string().trim().max(2_000),
 })
 
 const mediaGenerationOutputSchema = z.object({
@@ -95,6 +119,7 @@ const messagePartSchema = z.discriminatedUnion("type", [
         z.object({
           text: z.string().trim().min(1).max(2_000),
           status: z.enum(["completed", "in_progress", "pending"]),
+          priority: z.string().trim().max(120).nullable().optional(),
         })
       )
       .max(120),
@@ -114,6 +139,7 @@ const messagePartSchema = z.discriminatedUnion("type", [
         z.object({
           text: z.string().trim().min(1).max(2_000),
           status: z.enum(["completed", "in_progress", "pending"]),
+          priority: z.string().trim().max(120).nullable().optional(),
         })
       )
       .max(120)
@@ -164,6 +190,14 @@ const messagePartSchema = z.discriminatedUnion("type", [
     status: z.enum(["pending", "approved", "denied", "cancelled"]),
     options: z.array(permissionOptionSchema).max(12),
     selectedOptionId: z.string().trim().min(1).max(120).nullable(),
+  }),
+  z.object({
+    id: z.string().trim().min(1).max(120),
+    type: z.literal("user_input"),
+    status: z.enum(["pending", "answered", "cancelled"]),
+    questions: z.array(userInputQuestionSchema).min(1).max(3),
+    answers: z.array(userInputAnswerSchema).max(3).default([]),
+    autoResolutionMs: z.number().int().positive().nullable().default(null),
   }),
 ])
 
@@ -289,11 +323,13 @@ export async function GET(request: Request, context: RouteContext) {
     )
   }
 
+  const messages = versionGroupId
+    ? listStudioMessageVersions(sessionId, versionGroupId)
+    : listStudioMessages(sessionId)
+
   return NextResponse.json({
     ok: true,
-    data: versionGroupId
-      ? listStudioMessageVersions(sessionId, versionGroupId)
-      : listStudioMessages(sessionId),
+    data: syncStudioMessageMediaParts(sessionId, messages),
   })
 }
 

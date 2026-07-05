@@ -4,6 +4,15 @@ import { createRequire } from "node:module"
 
 import type { BaseMessage } from "@langchain/core/messages"
 
+import type {
+  ServerNotification as CodexAppServerNotification,
+  ServerRequest as CodexAppServerRequest,
+} from "@/lib/generated/codex-app-server"
+import type {
+  Thread as CodexAppServerThread,
+  ThreadItem as CodexAppServerThreadItem,
+  Turn as CodexAppServerTurn,
+} from "@/lib/generated/codex-app-server/v2"
 import {
   MODELVERSE_OPENAI_BASE_URL,
   MODELVERSE_PROVIDER_ID,
@@ -12,12 +21,21 @@ import {
 } from "@/lib/agent-model-settings"
 import type { AgentModelDefinition } from "@/lib/agent-model-settings-shared"
 import { AgentEventQueue } from "@/lib/agent/event-queue"
-import type { AgentEvent } from "@/lib/agent/events"
+import type {
+  AgentEvent,
+  AgentTraceRef,
+  AgentUserInputAnswer,
+  AgentUserInputQuestion,
+} from "@/lib/agent/events"
 import {
   cancelSessionPermissions,
   requestPermission,
   type PermissionOption,
 } from "@/lib/agent/permission-broker"
+import {
+  cancelSessionUserInputs,
+  requestUserInput,
+} from "@/lib/agent/user-input-broker"
 import {
   registerAgentRuntime,
   type AgentRunInput,
@@ -39,35 +57,47 @@ export type CodexDirectJsonValue =
 
 export type CodexDirectJsonObject = Record<string, CodexDirectJsonValue>
 
-export type CodexDirectThreadItem = Record<string, unknown> & {
-  id?: string
-  type: string
-}
+export type CodexDirectThreadItem =
+  | CodexAppServerThreadItem
+  | (Record<string, unknown> & {
+      id?: string
+      type: string
+    })
 
-export type CodexDirectTurn = Record<string, unknown> & {
-  error?: { message?: string | null; additionalDetails?: string | null } | null
-  id: string
-  items?: CodexDirectThreadItem[]
-  status?: string
-}
+export type CodexDirectTurn =
+  | CodexAppServerTurn
+  | (Record<string, unknown> & {
+      error?:
+        | { message?: string | null; additionalDetails?: string | null }
+        | null
+      id: string
+      items?: CodexDirectThreadItem[]
+      status?: string
+    })
 
-export type CodexDirectThread = Record<string, unknown> & {
-  id: string
-  turns?: CodexDirectTurn[]
-}
+export type CodexDirectThread =
+  | CodexAppServerThread
+  | (Record<string, unknown> & {
+      id: string
+      turns?: CodexDirectTurn[]
+    })
 
-export type CodexDirectServerNotification = {
-  method: string
-  params?: unknown
-}
+export type CodexDirectServerNotification =
+  | CodexAppServerNotification
+  | {
+      method: string
+      params?: unknown
+    }
 
 type CodexDirectJsonRpcId = number | string
 
-type CodexDirectJsonRpcRequest = {
-  id: CodexDirectJsonRpcId
-  method: string
-  params?: unknown
-}
+type CodexDirectJsonRpcRequest =
+  | CodexAppServerRequest
+  | {
+      id: CodexDirectJsonRpcId
+      method: string
+      params?: unknown
+    }
 
 type CodexDirectJsonRpcResponse =
   | { id: CodexDirectJsonRpcId; result: unknown }
@@ -104,6 +134,10 @@ type CodexDirectResolvedModel = {
 type CodexDirectItemPhase = "completed" | "snapshot" | "started"
 
 type AgentTodo = Extract<AgentEvent, { type: "plan_update" }>["todos"][number]
+type CodexDirectTraceRef = Pick<
+  AgentTraceRef,
+  "itemId" | "parentThreadId" | "providerSessionId" | "threadId" | "turnId"
+>
 
 const CODEX_DIRECT_RUNTIME_INFO: AgentRuntimeInfo = {
   id: CODEX_DIRECT_RUNTIME_ID,
@@ -112,7 +146,7 @@ const CODEX_DIRECT_RUNTIME_INFO: AgentRuntimeInfo = {
   capabilities: {
     hitl: true,
     resume: false,
-    subagents: false,
+    subagents: true,
     plan: true,
     sandbox: true,
     mcp: false,
@@ -137,6 +171,39 @@ function getString(value: unknown) {
 
 function getNullableString(value: unknown) {
   return typeof value === "string" ? value : null
+}
+
+function codexTraceRef(trace?: CodexDirectTraceRef | null): AgentTraceRef {
+  return {
+    runtimeId: CODEX_DIRECT_RUNTIME_ID,
+    provider: "codex-app-server",
+    ...(trace?.providerSessionId
+      ? { providerSessionId: trace.providerSessionId }
+      : {}),
+    ...(trace?.threadId ? { threadId: trace.threadId } : {}),
+    ...(trace?.turnId ? { turnId: trace.turnId } : {}),
+    ...(trace?.itemId ? { itemId: trace.itemId } : {}),
+    ...(trace?.parentThreadId ? { parentThreadId: trace.parentThreadId } : {}),
+  }
+}
+
+function withCodexTrace<T extends AgentEvent>(
+  events: T[],
+  trace?: CodexDirectTraceRef | null
+): T[] {
+  if (!trace) {
+    return events
+  }
+
+  const resolvedTrace = codexTraceRef(trace)
+
+  return events.map((event) => ({
+    ...event,
+    trace: {
+      ...resolvedTrace,
+      ...event.trace,
+    },
+  }))
 }
 
 function getArray(value: unknown) {
@@ -858,6 +925,229 @@ function createImageViewEvents(
   ]
 }
 
+function collabAgentStatus(
+  status: unknown
+): NonNullable<Extract<AgentEvent, { type: "subagent_update" }>["status"]> {
+  if (status === "completed" || status === "shutdown") {
+    return "complete"
+  }
+
+  if (status === "errored" || status === "notFound") {
+    return "error"
+  }
+
+  return "running"
+}
+
+function createCollabSubagentEvents(
+  item: Record<string, unknown>,
+  phase: CodexDirectItemPhase
+): AgentEvent[] {
+  const receiverThreadIds = getArray(item.receiverThreadIds).filter(
+    (threadId): threadId is string =>
+      typeof threadId === "string" && threadId.length > 0
+  )
+  const prompt = getNullableString(item.prompt) ?? undefined
+  const agentStates = getRecord(item.agentsStates)
+
+  if (!receiverThreadIds.length) {
+    return []
+  }
+
+  return receiverThreadIds.flatMap((threadId) => {
+    const state = getRecord(agentStates?.[threadId])
+    const status = collabAgentStatus(state?.status)
+    const message = getNullableString(state?.message) ?? undefined
+    const events: AgentEvent[] = []
+
+    if (phase !== "completed" || item.tool === "spawnAgent") {
+      events.push({
+        type: "subagent_start",
+        taskId: threadId,
+        name: "Codex subagent",
+        ...(prompt ? { taskInput: prompt } : {}),
+        parentTaskId: getNullableString(item.senderThreadId) ?? undefined,
+      })
+    }
+
+    if (status === "complete" || status === "error") {
+      events.push({
+        type: "subagent_end",
+        taskId: threadId,
+        name: "Codex subagent",
+        status,
+        ...(status === "error" ? { error: message ?? "Subagent failed." } : {}),
+        ...(status === "complete" && message ? { summary: message } : {}),
+      })
+      return events
+    }
+
+    if (message || phase !== "started") {
+      events.push({
+        type: "subagent_update",
+        taskId: threadId,
+        name: "Codex subagent",
+        status,
+        ...(message ? { contentDelta: message } : {}),
+        parentTaskId: getNullableString(item.senderThreadId) ?? undefined,
+      })
+    }
+
+    return events
+  })
+}
+
+function createCollabAgentToolCallEvents(
+  item: Record<string, unknown>,
+  phase: CodexDirectItemPhase
+): AgentEvent[] {
+  const id = getString(item.id) || "collab-agent"
+  const name = getString(item.tool) || "collabAgent"
+  const payload = {
+    tool: name,
+    senderThreadId: item.senderThreadId ?? null,
+    receiverThreadIds: item.receiverThreadIds ?? [],
+    prompt: item.prompt ?? null,
+    model: item.model ?? null,
+    reasoningEffort: item.reasoningEffort ?? null,
+    agentsStates: item.agentsStates ?? {},
+  }
+  const subagentEvents = createCollabSubagentEvents(item, phase)
+
+  if (phase === "started") {
+    return [toolCallEvent(id, name, payload), ...subagentEvents]
+  }
+
+  if (phase === "completed") {
+    return [
+      toolResultEvent({
+        error: payload,
+        id,
+        name,
+        output: payload,
+        status: item.status,
+      }),
+      ...subagentEvents,
+    ]
+  }
+
+  return [
+    toolCallEvent(id, name, payload),
+    toolResultEvent({
+      error: payload,
+      id,
+      name,
+      output: payload,
+      status: item.status,
+    }),
+    ...subagentEvents,
+  ]
+}
+
+function createSubAgentActivityEvents(
+  item: Record<string, unknown>
+): AgentEvent[] {
+  const taskId = getString(item.agentThreadId)
+
+  if (!taskId) {
+    return []
+  }
+
+  const name = getString(item.agentPath) || "Codex subagent"
+
+  if (item.kind === "started") {
+    return [
+      {
+        type: "subagent_start",
+        taskId,
+        name,
+      },
+    ]
+  }
+
+  return [
+    {
+      type: "subagent_update",
+      taskId,
+      name,
+      status: "running",
+      contentDelta:
+        item.kind === "interrupted"
+          ? "Subagent interrupted."
+          : "Subagent activity updated.",
+    },
+  ]
+}
+
+function createReviewModeEvents(
+  item: Record<string, unknown>,
+  phase: CodexDirectItemPhase
+): AgentEvent[] {
+  const id = getString(item.id) || "review-mode"
+  const input = {
+    action: item.type,
+    review: getString(item.review),
+  }
+
+  if (phase === "started") {
+    return [toolCallEvent(id, "codex_review_mode", input)]
+  }
+
+  if (phase === "completed") {
+    return [
+      toolResultEvent({
+        id,
+        name: "codex_review_mode",
+        output: input,
+        status: "completed",
+      }),
+    ]
+  }
+
+  return [
+    toolCallEvent(id, "codex_review_mode", input),
+    toolResultEvent({
+      id,
+      name: "codex_review_mode",
+      output: input,
+      status: "completed",
+    }),
+  ]
+}
+
+function createContextCompactionEvents(
+  item: Record<string, unknown>,
+  phase: CodexDirectItemPhase
+): AgentEvent[] {
+  const id = getString(item.id) || "context-compaction"
+  const input = { itemId: id }
+
+  if (phase === "started") {
+    return [toolCallEvent(id, "context_compaction", input)]
+  }
+
+  if (phase === "completed") {
+    return [
+      toolResultEvent({
+        id,
+        name: "context_compaction",
+        output: input,
+        status: "completed",
+      }),
+    ]
+  }
+
+  return [
+    toolCallEvent(id, "context_compaction", input),
+    toolResultEvent({
+      id,
+      name: "context_compaction",
+      output: input,
+      status: "completed",
+    }),
+  ]
+}
+
 function createSnapshotMessageEvents(item: Record<string, unknown>) {
   if (item.type === "agentMessage") {
     const text = getString(item.text)
@@ -886,7 +1176,8 @@ function createSnapshotMessageEvents(item: Record<string, unknown>) {
 
 export function mapCodexDirectThreadItemToAgentEvents(
   item: CodexDirectThreadItem,
-  phase: CodexDirectItemPhase = "snapshot"
+  phase: CodexDirectItemPhase = "snapshot",
+  trace?: CodexDirectTraceRef | null
 ): AgentEvent[] {
   const record = getRecord(item)
 
@@ -894,40 +1185,75 @@ export function mapCodexDirectThreadItemToAgentEvents(
     return []
   }
 
+  const itemTrace = {
+    ...trace,
+    itemId: trace?.itemId ?? getNullableString(record.id) ?? undefined,
+  }
+  let events: AgentEvent[]
+
   switch (record.type) {
     case "agentMessage":
     case "reasoning":
-      return phase === "snapshot" ? createSnapshotMessageEvents(record) : []
+      events = phase === "snapshot" ? createSnapshotMessageEvents(record) : []
+      break
     case "commandExecution":
-      return createCommandExecutionEvents(record, phase)
+      events = createCommandExecutionEvents(record, phase)
+      break
     case "fileChange":
-      return createFileChangeEvents(record, phase)
+      events = createFileChangeEvents(record, phase)
+      break
     case "mcpToolCall":
-      return createMcpToolCallEvents(record, phase)
+      events = createMcpToolCallEvents(record, phase)
+      break
     case "dynamicToolCall":
-      return createDynamicToolCallEvents(record, phase)
+      events = createDynamicToolCallEvents(record, phase)
+      break
     case "webSearch":
-      return createWebSearchEvents(record, phase)
+      events = createWebSearchEvents(record, phase)
+      break
     case "imageGeneration":
-      return createImageGenerationEvents(record, phase)
+      events = createImageGenerationEvents(record, phase)
+      break
     case "imageView":
-      return createImageViewEvents(record, phase)
+      events = createImageViewEvents(record, phase)
+      break
+    case "collabAgentToolCall":
+      events = createCollabAgentToolCallEvents(record, phase)
+      break
+    case "subAgentActivity":
+      events = createSubAgentActivityEvents(record)
+      break
+    case "enteredReviewMode":
+    case "exitedReviewMode":
+      events = createReviewModeEvents(record, phase)
+      break
+    case "contextCompaction":
+      events = createContextCompactionEvents(record, phase)
+      break
     default:
       return []
   }
+
+  return withCodexTrace(events, itemTrace)
 }
 
 export function mapCodexDirectTurnToAgentEvents(
   turn: CodexDirectTurn,
-  phase: CodexDirectItemPhase = "snapshot"
+  phase: CodexDirectItemPhase = "snapshot",
+  trace?: CodexDirectTraceRef | null
 ): AgentEvent[] {
+  const turnTrace = {
+    ...trace,
+    turnId: trace?.turnId ?? turn.id,
+  }
   const events = getArray(turn.items).flatMap((item) => {
     const record = getRecord(item)
 
     return record?.type
       ? mapCodexDirectThreadItemToAgentEvents(
           record as CodexDirectThreadItem,
-          phase
+          phase,
+          turnTrace
         )
       : []
   })
@@ -937,7 +1263,7 @@ export function mapCodexDirectTurnToAgentEvents(
     getNullableString(error?.message)
 
   if (message) {
-    events.push({ type: "error", message })
+    events.push(...withCodexTrace([{ type: "error", message }], turnTrace))
   }
 
   return events
@@ -946,11 +1272,22 @@ export function mapCodexDirectTurnToAgentEvents(
 export function mapCodexDirectThreadToAgentEvents(
   thread: CodexDirectThread
 ): AgentEvent[] {
+  const threadRecord = getRecord(thread)
+  const threadTrace = {
+    providerSessionId: getNullableString(threadRecord?.sessionId) ?? undefined,
+    parentThreadId: getNullableString(threadRecord?.parentThreadId) ?? undefined,
+    threadId: thread.id,
+  }
+
   return getArray(thread.turns).flatMap((turn) => {
     const record = getRecord(turn)
 
     return record?.id
-      ? mapCodexDirectTurnToAgentEvents(record as CodexDirectTurn)
+      ? mapCodexDirectTurnToAgentEvents(
+          record as CodexDirectTurn,
+          "snapshot",
+          threadTrace
+        )
       : []
   })
 }
@@ -959,28 +1296,41 @@ export function mapCodexDirectNotificationToAgentEvents(
   notification: CodexDirectServerNotification
 ): AgentEvent[] {
   const params = getRecord(notification.params)
+  const notificationTrace = {
+    threadId: getNullableString(params?.threadId) ?? undefined,
+    turnId: getNullableString(params?.turnId) ?? undefined,
+    itemId: getNullableString(params?.itemId) ?? undefined,
+  }
 
   switch (notification.method) {
     case "item/agentMessage/delta": {
       const delta = getString(params?.delta)
 
-      return delta ? [{ type: "text_delta", delta }] : []
+      return delta
+        ? withCodexTrace([{ type: "text_delta", delta }], notificationTrace)
+        : []
     }
     case "item/reasoning/summaryTextDelta":
     case "item/reasoning/textDelta": {
       const delta = getString(params?.delta)
 
-      return delta ? [{ type: "reasoning_delta", delta }] : []
+      return delta
+        ? withCodexTrace(
+            [{ type: "reasoning_delta", delta }],
+            notificationTrace
+          )
+        : []
     }
     case "turn/plan/updated":
-      return createPlanUpdateEvent(params?.plan)
+      return withCodexTrace(createPlanUpdateEvent(params?.plan), notificationTrace)
     case "item/started": {
       const item = getRecord(params?.item)
 
       return item?.type
         ? mapCodexDirectThreadItemToAgentEvents(
             item as CodexDirectThreadItem,
-            "started"
+            "started",
+            notificationTrace
           )
         : []
     }
@@ -990,20 +1340,29 @@ export function mapCodexDirectNotificationToAgentEvents(
       return item?.type
         ? mapCodexDirectThreadItemToAgentEvents(
             item as CodexDirectThreadItem,
-            "completed"
+            "completed",
+            notificationTrace
           )
         : []
     }
     case "thread/tokenUsage/updated":
-      return [{ type: "run_meta", usage: params?.tokenUsage }]
+      return withCodexTrace(
+        [{ type: "run_meta", usage: params?.tokenUsage }],
+        notificationTrace
+      )
     case "turn/completed": {
       const turn = getRecord(params?.turn)
       const error = getRecord(turn?.error)
+      const trace = {
+        ...notificationTrace,
+        turnId:
+          notificationTrace.turnId ?? getNullableString(turn?.id) ?? undefined,
+      }
       const message =
         getNullableString(error?.additionalDetails) ??
         getNullableString(error?.message)
 
-      return message ? [{ type: "error", message }] : []
+      return message ? withCodexTrace([{ type: "error", message }], trace) : []
     }
     case "error": {
       const error = getRecord(params?.error)
@@ -1012,13 +1371,16 @@ export function mapCodexDirectNotificationToAgentEvents(
         getNullableString(error?.message) ??
         "Codex app-server error."
 
-      return [{ type: "error", message }]
+      return withCodexTrace([{ type: "error", message }], notificationTrace)
     }
     case "warning": {
       const message = getString(params?.message)
 
       return message
-        ? [{ type: "text_delta", delta: `Warning: ${message}\n\n` }]
+        ? withCodexTrace(
+            [{ type: "text_delta", delta: `Warning: ${message}\n\n` }],
+            notificationTrace
+          )
         : []
     }
     case "configWarning": {
@@ -1027,7 +1389,15 @@ export function mapCodexDirectNotificationToAgentEvents(
       const message = [summary, details].filter(Boolean).join("\n\n")
 
       return message
-        ? [{ type: "text_delta", delta: `Config warning: ${message}\n\n` }]
+        ? withCodexTrace(
+            [
+              {
+                type: "text_delta",
+                delta: `Config warning: ${message}\n\n`,
+              },
+            ],
+            notificationTrace
+          )
         : []
     }
     default:
@@ -1241,6 +1611,107 @@ async function requestCodexDirectPermission({
   )
 
   return selectedOptionId
+}
+
+function normalizeCodexUserInputOptionId(label: string, index: number) {
+  const slug = label
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 48)
+
+  return slug || `option_${index + 1}`
+}
+
+function normalizeCodexUserInputQuestions(
+  value: unknown
+): AgentUserInputQuestion[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value
+    .map((item, questionIndex) => {
+      const record = getRecord(item)
+
+      if (!record) {
+        return null
+      }
+
+      const rawOptions = Array.isArray(record.options) ? record.options : []
+      const seen = new Set<string>()
+      const options = rawOptions
+        .map((option, optionIndex) => {
+          const optionRecord = getRecord(option)
+          const label =
+            getString(optionRecord?.label) || `Option ${optionIndex + 1}`
+          const baseId = normalizeCodexUserInputOptionId(label, optionIndex)
+          let optionId = baseId
+          let suffix = 2
+
+          while (seen.has(optionId)) {
+            optionId = `${baseId}_${suffix}`
+            suffix += 1
+          }
+
+          seen.add(optionId)
+
+          return {
+            optionId,
+            label,
+            description: getString(optionRecord?.description) ?? "",
+          }
+        })
+        .filter((option) => option.label.trim())
+
+      return {
+        id: getString(record.id) || `question_${questionIndex + 1}`,
+        header: getString(record.header) || `Q${questionIndex + 1}`,
+        question: getString(record.question) || "Answer the question",
+        options,
+        allowOther: options.length === 0 ? true : record.isOther !== false,
+        isSecret: record.isSecret === true,
+      } satisfies AgentUserInputQuestion
+    })
+    .filter((question): question is AgentUserInputQuestion => Boolean(question))
+}
+
+function userInputRequestEvent({
+  answers,
+  autoResolutionMs,
+  questions,
+  requestId,
+  status,
+  trace,
+}: {
+  answers?: AgentUserInputAnswer[]
+  autoResolutionMs?: number | null
+  questions: AgentUserInputQuestion[]
+  requestId: string
+  status: "pending" | "resolved"
+  trace?: AgentTraceRef
+}): Extract<AgentEvent, { type: "user_input_request" }> {
+  return {
+    type: "user_input_request",
+    requestId,
+    questions,
+    answers,
+    autoResolutionMs,
+    status,
+    ...(trace ? { trace } : {}),
+  }
+}
+
+function codexUserInputResponse(answers: AgentUserInputAnswer[]) {
+  return {
+    answers: Object.fromEntries(
+      answers.map((answer) => [
+        answer.questionId,
+        { answers: [answer.text || answer.label || ""].filter(Boolean) },
+      ])
+    ),
+  }
 }
 
 function commandApprovalOptions(params: Record<string, unknown>) {
@@ -1476,6 +1947,7 @@ export class CodexDirectRuntime implements AgentRuntime {
         type: "run_meta",
         sessionRef: threadId,
         usage: initializeResponse,
+        trace: codexTraceRef({ threadId }),
       })
 
       const prompt = formatMessagesForCodexPrompt(input.messages).trim()
@@ -1523,6 +1995,7 @@ export class CodexDirectRuntime implements AgentRuntime {
 
       input.signal.removeEventListener("abort", abort)
       cancelSessionPermissions(input.sessionId)
+      cancelSessionUserInputs(input.sessionId)
       client.dispose()
     }
   }
@@ -1539,6 +2012,8 @@ export class CodexDirectRuntime implements AgentRuntime {
     const params = getRecord(request.params) ?? {}
 
     switch (request.method) {
+      case "item/tool/requestUserInput":
+        return this.handleUserInputRequest(input, queue, params)
       case "item/commandExecution/requestApproval":
         return this.handleCommandApproval(input, queue, params)
       case "item/fileChange/requestApproval":
@@ -1554,6 +2029,63 @@ export class CodexDirectRuntime implements AgentRuntime {
           `Unsupported Codex app-server request: ${request.method}`
         )
     }
+  }
+
+  private async handleUserInputRequest(
+    input: AgentRunInput,
+    queue: AgentEventQueue,
+    params: Record<string, unknown>
+  ) {
+    const questions = normalizeCodexUserInputQuestions(params.questions)
+    const requestId = randomUUID()
+    const autoResolutionMs =
+      typeof params.autoResolutionMs === "number"
+        ? params.autoResolutionMs
+        : null
+    const trace: AgentTraceRef = {
+      runtimeId: CODEX_DIRECT_RUNTIME_ID,
+      provider: "codex-app-server",
+      threadId: getNullableString(params.threadId) ?? undefined,
+      turnId: getNullableString(params.turnId) ?? undefined,
+      itemId: getNullableString(params.itemId) ?? undefined,
+    }
+
+    if (questions.length === 0) {
+      return { answers: {} }
+    }
+
+    queue.push(
+      userInputRequestEvent({
+        autoResolutionMs,
+        questions,
+        requestId,
+        status: "pending",
+        trace,
+      })
+    )
+
+    const decision = await requestUserInput({
+      autoResolutionMs,
+      questions,
+      requestId,
+      sessionId: input.sessionId,
+      signal: input.signal,
+    })
+
+    const answers = "cancelled" in decision ? [] : decision.answers
+
+    queue.push(
+      userInputRequestEvent({
+        answers,
+        autoResolutionMs,
+        questions,
+        requestId,
+        status: "resolved",
+        trace,
+      })
+    )
+
+    return codexUserInputResponse(answers)
   }
 
   private async handleCommandApproval(

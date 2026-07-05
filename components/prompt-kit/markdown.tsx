@@ -3,15 +3,18 @@
 import {
   RiCheckLine,
   RiCodeLine,
+  RiDownloadLine,
   RiExternalLinkLine,
   RiFileCopyLine,
   RiPlayLine,
+  RiSaveLine,
 } from "@remixicon/react"
 import { marked } from "marked"
 import { memo, type MouseEvent, useId, useMemo, useState } from "react"
 import ReactMarkdown, { Components } from "react-markdown"
 import remarkBreaks from "remark-breaks"
 import remarkGfm from "remark-gfm"
+import { toast } from "sonner"
 
 import {
   CodeBlock,
@@ -36,6 +39,8 @@ export type MarkdownProps = {
   id?: string
   className?: string
   autoPreviewHtml?: boolean
+  mediaSaveSessionId?: string | null
+  mediaUrlMap?: Record<string, string>
   openLinksInWorkspace?: boolean
   streaming?: boolean
   components?: Partial<Components>
@@ -60,6 +65,46 @@ const markdownExternalProtocols = new Set([
   "vscode-insiders:",
 ])
 
+type StudioMarkdownMediaKind = "image" | "video" | "audio"
+
+type StudioMarkdownMediaRoute = {
+  kind: StudioMarkdownMediaKind
+  outputId?: string
+  contentUrl: string
+  downloadUrl: string
+  saveUrl?: string | null
+  sourceUrl?: string | null
+  filename: string
+}
+
+const mediaRouteConfig = {
+  image: {
+    segment: "image-outputs",
+    extension: "png",
+  },
+  video: {
+    segment: "video-outputs",
+    extension: "mp4",
+  },
+  audio: {
+    segment: "audio-outputs",
+    extension: "mp3",
+  },
+} satisfies Record<
+  StudioMarkdownMediaKind,
+  { segment: string; extension: string }
+>
+
+const externalImageExtensions = new Set([
+  "avif",
+  "gif",
+  "jpeg",
+  "jpg",
+  "png",
+  "svg",
+  "webp",
+])
+
 function hashMarkdownBlock(value: string) {
   let hash = 5381
 
@@ -68,6 +113,177 @@ function hashMarkdownBlock(value: string) {
   }
 
   return (hash >>> 0).toString(36)
+}
+
+function withSearchParam(href: string, key: string, value: string) {
+  try {
+    const baseUrl =
+      typeof window === "undefined" ? "http://localhost" : window.location.href
+    const url = new URL(href, baseUrl)
+    url.searchParams.set(key, value)
+
+    return href.startsWith("/")
+      ? `${url.pathname}${url.search}`
+      : url.toString()
+  } catch {
+    const separator = href.includes("?") ? "&" : "?"
+    return `${href}${separator}${encodeURIComponent(key)}=${encodeURIComponent(
+      value
+    )}`
+  }
+}
+
+function getStudioMarkdownMediaRoute(href: string | undefined | null) {
+  const trimmedHref = typeof href === "string" ? href.trim() : ""
+
+  if (!trimmedHref) {
+    return null
+  }
+
+  try {
+    const baseUrl =
+      typeof window === "undefined" ? "http://localhost" : window.location.href
+    const parsed = new URL(trimmedHref, baseUrl)
+    const match = parsed.pathname.match(
+      /^\/api\/studio\/(image-outputs|video-outputs|audio-outputs)\/([^/]+)\/content\/?$/
+    )
+
+    if (!match) {
+      return null
+    }
+
+    const entry = Object.entries(mediaRouteConfig).find(
+      ([, config]) => config.segment === match[1]
+    )
+
+    if (!entry) {
+      return null
+    }
+
+    const [kind, config] = entry as [
+      StudioMarkdownMediaKind,
+      (typeof mediaRouteConfig)[StudioMarkdownMediaKind],
+    ]
+    const outputId = decodeURIComponent(match[2])
+    const contentUrl = trimmedHref.startsWith("http")
+      ? parsed.toString()
+      : `${parsed.pathname}${parsed.search}`
+
+    return {
+      kind,
+      outputId,
+      contentUrl,
+      downloadUrl: withSearchParam(contentUrl, "download", "1"),
+      saveUrl: `/api/studio/${config.segment}/${encodeURIComponent(outputId)}/save`,
+      filename: `${kind}-${outputId}.${config.extension}`,
+    } satisfies StudioMarkdownMediaRoute
+  } catch {
+    return null
+  }
+}
+
+function getFilenameExtension(filename: string) {
+  const extension = filename.split(".").at(-1)?.trim().toLowerCase() ?? ""
+
+  return /^[a-z0-9]{2,8}$/.test(extension) ? extension : ""
+}
+
+function getExternalImageFilename(url: URL, alt: string | undefined) {
+  const pathName = decodeURIComponent(url.pathname)
+  const basename = pathName.split("/").filter(Boolean).at(-1) ?? ""
+  const extension = getFilenameExtension(basename) || "png"
+  const stem =
+    basename.replace(/\.[^.]+$/, "").trim() ||
+    alt?.trim().replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "") ||
+    "image"
+
+  return `${stem.slice(0, 80) || "image"}.${extension}`
+}
+
+function getExternalMarkdownImageRoute(
+  href: string | undefined | null,
+  alt: string | undefined
+) {
+  const trimmedHref = typeof href === "string" ? href.trim() : ""
+
+  if (!trimmedHref) {
+    return null
+  }
+
+  try {
+    const parsed = new URL(trimmedHref)
+
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return null
+    }
+
+    const contentUrl = parsed.toString()
+
+    return {
+      kind: "image",
+      contentUrl,
+      downloadUrl: contentUrl,
+      saveUrl: null,
+      sourceUrl: contentUrl,
+      filename: getExternalImageFilename(parsed, alt),
+    } satisfies StudioMarkdownMediaRoute
+  } catch {
+    return null
+  }
+}
+
+function isLikelyExternalImageUrl(href: string | undefined | null) {
+  if (!href) {
+    return false
+  }
+
+  try {
+    const parsed = new URL(href)
+    const extension = getFilenameExtension(parsed.pathname)
+
+    return externalImageExtensions.has(extension)
+  } catch {
+    return false
+  }
+}
+
+function getMediaUrlLookupKeys(href: string) {
+  const keys = [href]
+
+  try {
+    const baseUrl =
+      typeof window === "undefined" ? "http://localhost" : window.location.href
+    const parsed = new URL(href, baseUrl)
+
+    keys.push(parsed.toString(), `${parsed.origin}${parsed.pathname}`)
+
+    if (href.startsWith("/")) {
+      keys.push(parsed.pathname)
+    }
+  } catch {
+    // Use the original href only.
+  }
+
+  return keys
+}
+
+function resolveMappedMediaUrl(
+  href: string | undefined | null,
+  mediaUrlMap: Record<string, string> | undefined
+) {
+  if (!href || !mediaUrlMap) {
+    return href ?? undefined
+  }
+
+  for (const key of getMediaUrlLookupKeys(href)) {
+    const mapped = mediaUrlMap[key]
+
+    if (mapped) {
+      return mapped
+    }
+  }
+
+  return href
 }
 
 function getMarkdownTokenKind(token: ReturnType<typeof marked.lexer>[number]) {
@@ -292,6 +508,19 @@ function getWorkspaceMarkdownTarget(href: string) {
     return null
   }
 
+  if (trimmedHref.startsWith("/api/")) {
+    try {
+      const baseUrl =
+        typeof window === "undefined"
+          ? "http://localhost"
+          : window.location.href
+
+      return new URL(trimmedHref, baseUrl).toString()
+    } catch {
+      return null
+    }
+  }
+
   if (
     trimmedHref.startsWith("/") ||
     trimmedHref.startsWith("~/") ||
@@ -366,6 +595,160 @@ function CodeActionButton({
       </TooltipTrigger>
       <TooltipContent side="top">{label}</TooltipContent>
     </Tooltip>
+  )
+}
+
+function MarkdownMediaActions({
+  media,
+  saveSessionId,
+}: {
+  media: StudioMarkdownMediaRoute
+  saveSessionId?: string | null
+}) {
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const canSave = Boolean(media.saveUrl || (media.sourceUrl && saveSessionId))
+
+  async function handleSave(event: MouseEvent<HTMLButtonElement>) {
+    event.preventDefault()
+    event.stopPropagation()
+
+    if (saving) {
+      return
+    }
+
+    setSaving(true)
+
+    try {
+      const response = media.saveUrl
+        ? await fetch(media.saveUrl, { method: "POST" })
+        : await fetch("/api/studio/media-url/save", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              filename: media.filename,
+              kind: media.kind,
+              sessionId: saveSessionId,
+              url: media.sourceUrl,
+            }),
+          })
+      const payload = (await response.json().catch(() => null)) as {
+        error?: string
+      } | null
+
+      if (!response.ok) {
+        throw new Error(payload?.error ?? "Save failed.")
+      }
+
+      setSaved(true)
+      toast.success("Saved to Files")
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Save failed.")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <TooltipProvider>
+      <span className="not-prose inline-flex items-center gap-1">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              asChild
+              variant="secondary"
+              size="icon-sm"
+              className="size-8 bg-background/90 shadow-sm backdrop-blur hover:bg-background"
+              aria-label="Download"
+            >
+              <a
+                href={media.downloadUrl}
+                download={media.filename}
+                onClick={(event) => event.stopPropagation()}
+              >
+                <RiDownloadLine aria-hidden />
+              </a>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="top">Download</TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="secondary"
+              size="icon-sm"
+              className="size-8 bg-background/90 shadow-sm backdrop-blur hover:bg-background"
+              aria-label="Save to Files"
+              disabled={!canSave || saving}
+              onClick={handleSave}
+            >
+              {saved ? (
+                <RiCheckLine aria-hidden />
+              ) : (
+                <RiSaveLine aria-hidden />
+              )}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="top">
+            {canSave ? "Save to Files" : "Cannot save this image"}
+          </TooltipContent>
+        </Tooltip>
+      </span>
+    </TooltipProvider>
+  )
+}
+
+function MarkdownMediaLink({
+  anchorProps,
+  children,
+  href,
+  media,
+  onClick,
+  openableUrl,
+  openLinksInWorkspace,
+  saveSessionId,
+}: {
+  anchorProps: React.AnchorHTMLAttributes<HTMLAnchorElement>
+  children: React.ReactNode
+  href: string
+  media: StudioMarkdownMediaRoute
+  onClick?: React.MouseEventHandler<HTMLAnchorElement>
+  openableUrl: string | null
+  openLinksInWorkspace: boolean
+  saveSessionId?: string | null
+}) {
+  function handleClick(event: MouseEvent<HTMLAnchorElement>) {
+    onClick?.(event)
+
+    if (event.defaultPrevented || event.button !== 0) {
+      return
+    }
+
+    if (openLinksInWorkspace && openMarkdownTargetInWorkspace(href, "link")) {
+      event.preventDefault()
+      return
+    }
+
+    if (openableUrl && openMarkdownLink(openableUrl)) {
+      event.preventDefault()
+    }
+  }
+
+  return (
+    <span className="not-prose inline-flex max-w-full items-center gap-1.5 align-middle">
+      <a
+        {...anchorProps}
+        href={href}
+        target={openableUrl ? "_blank" : undefined}
+        rel={openableUrl ? "noreferrer" : undefined}
+        onClick={handleClick}
+      >
+        {children}
+      </a>
+      <MarkdownMediaActions media={media} saveSessionId={saveSessionId} />
+    </span>
   )
 }
 
@@ -459,6 +842,8 @@ function MarkdownCodeBlock({
 
 function createMarkdownComponents(
   autoPreviewHtml: boolean,
+  mediaSaveSessionId: string | null | undefined,
+  mediaUrlMap: Record<string, string> | undefined,
   openLinksInWorkspace: boolean,
   streaming: boolean
 ): Partial<Components> {
@@ -467,7 +852,13 @@ function createMarkdownComponents(
       const { href, children, node, onClick, ...anchorProps } = props
       void node
 
-      const openableUrl = href ? getOpenableMarkdownUrl(href) : null
+      const mappedHref = resolveMappedMediaUrl(href, mediaUrlMap)
+      const openableUrl = mappedHref ? getOpenableMarkdownUrl(mappedHref) : null
+      const media =
+        getStudioMarkdownMediaRoute(mappedHref) ??
+        (isLikelyExternalImageUrl(mappedHref)
+          ? getExternalMarkdownImageRoute(mappedHref, undefined)
+          : null)
 
       function handleClick(event: MouseEvent<HTMLAnchorElement>) {
         onClick?.(event)
@@ -478,8 +869,8 @@ function createMarkdownComponents(
 
         if (
           openLinksInWorkspace &&
-          href &&
-          openMarkdownTargetInWorkspace(href, "link")
+          mappedHref &&
+          openMarkdownTargetInWorkspace(mappedHref, "link")
         ) {
           event.preventDefault()
           return
@@ -494,10 +885,26 @@ function createMarkdownComponents(
         }
       }
 
+      if (href && media) {
+        return (
+          <MarkdownMediaLink
+            anchorProps={anchorProps}
+            href={mappedHref ?? href}
+            media={media}
+            onClick={onClick}
+            openableUrl={openableUrl}
+            openLinksInWorkspace={openLinksInWorkspace}
+            saveSessionId={mediaSaveSessionId}
+          >
+            {children}
+          </MarkdownMediaLink>
+        )
+      }
+
       return (
         <a
           {...anchorProps}
-          href={href}
+          href={mappedHref ?? href}
           target={openableUrl ? "_blank" : undefined}
           rel={openableUrl ? "noreferrer" : undefined}
           onClick={handleClick}
@@ -509,6 +916,11 @@ function createMarkdownComponents(
     img: function ImageComponent(props) {
       const { src, alt, node, onClick, ...imageProps } = props
       void node
+      const imageSrc = typeof src === "string" ? src : undefined
+      const resolvedImageSrc = resolveMappedMediaUrl(imageSrc, mediaUrlMap)
+      const media =
+        getStudioMarkdownMediaRoute(resolvedImageSrc) ??
+        getExternalMarkdownImageRoute(resolvedImageSrc, alt ?? undefined)
 
       function handleClick(event: MouseEvent<HTMLImageElement>) {
         onClick?.(event)
@@ -516,8 +928,8 @@ function createMarkdownComponents(
         if (
           event.defaultPrevented ||
           !openLinksInWorkspace ||
-          typeof src !== "string" ||
-          !openMarkdownTargetInWorkspace(src, "image")
+          !resolvedImageSrc ||
+          !openMarkdownTargetInWorkspace(resolvedImageSrc, "image")
         ) {
           return
         }
@@ -525,11 +937,36 @@ function createMarkdownComponents(
         event.preventDefault()
       }
 
+      if (media) {
+        return (
+          <span className="not-prose group relative my-3 block w-fit max-w-full overflow-hidden rounded-xl border bg-card shadow-sm">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              {...imageProps}
+              src={resolvedImageSrc}
+              alt={alt ?? ""}
+              className={cn(
+                "m-0 max-h-[min(68vh,720px)] max-w-full cursor-zoom-in object-contain",
+                typeof imageProps.className === "string" &&
+                  imageProps.className
+              )}
+              onClick={handleClick}
+            />
+            <span className="absolute top-2 right-2 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+              <MarkdownMediaActions
+                media={media}
+                saveSessionId={mediaSaveSessionId}
+              />
+            </span>
+          </span>
+        )
+      }
+
       return (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           {...imageProps}
-          src={src}
+          src={resolvedImageSrc ?? src}
           alt={alt ?? ""}
           className={cn(
             "cursor-zoom-in",
@@ -582,12 +1019,16 @@ const MarkdownBlockRenderer = memo(
   function MarkdownBlockRenderer({
     content,
     autoPreviewHtml,
+    mediaSaveSessionId,
+    mediaUrlMap,
     openLinksInWorkspace,
     streaming,
     components,
   }: {
     content: string
     autoPreviewHtml: boolean
+    mediaSaveSessionId?: string | null
+    mediaUrlMap?: Record<string, string>
     openLinksInWorkspace: boolean
     streaming: boolean
     components?: Partial<Components>
@@ -596,12 +1037,21 @@ const MarkdownBlockRenderer = memo(
       () => ({
         ...createMarkdownComponents(
           autoPreviewHtml,
+          mediaSaveSessionId,
+          mediaUrlMap,
           openLinksInWorkspace,
           streaming
         ),
         ...components,
       }),
-      [autoPreviewHtml, components, openLinksInWorkspace, streaming]
+      [
+        autoPreviewHtml,
+        components,
+        mediaSaveSessionId,
+        mediaUrlMap,
+        openLinksInWorkspace,
+        streaming,
+      ]
     )
 
     return (
@@ -617,6 +1067,8 @@ const MarkdownBlockRenderer = memo(
     return (
       prevProps.content === nextProps.content &&
       prevProps.autoPreviewHtml === nextProps.autoPreviewHtml &&
+      prevProps.mediaSaveSessionId === nextProps.mediaSaveSessionId &&
+      prevProps.mediaUrlMap === nextProps.mediaUrlMap &&
       prevProps.openLinksInWorkspace === nextProps.openLinksInWorkspace &&
       prevProps.streaming === nextProps.streaming &&
       prevProps.components === nextProps.components
@@ -631,6 +1083,8 @@ function MarkdownComponent({
   id,
   className,
   autoPreviewHtml = true,
+  mediaSaveSessionId,
+  mediaUrlMap,
   openLinksInWorkspace = false,
   streaming = false,
   components,
@@ -653,6 +1107,8 @@ function MarkdownComponent({
             !block.mutable &&
             isCompleteHtmlFenceBlock(block.content)
           }
+          mediaSaveSessionId={mediaSaveSessionId}
+          mediaUrlMap={mediaUrlMap}
           openLinksInWorkspace={openLinksInWorkspace}
           streaming={block.mutable}
           components={components}

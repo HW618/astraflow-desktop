@@ -80,6 +80,7 @@ export type AcpSessionPlugins = {
 
 export type AcpRuntimeOptions = {
   info: AgentRuntimeInfo
+  onInitializeResponse?: (response: InitializeResponse) => void
   resolveAuthentication?: (input: AgentRunInput) => AcpAuthenticationSpec | null
   resolveCommand: (input: AgentRunInput) => AcpCommandSpec | null
   resolveSessionPlugins?: (input: AgentRunInput) => AcpSessionPlugins | null
@@ -106,6 +107,11 @@ type AcpSessionState = {
   toolCallIds: Set<string>
   toolNames: Map<string, string>
   workspace: string
+}
+
+export type AcpMapperReplayState = {
+  toolCallIds: Set<string>
+  toolNames: Map<string, string>
 }
 
 class AcpStartupError extends Error {
@@ -247,6 +253,42 @@ function debugAcp(label: string, payload: Record<string, unknown>) {
   }
 
   console.debug(`[studio-chat:acp] ${label}`, payload)
+}
+
+export function deriveAcpRuntimeInfoFromInitialize(
+  info: AgentRuntimeInfo,
+  response: InitializeResponse
+): AgentRuntimeInfo {
+  const capabilities = response.agentCapabilities
+
+  if (!capabilities) {
+    return info
+  }
+
+  const meta = getRecord(capabilities._meta)
+  const subagents = meta?.subagents ?? meta?.subAgents ?? meta?.tasks
+  const skills = meta?.skills
+  const resume =
+    capabilities.sessionCapabilities?.resume !== undefined
+      ? Boolean(capabilities.sessionCapabilities.resume)
+      : typeof capabilities.loadSession === "boolean"
+        ? capabilities.loadSession
+        : info.capabilities.resume
+
+  return {
+    ...info,
+    capabilities: {
+      ...info.capabilities,
+      resume,
+      mcp:
+        capabilities.mcpCapabilities !== undefined
+          ? capabilities.mcpCapabilities !== null
+          : info.capabilities.mcp,
+      subagents:
+        typeof subagents === "boolean" ? subagents : info.capabilities.subagents,
+      skills: typeof skills === "boolean" ? skills : info.capabilities.skills,
+    },
+  }
 }
 
 function fingerprintSessionPlugins(plugins: AcpSessionPlugins) {
@@ -597,6 +639,7 @@ export function createAcpClientApp({
           optionId: option.optionId,
           name: option.name,
           kind: option.kind,
+          _meta: option._meta ?? null,
         }))
         const toolCall = params.toolCall
         const toolName = toolCall.kind ?? toolCall.title ?? "tool"
@@ -998,7 +1041,7 @@ function getToolName(
     title?: string | null
     toolCallId: string
   },
-  state: AcpSessionState
+  state: AcpMapperReplayState
 ) {
   const existing = state.toolNames.get(update.toolCallId)
 
@@ -1035,16 +1078,13 @@ function toolInputToString(update: {
   status?: string | null
   title?: string | null
 }) {
-  if (update.rawInput !== undefined) {
-    return stringifyPayload(update.rawInput)
-  }
-
   return stringifyPayload(
     compactObject([
       ["kind", update.kind],
       ["title", update.title],
       ["status", update.status],
       ["locations", update.locations],
+      ["rawInput", update.rawInput],
       ["content", update.content],
     ])
   )
@@ -1082,31 +1122,32 @@ function planEntriesToEvent(entries: unknown): AgentEvent | null {
   return {
     type: "plan_update",
     todos: entries
-      .map((entry) => {
+      .flatMap((entry) => {
         const record = getRecord(entry)
         const text = typeof record?.content === "string" ? record.content : ""
 
-        return text
-          ? {
-              text,
-              status: normalizePlanStatus(record?.status),
-            }
-          : null
-      })
-      .filter(
-        (
-          todo
-        ): todo is Extract<
-          AgentEvent,
-          { type: "plan_update" }
-        >["todos"][number] => Boolean(todo)
-      ),
+        if (!text) {
+          return []
+        }
+
+        const todo: Extract<AgentEvent, { type: "plan_update" }>["todos"][number] =
+          {
+            text,
+            status: normalizePlanStatus(record?.status),
+          }
+
+        if (typeof record?.priority === "string") {
+          todo.priority = record.priority
+        }
+
+        return [todo]
+      }),
   }
 }
 
 function mapAcpSessionUpdate(
   update: SessionUpdate,
-  state: AcpSessionState
+  state: AcpMapperReplayState
 ): AgentEvent[] {
   if (update.sessionUpdate === "agent_message_chunk") {
     const delta = getContentText(update.content)
@@ -1222,6 +1263,20 @@ function mapAcpSessionUpdate(
   })
 
   return []
+}
+
+export function createAcpMapperReplayState(): AcpMapperReplayState {
+  return {
+    toolCallIds: new Set(),
+    toolNames: new Map(),
+  }
+}
+
+export function mapAcpSessionUpdatesForReplay(
+  updates: readonly SessionUpdate[],
+  state: AcpMapperReplayState = createAcpMapperReplayState()
+): AgentEvent[] {
+  return updates.flatMap((update) => mapAcpSessionUpdate(update, state))
 }
 
 function disposeAcpSession(
@@ -1357,6 +1412,7 @@ async function createAcpSession({
   info,
   key,
   mcpServers,
+  onInitializeResponse,
   sessionId,
   sessionKey,
   sessionMeta,
@@ -1367,6 +1423,7 @@ async function createAcpSession({
   info: AgentRuntimeInfo
   key: string
   mcpServers: AcpMcpServer[]
+  onInitializeResponse?: (response: InitializeResponse) => void
   sessionId: string
   sessionKey: string | null
   sessionMeta: Record<string, unknown> | null
@@ -1408,11 +1465,12 @@ async function createAcpSession({
   })
 
   try {
-    await withTimeout(
+    const initializeResponse = await withTimeout(
       Promise.race([initializeAcpConnection(connection), spawnError]),
       ACP_STARTUP_TIMEOUT_MS,
       `${info.label} ACP initialize`
     )
+    onInitializeResponse?.(initializeResponse)
 
     if (authentication) {
       await withTimeout(
@@ -1506,6 +1564,7 @@ async function getOrCreateAcpSession({
   info,
   mcpServers,
   modelKey,
+  onInitializeResponse,
   pluginKey,
   sessionId,
   sessionMeta,
@@ -1516,6 +1575,7 @@ async function getOrCreateAcpSession({
   info: AgentRuntimeInfo
   mcpServers: AcpMcpServer[]
   modelKey: string | null
+  onInitializeResponse?: (response: InitializeResponse) => void
   pluginKey: string | null
   sessionId: string
   sessionMeta: Record<string, unknown> | null
@@ -1569,6 +1629,7 @@ async function getOrCreateAcpSession({
     info,
     key,
     mcpServers,
+    onInitializeResponse,
     sessionId,
     sessionKey: [modelKey ?? "", pluginKey ?? ""].join(":"),
     sessionMeta,
@@ -1837,6 +1898,7 @@ async function* streamAcpRun(
       info: options.info,
       mcpServers: sessionPlugins.mcpServers,
       modelKey,
+      onInitializeResponse: options.onInitializeResponse,
       pluginKey,
       sessionId: input.sessionId,
       sessionMeta,
@@ -1917,17 +1979,30 @@ async function* streamAcpRun(
 
 export class AcpRuntime implements AgentRuntime {
   readonly info: AgentRuntimeInfo
+  private currentInfo: AgentRuntimeInfo
   private readonly options: AcpRuntimeOptions
 
   constructor(options: AcpRuntimeOptions) {
     this.info = options.info
+    this.currentInfo = options.info
     this.options = options
+  }
+
+  getInfo(): AgentRuntimeInfo {
+    return this.currentInfo
   }
 
   startRun(input: AgentRunInput): AsyncIterable<AgentEvent> {
     return streamAcpRun(
       {
         info: this.info,
+        onInitializeResponse: (response) => {
+          this.currentInfo = deriveAcpRuntimeInfoFromInitialize(
+            this.info,
+            response
+          )
+          this.options.onInitializeResponse?.(response)
+        },
         resolveAuthentication: this.options.resolveAuthentication,
         resolveCommand: this.options.resolveCommand,
         resolveSessionPlugins: this.options.resolveSessionPlugins,

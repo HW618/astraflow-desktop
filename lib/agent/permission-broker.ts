@@ -8,6 +8,7 @@ export type PermissionOption = {
   optionId: string
   name: string
   kind: string
+  _meta?: Record<string, unknown> | null
 }
 
 export type PermissionDecision =
