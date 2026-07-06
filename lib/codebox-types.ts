@@ -86,6 +86,7 @@ export type CodeBoxStatus = {
   workspacePath: string
   modelverseApiKey: {
     configured: boolean
+    id: string | null
     name: string | null
     projectId: string | null
     updatedAt: string | null

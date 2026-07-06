@@ -30,6 +30,7 @@ declare global {
 
 const DEFAULT_SESSION_CHECK_INTERVAL_MS = 60_000
 const MIN_SESSION_CHECK_INTERVAL_MS = 2_000
+const SESSION_STATUS_PATH = "/api/studio/oauth/status"
 
 function isLoginPath(pathname: string) {
   return pathname === "/login"
@@ -105,6 +106,7 @@ function nextSessionCheckDelay(expiresAt: number | null) {
 function AuthSessionGuard() {
   const pathname = usePathname()
   const redirectingRef = React.useRef(false)
+  const authVerificationRef = React.useRef<Promise<void> | null>(null)
   const protectedRoute = !isLoginPath(pathname)
 
   const redirectToLogin = React.useCallback(() => {
@@ -116,13 +118,46 @@ function AuthSessionGuard() {
     window.location.replace("/login")
   }, [])
 
+  const redirectToLoginIfSessionExpired = React.useCallback(() => {
+    if (
+      redirectingRef.current ||
+      authVerificationRef.current ||
+      isLoginPath(window.location.pathname)
+    ) {
+      return
+    }
+
+    authVerificationRef.current = (async () => {
+      try {
+        const response = await fetch(SESSION_STATUS_PATH, {
+          cache: "no-store",
+        })
+
+        if (response.status === 401) {
+          redirectToLogin()
+          return
+        }
+
+        const payload = (await response.json()) as OAuthStatusResponse
+
+        if (!payload.ok || !payload.data.auth.configured) {
+          redirectToLogin()
+        }
+      } catch {
+        redirectToLogin()
+      } finally {
+        authVerificationRef.current = null
+      }
+    })()
+  }, [redirectToLogin])
+
   React.useEffect(() => {
     if (!protectedRoute) {
       return
     }
 
-    return installAuthFetchPatch(redirectToLogin)
-  }, [protectedRoute, redirectToLogin])
+    return installAuthFetchPatch(redirectToLoginIfSessionExpired)
+  }, [protectedRoute, redirectToLoginIfSessionExpired])
 
   React.useEffect(() => {
     if (!protectedRoute) {
@@ -153,7 +188,7 @@ function AuthSessionGuard() {
       inFlight = true
 
       try {
-        const response = await fetch("/api/studio/oauth/status", {
+        const response = await fetch(SESSION_STATUS_PATH, {
           cache: "no-store",
         })
 

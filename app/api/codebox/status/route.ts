@@ -25,6 +25,7 @@ export async function GET() {
       workspacePath: CODEBOX_WORKSPACE_PATH,
       modelverseApiKey: {
         configured: Boolean(apiKey?.key),
+        id: apiKey?.id ?? null,
         name: apiKey?.name ?? null,
         projectId: apiKey?.projectId ?? null,
         updatedAt: apiKey?.updatedAt ?? null,

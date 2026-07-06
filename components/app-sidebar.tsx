@@ -242,7 +242,10 @@ async function fetchLocalProjects() {
 
 async function fetchSidebarAccount() {
   const response = await fetch("/api/studio/projects", { cache: "no-store" })
-  throwIfUnauthorized(response)
+
+  if (response.status === 401 || response.status === 403) {
+    return null
+  }
 
   const payload = (await response.json()) as SidebarProjectsResponse
 

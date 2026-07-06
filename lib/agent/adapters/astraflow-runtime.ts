@@ -1,12 +1,16 @@
 import { randomUUID } from "node:crypto"
+import { existsSync, readFileSync, statSync } from "node:fs"
 import { homedir } from "node:os"
+import { dirname, join, relative, resolve } from "node:path"
 
 import { HumanMessage, type BaseMessage } from "@langchain/core/messages"
 import type { StructuredToolInterface } from "@langchain/core/tools"
+import { InMemoryStore, MemorySaver } from "@langchain/langgraph-checkpoint"
 import { createDeepAgent } from "deepagents"
 
 import { createStudioSkillsMiddleware } from "@/lib/ai/skills/studio-skills"
 import {
+  createGetStudioMediaModelSchemaTool,
   createGetStudioMediaGenerationTool,
   createListStudioImageModelsTool,
   createListStudioMediaGenerationModelsTool,
@@ -65,6 +69,18 @@ import type { StudioSessionFile } from "@/lib/studio-types"
 const STUDIO_CHAT_DEBUG = process.env.ASTRAFLOW_STUDIO_CHAT_DEBUG === "1"
 const DEEPAGENTS_RECURSION_LIMIT = 200
 const SUBAGENT_SUMMARY_MAX_CHARS = 4_000
+const PROJECT_MEMORY_FILE_NAME = "AGENTS.md"
+const PROJECT_CONTEXT_MAX_CHARS = 16_000
+const PROJECT_MEMORY_FILE_MAX_CHARS = 10_000
+const PROJECT_README_MAX_CHARS = 2_500
+const PROJECT_PACKAGE_SCRIPT_NAMES = [
+  "lint",
+  "typecheck",
+  "test",
+  "format",
+  "dev",
+  "build",
+]
 const DEEPAGENTS_BUILTIN_TOOL_NAMES = new Set([
   "ls",
   "read_file",
@@ -99,6 +115,9 @@ type PreparedSessionFile = StudioSessionFile & {
   agentPath: string
   agentEnvironment: AgentRunEnvironment
 }
+
+const sessionCheckpointers = new Map<string, MemorySaver>()
+const sessionStores = new Map<string, InMemoryStore>()
 
 function getRecord(value: unknown) {
   return typeof value === "object" && value !== null
@@ -242,6 +261,213 @@ function debugDeepAgents(label: string, payload: Record<string, unknown>) {
   console.info(`[studio-chat:deepagents] ${label}`, payload)
 }
 
+function getSessionPersistence(sessionId: string) {
+  let checkpointer = sessionCheckpointers.get(sessionId)
+  let store = sessionStores.get(sessionId)
+
+  if (!checkpointer) {
+    checkpointer = new MemorySaver()
+    sessionCheckpointers.set(sessionId, checkpointer)
+  }
+
+  if (!store) {
+    store = new InMemoryStore()
+    sessionStores.set(sessionId, store)
+  }
+
+  return { checkpointer, store }
+}
+
+function isDirectory(path: string) {
+  try {
+    return statSync(/* turbopackIgnore: true */ path).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+function findGitRoot(startDir: string) {
+  let current = resolve(startDir)
+
+  while (true) {
+    if (existsSync(join(current, ".git"))) {
+      return current
+    }
+
+    const parent = dirname(current)
+
+    if (parent === current) {
+      return null
+    }
+
+    current = parent
+  }
+}
+
+function ancestorDirectories(fromDir: string, toDir: string) {
+  const from = resolve(fromDir)
+  const to = resolve(toDir)
+  const directories: string[] = []
+  let current = to
+
+  while (true) {
+    directories.push(current)
+
+    if (current === from) {
+      return directories.reverse()
+    }
+
+    const parent = dirname(current)
+
+    if (parent === current || !relative(from, current).startsWith("..")) {
+      current = parent
+      continue
+    }
+
+    return directories.reverse()
+  }
+}
+
+function discoverProjectMemorySources(projectPath: string | null) {
+  if (!projectPath || !isDirectory(projectPath)) {
+    return []
+  }
+
+  const root = resolve(projectPath)
+  const gitRoot = findGitRoot(root) ?? root
+  const rootRelativeToGit = relative(gitRoot, root)
+  const isInsideGitRoot =
+    rootRelativeToGit === "" ||
+    (!rootRelativeToGit.startsWith("..") && !rootRelativeToGit.startsWith("/"))
+  const directories = isInsideGitRoot
+    ? ancestorDirectories(gitRoot, root)
+    : [root]
+
+  return directories
+    .map((directory) => join(directory, PROJECT_MEMORY_FILE_NAME))
+    .filter((path) => existsSync(path))
+}
+
+function readTextExcerpt(path: string, maxChars: number) {
+  try {
+    const content = readFileSync(/* turbopackIgnore: true */ path, "utf8")
+
+    if (content.length <= maxChars) {
+      return content
+    }
+
+    return `${content.slice(0, maxChars)}\n...[truncated ${
+      content.length - maxChars
+    } chars]`
+  } catch {
+    return null
+  }
+}
+
+function readProjectPackageScripts(projectPath: string | null) {
+  if (!projectPath) {
+    return ""
+  }
+
+  const packageJsonPath = join(projectPath, "package.json")
+  const raw = readTextExcerpt(packageJsonPath, 80_000)
+
+  if (!raw) {
+    return ""
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as { scripts?: Record<string, unknown> }
+    const scripts = parsed.scripts ?? {}
+    const selected = PROJECT_PACKAGE_SCRIPT_NAMES.flatMap((name) =>
+      typeof scripts[name] === "string" ? [`- ${name}: ${scripts[name]}`] : []
+    )
+
+    return selected.length ? selected.join("\n") : ""
+  } catch {
+    return ""
+  }
+}
+
+function findProjectReadme(projectPath: string | null) {
+  if (!projectPath) {
+    return null
+  }
+
+  return (
+    ["README.md", "README.mdx", "readme.md"]
+      .map((name) => join(projectPath, name))
+      .find((path) => existsSync(path)) ?? null
+  )
+}
+
+function createProjectGuidance({
+  memoryLoadedByDeepAgents,
+  memorySources,
+  projectPath,
+}: {
+  memoryLoadedByDeepAgents: boolean
+  memorySources: string[]
+  projectPath: string | null
+}) {
+  if (!projectPath) {
+    return ""
+  }
+
+  const sections = [
+    "<project_context>",
+    `Project root: ${projectPath}`,
+    "Use this as a compact project index. Inspect relevant files just-in-time before changing code.",
+  ]
+  const scripts = readProjectPackageScripts(projectPath)
+
+  if (scripts) {
+    sections.push(`Common package scripts:\n${scripts}`)
+  }
+
+  if (memorySources.length > 0) {
+    if (memoryLoadedByDeepAgents) {
+      sections.push(
+        [
+          "Project memory files loaded by Deep Agents memory middleware:",
+          ...memorySources.map((source) => `- ${source}`),
+        ].join("\n")
+      )
+    } else {
+      sections.push(
+        [
+          "Project AGENTS.md instructions:",
+          ...memorySources.map((source) => {
+            const content =
+              readTextExcerpt(source, PROJECT_MEMORY_FILE_MAX_CHARS) ?? ""
+
+            return `--- ${source} ---\n${content}`
+          }),
+        ].join("\n\n")
+      )
+    }
+  }
+
+  const readmePath = findProjectReadme(projectPath)
+  const readme = readmePath
+    ? readTextExcerpt(readmePath, PROJECT_README_MAX_CHARS)
+    : null
+
+  if (readme) {
+    sections.push(`README excerpt (${readmePath}):\n${readme}`)
+  }
+
+  sections.push("</project_context>")
+
+  const guidance = sections.join("\n\n")
+
+  if (guidance.length <= PROJECT_CONTEXT_MAX_CHARS) {
+    return guidance
+  }
+
+  return `${guidance.slice(0, PROJECT_CONTEXT_MAX_CHARS)}\n...[project context truncated]`
+}
+
 function createDeepAgentsSystemPrompt({
   environment,
   hasSandboxBackend,
@@ -253,6 +479,7 @@ function createDeepAgentsSystemPrompt({
   hasMediaGeneration,
   hasUserInputRequest,
   localRootDir,
+  projectGuidance,
   sessionFilesManifest,
 }: {
   environment: AgentRunEnvironment
@@ -265,6 +492,7 @@ function createDeepAgentsSystemPrompt({
   hasMediaGeneration: boolean
   hasUserInputRequest: boolean
   localRootDir: string | null
+  projectGuidance: string
   sessionFilesManifest: string
 }) {
   const toolInstructions: string[] = []
@@ -316,7 +544,13 @@ function createDeepAgentsSystemPrompt({
 
   if (hasMediaGeneration) {
     toolInstructions.push(
-      "You can create and edit Studio images and submit Studio video generations directly in chat with studio_list_image_models, studio_list_video_models, studio_list_media_generation_models, studio_generate_image, studio_generate_video, and the Studio media status tools. If the user asks what AstraFlow can do, or asks for images, image edits, videos, Seedream, Seedance, or media model choices, tell them this is available and use these tools. When the user asks for image or video generation and did not explicitly choose a model, list the available media models if needed, then use request_user_input to ask which model they want instead of silently guessing. Generated media appears as chat media cards, can be downloaded, can be saved to the Files library, and can be referenced in later prompts. Use media generation only when relevant to the user's request."
+      [
+        "You can create and edit Studio images and submit Studio video generations directly in chat with studio_list_image_models, studio_list_video_models, studio_list_media_generation_models, studio_get_media_model_schema, studio_generate_image, studio_generate_video, and the Studio media status tools.",
+        "If the user asks what AstraFlow can do, or asks for images, image edits, videos, Seedream, Seedance, or media model choices, tell them this is available and use these tools.",
+        "For media generation, use list tools with detail: summary to choose a model, then call studio_get_media_model_schema or use detail: schema when you need full provider params. Actively set useful params such as size, aspectRatio, imageSize, ratio, resolution, duration, quality, output_format, response_format, n, seed, watermark, first-frame, or last-frame based on the user's intent.",
+        "If the user did not name a model, choose a reasonable available default for the requested medium and explain the choice briefly; use request_user_input only when the choice materially changes the result or the user explicitly asks to compare options.",
+        "Prefer media references to embedding data URLs. Generated media appears as chat media cards, can be downloaded, can be saved to the Files library, and can be referenced in later prompts. Use media generation only when relevant to the user's request.",
+      ].join(" ")
     )
   }
 
@@ -327,12 +561,17 @@ function createDeepAgentsSystemPrompt({
   }
 
   toolInstructions.push(
+    "Use write_todos for multi-step work, especially research, debugging, code edits, or media workflows with several decisions. Use the task tool for independent exploration or review subtasks so the main context stays focused. Use just-in-time context: search or inspect small relevant slices first, then read more only when needed. Verify concrete work with the narrowest relevant check before finalizing whenever tools are available."
+  )
+
+  toolInstructions.push(
     "Use list_installed_mcp_servers when the user asks what MCP servers/plugins are installed, enabled, available, or why an MCP is not callable."
   )
 
   return `${DEFAULT_SYSTEM_PROMPT}
 
 ${toolInstructions.join("\n")}
+${projectGuidance ? `\n${projectGuidance}` : ""}
 ${sessionFilesManifest ? `\n${sessionFilesManifest}` : ""}`
 }
 
@@ -443,6 +682,7 @@ function createNativeTools({
     createListStudioImageModelsTool(),
     createListStudioVideoModelsTool(),
     createListStudioMediaGenerationModelsTool(),
+    createGetStudioMediaModelSchemaTool(),
     createListStudioMediaGenerationsTool({
       sessionId,
       apiKey: modelverseApiKey,
@@ -643,7 +883,8 @@ function findLangChainUsage(value: unknown, depth = 0): unknown {
   }
 
   const responseMetadata = getRecord(record.response_metadata)
-  const tokenUsage = responseMetadata?.tokenUsage ?? responseMetadata?.token_usage
+  const tokenUsage =
+    responseMetadata?.tokenUsage ?? responseMetadata?.token_usage
 
   if (tokenUsage) {
     return tokenUsage
@@ -1177,6 +1418,9 @@ async function* streamDeepAgentsRun({
     )
     const localRootDir =
       environment === "local" ? projectPath?.trim() || homedir() : null
+    const resolvedProjectPath = projectPath?.trim() || null
+    const projectMemorySources =
+      discoverProjectMemorySources(resolvedProjectPath)
     const backend =
       environment === "local" && localRootDir
         ? new DeepAgentsLocalBackend({
@@ -1192,6 +1436,15 @@ async function* streamDeepAgentsRun({
               sessionId,
             })
           : null
+    const memoryLoadedByDeepAgents =
+      environment === "local" &&
+      backend !== null &&
+      projectMemorySources.length > 0
+    const projectGuidance = createProjectGuidance({
+      memoryLoadedByDeepAgents,
+      memorySources: projectMemorySources,
+      projectPath: resolvedProjectPath,
+    })
     const sessionFilesManifest = createDeepAgentsSessionFilesManifest(
       await prepareDeepAgentsSessionFiles({
         environment,
@@ -1229,11 +1482,16 @@ async function* streamDeepAgentsRun({
       sessionId,
       modelverseApiKey,
     })
+    const { checkpointer, store } = getSessionPersistence(sessionId)
+    const checkpointThreadId = `astraflow:${sessionId}:${randomUUID()}`
     const agent = createDeepAgent({
       model: chatModel,
       tools,
       ...(skillsMiddleware ? { middleware: [skillsMiddleware] } : {}),
       ...(backend ? { backend } : {}),
+      checkpointer,
+      store,
+      ...(memoryLoadedByDeepAgents ? { memory: projectMemorySources } : {}),
       systemPrompt: createDeepAgentsSystemPrompt({
         environment,
         hasSandboxBackend,
@@ -1245,6 +1503,7 @@ async function* streamDeepAgentsRun({
         hasMediaGeneration,
         hasUserInputRequest,
         localRootDir,
+        projectGuidance,
         sessionFilesManifest,
       }),
     })
@@ -1253,6 +1512,9 @@ async function* streamDeepAgentsRun({
       {
         version: "v3",
         signal,
+        configurable: {
+          thread_id: checkpointThreadId,
+        },
         recursionLimit: DEEPAGENTS_RECURSION_LIMIT,
       }
     )
@@ -1271,7 +1533,7 @@ async function* streamDeepAgentsRun({
       queue.push({
         type: "error",
         message:
-          "Deep Agents run was interrupted before completion. Built-in HITL interrupts require a checkpointer and are disabled for this runtime path.",
+          "Deep Agents run was interrupted before completion. A checkpoint was saved for this run, but interactive resume is not wired in this runtime path yet.",
       })
     })
     const pumps = [
@@ -1331,7 +1593,7 @@ function getAstraflowRuntimeInfo() {
       sandbox: Boolean(getStudioModelverseApiKey()?.key),
       mcp: true,
       skills: true,
-      compact: false,
+      compact: true,
     },
     composer: {
       slashCommands: "none",
@@ -1354,7 +1616,7 @@ export const astraflowAgentRuntime: AgentRuntime = {
       sandbox: false,
       mcp: true,
       skills: true,
-      compact: false,
+      compact: true,
     },
     composer: {
       slashCommands: "none",

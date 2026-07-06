@@ -39,15 +39,14 @@ import {
   listStudioMessages,
 } from "@/lib/studio-db"
 import type { PromptMention } from "@/lib/agent/composer-types"
-import type { StudioMessage } from "@/lib/studio-types"
+import type { StudioMessage, StudioMessagePart } from "@/lib/studio-types"
 
 const REFERENCED_SESSION_CONTEXT_LIMIT = 8_000
 const REFERENCED_SESSION_TRUNCATION_NOTICE = "[earlier messages truncated]"
+const ASSISTANT_STRUCTURED_CONTEXT_LIMIT = 6_000
+const ASSISTANT_STRUCTURED_TEXT_LIMIT = 1_000
 
-type AdapterPromptMention = Extract<
-  PromptMention,
-  { kind: "file" | "folder" }
->
+type AdapterPromptMention = Extract<PromptMention, { kind: "file" | "folder" }>
 
 function getAdapterPromptMentions(message: StudioMessage) {
   return (message.mentions ?? []).filter(
@@ -68,9 +67,7 @@ function getSessionPromptMentions(message: StudioMessage) {
 function messageMentionKwargs(message: StudioMessage) {
   const mentions = getAdapterPromptMentions(message)
 
-  return mentions.length
-    ? { additional_kwargs: { mentions } }
-    : {}
+  return mentions.length ? { additional_kwargs: { mentions } } : {}
 }
 
 function transcriptTextForMessage(message: StudioMessage) {
@@ -253,10 +250,141 @@ function prependContextToMessageContent(
   }
 
   if (typeof content === "string") {
-    return [context, content].filter((part) => part.trim().length > 0).join("\n\n")
+    return [context, content]
+      .filter((part) => part.trim().length > 0)
+      .join("\n\n")
   }
 
   return [{ type: "text", text: context }, ...content] satisfies MessageContent
+}
+
+function truncateAssistantContext(value: string, maxLength: number) {
+  const normalized = value.replace(/\s+/g, " ").trim()
+
+  if (normalized.length <= maxLength) {
+    return normalized
+  }
+
+  return `${normalized.slice(0, maxLength - 3)}...`
+}
+
+function formatStructuredPartForPrompt(part: StudioMessagePart) {
+  if (part.type === "plan") {
+    return {
+      type: "plan",
+      todos: part.todos.map((todo) => ({
+        text: todo.text,
+        status: todo.status,
+        ...(todo.priority ? { priority: todo.priority } : {}),
+      })),
+    }
+  }
+
+  if (part.type === "subagent") {
+    return {
+      type: "subagent",
+      taskId: part.taskId,
+      name: part.name,
+      status: part.status,
+      taskInput: truncateAssistantContext(
+        part.taskInput,
+        ASSISTANT_STRUCTURED_TEXT_LIMIT
+      ),
+      ...(part.summary
+        ? {
+            summary: truncateAssistantContext(
+              part.summary,
+              ASSISTANT_STRUCTURED_TEXT_LIMIT
+            ),
+          }
+        : {}),
+      ...(part.error ? { error: part.error } : {}),
+      ...(part.todos.length
+        ? {
+            todos: part.todos.map((todo) => ({
+              text: todo.text,
+              status: todo.status,
+            })),
+          }
+        : {}),
+    }
+  }
+
+  if (part.type === "file") {
+    return {
+      type: "file_change",
+      path: part.path,
+      kind: part.kind,
+      status: part.status,
+      ...(part.error ? { error: part.error } : {}),
+    }
+  }
+
+  if (part.type === "media_generation") {
+    return {
+      type: "media_generation",
+      kind: part.kind,
+      generationId: part.generationId,
+      status: part.status,
+      modelName: part.modelName,
+      prompt: truncateAssistantContext(
+        part.prompt,
+        ASSISTANT_STRUCTURED_TEXT_LIMIT
+      ),
+      ...(part.phase ? { phase: part.phase } : {}),
+      ...(typeof part.progress === "number" ? { progress: part.progress } : {}),
+      ...(part.errorMessage ? { errorMessage: part.errorMessage } : {}),
+      outputs: part.outputs.map((output) => ({
+        id: output.id,
+        index: output.index,
+        sessionFileId: output.sessionFileId ?? null,
+        contentUrl: output.contentUrl,
+        url: output.url,
+        storagePath: output.storagePath,
+        mimeType: output.mimeType,
+        width: output.width,
+        height: output.height,
+        ...(output.durationSeconds !== undefined
+          ? { durationSeconds: output.durationSeconds }
+          : {}),
+      })),
+    }
+  }
+
+  return null
+}
+
+function formatAssistantStructuredContext(message: StudioMessage) {
+  const structured = message.parts
+    .map(formatStructuredPartForPrompt)
+    .filter((part): part is NonNullable<typeof part> => Boolean(part))
+
+  if (!structured.length) {
+    return ""
+  }
+
+  const content = JSON.stringify(
+    {
+      note: "Structured assistant context from previous turn. Use ids/paths here when the user references prior outputs.",
+      parts: structured,
+    },
+    null,
+    2
+  )
+
+  return `<assistant_structured_context>\n${truncateAssistantContext(
+    content,
+    ASSISTANT_STRUCTURED_CONTEXT_LIMIT
+  )}\n</assistant_structured_context>`
+}
+
+function assistantContentForPrompt(message: StudioMessage) {
+  return [
+    transcriptTextForMessage(message),
+    formatAssistantStructuredContext(message),
+  ]
+    .filter((part) => part.trim().length > 0)
+    .join("\n\n")
 }
 
 function toLangChainMessages(
@@ -270,8 +398,9 @@ function toLangChainMessages(
   const effectiveHistory =
     retryMessageIndex >= 0 ? history.slice(0, retryMessageIndex) : history
   const latestUserMessage =
-    [...effectiveHistory].reverse().find((message) => message.role === "user") ??
-    null
+    [...effectiveHistory]
+      .reverse()
+      .find((message) => message.role === "user") ?? null
   const referencedSessionContext = buildReferencedSessionContext({
     currentSessionId: sessionId,
     latestUserMessage,
@@ -322,7 +451,7 @@ function toLangChainMessages(
       })
     }
 
-    return new AIMessage(message.content)
+    return new AIMessage(assistantContentForPrompt(message))
   })
 }
 

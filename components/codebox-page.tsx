@@ -139,6 +139,16 @@ type ConfirmAction =
 
 const DEFAULT_CODEBOX_WORKSPACE_PATH = "/root/workspace"
 
+class ApiRequestError extends Error {
+  status: number
+
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = "ApiRequestError"
+    this.status = status
+  }
+}
+
 function VSCodeIcon({ className }: { className?: string }) {
   return (
     <svg
@@ -181,7 +191,7 @@ async function apiRequest<T>(
         ? payload.message
         : fallbackMessage
 
-    throw new Error(message)
+    throw new ApiRequestError(message, response.status)
   }
 
   return payload.data
@@ -418,31 +428,60 @@ function CodeBoxPage() {
     setIsApiKeyLoading(true)
 
     try {
-      const [nextStatus, apiKeyData] = await Promise.all([
-        apiRequest<CodeBoxStatus>(
-          "/api/codebox/status",
-          undefined,
-          t.requestFailed
-        ),
-        apiRequest<ModelverseApiKeysResponse>(
+      const nextStatus = await apiRequest<CodeBoxStatus>(
+        "/api/codebox/status",
+        undefined,
+        t.requestFailed
+      )
+      let apiKeyData: ModelverseApiKeysResponse | null = null
+
+      try {
+        apiKeyData = await apiRequest<ModelverseApiKeysResponse>(
           "/api/studio/modelverse-api-keys",
           undefined,
           t.requestFailed
-        ),
-      ])
-      const apiKeyConfigured = Boolean(apiKeyData.selected)
+        )
+      } catch (apiKeyError) {
+        if (
+          !(apiKeyError instanceof ApiRequestError) ||
+          apiKeyError.status !== 403
+        ) {
+          throw apiKeyError
+        }
+      }
+
+      const canUseCurrentApiKeyFallback =
+        !apiKeyData || nextStatus.modelverseApiKey.projectId === "manual"
+      const currentApiKey =
+        canUseCurrentApiKeyFallback &&
+        nextStatus.modelverseApiKey.configured &&
+        nextStatus.modelverseApiKey.id
+          ? {
+              id: nextStatus.modelverseApiKey.id,
+              name: nextStatus.modelverseApiKey.name ?? t.codeboxApiKey,
+            }
+          : null
+      const selectedApiKey = apiKeyData?.selected ?? currentApiKey
+      const apiKeyConfigured = Boolean(selectedApiKey)
+      const apiKeyItems = apiKeyData?.items ?? []
+      const nextApiKeys =
+        currentApiKey &&
+        !apiKeyItems.some((apiKey) => apiKey.id === currentApiKey.id)
+          ? [currentApiKey, ...apiKeyItems]
+          : apiKeyItems
 
       setStatus({
         ...nextStatus,
         modelverseApiKey: {
           ...nextStatus.modelverseApiKey,
           configured: apiKeyConfigured,
-          name: apiKeyData.selected?.name ?? null,
-          projectId: apiKeyData.projectId,
+          name: selectedApiKey?.name ?? null,
+          projectId:
+            apiKeyData?.projectId ?? nextStatus.modelverseApiKey.projectId,
         },
       })
-      setApiKeys(apiKeyData.items)
-      setSelectedApiKeyId(apiKeyData.selected?.id ?? "")
+      setApiKeys(nextApiKeys)
+      setSelectedApiKeyId(selectedApiKey?.id ?? "")
 
       if (!apiKeyConfigured) {
         setSandboxes([])
@@ -581,6 +620,10 @@ function CodeBoxPage() {
     const normalizedApiKeyId = apiKeyId.trim()
 
     if (!normalizedApiKeyId || normalizedApiKeyId === "__empty") {
+      return
+    }
+
+    if (normalizedApiKeyId === status?.modelverseApiKey.id) {
       return
     }
 

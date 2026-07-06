@@ -8,6 +8,7 @@ import {
 } from "@/lib/ai/tools/web"
 import { createListInstalledMcpServersTool } from "@/lib/ai/tools/mcp"
 import {
+  createGetStudioMediaModelSchemaTool,
   createGetStudioMediaGenerationTool,
   createListStudioMediaGenerationModelsTool,
   createListStudioMediaGenerationsTool,
@@ -53,6 +54,7 @@ export function createStudioAgentTools(options: StudioAgentToolsOptions = {}) {
 
     tools.push(
       createListStudioMediaGenerationModelsTool(),
+      createGetStudioMediaModelSchemaTool(),
       createListStudioMediaGenerationsTool({
         sessionId: options.sessionId,
         apiKey: modelverseApiKey,

@@ -521,6 +521,77 @@ function fieldByName(fields: StudioImageParameterField[], name: string) {
   return fields.find((field) => field.name === name)
 }
 
+function isVideoParameterField(
+  field: StudioImageParameterField | StudioVideoParameterField
+): field is StudioVideoParameterField {
+  return "payloadPath" in field && Array.isArray(field.payloadPath)
+}
+
+function mediaFieldParamKeys(
+  field: StudioImageParameterField | StudioVideoParameterField
+) {
+  const keys = [field.name]
+
+  if (isVideoParameterField(field)) {
+    const key = getFieldKey(field)
+
+    if (key && key !== field.name) {
+      keys.unshift(key)
+    }
+  }
+
+  return keys
+}
+
+function hasParamValue(params: Record<string, unknown>, keys: string[]) {
+  return keys.some((key) => {
+    const value = params[key]
+
+    return value !== undefined && value !== null && value !== ""
+  })
+}
+
+function shouldApplyFieldDefault(
+  field: StudioImageParameterField | StudioVideoParameterField
+) {
+  if (
+    field.defaultValue === undefined ||
+    field.hidden ||
+    field.kind === "image"
+  ) {
+    return false
+  }
+
+  return (
+    field.name !== "prompt" &&
+    field.name !== "text" &&
+    field.name !== "model" &&
+    field.name !== "content"
+  )
+}
+
+function mergeFieldDefaultParams<
+  Field extends StudioImageParameterField | StudioVideoParameterField,
+>(fields: Field[], params: Record<string, unknown>) {
+  const merged = { ...params }
+
+  for (const field of fields) {
+    if (!shouldApplyFieldDefault(field)) {
+      continue
+    }
+
+    const keys = mediaFieldParamKeys(field)
+
+    if (hasParamValue(merged, keys)) {
+      continue
+    }
+
+    merged[keys[0]] = field.defaultValue
+  }
+
+  return merged
+}
+
 function buildOpenaiImagePayload({
   modelId,
   prompt,
@@ -910,8 +981,7 @@ function extractGeminiImageOutputs(payload: unknown): NormalizedImageOutput[] {
 
     for (const part of parts) {
       const inline = part.inlineData as
-        | { data?: string; mimeType?: string }
-        | undefined
+        { data?: string; mimeType?: string } | undefined
 
       if (inline?.data) {
         const mime = inline.mimeType ?? "image/png"
@@ -929,7 +999,9 @@ function extractGeminiImageOutputs(payload: unknown): NormalizedImageOutput[] {
   return outputs
 }
 
-function extractAsyncImageTaskOutputs(payload: unknown): NormalizedImageOutput[] {
+function extractAsyncImageTaskOutputs(
+  payload: unknown
+): NormalizedImageOutput[] {
   if (!payload || typeof payload !== "object") {
     return []
   }
@@ -1067,7 +1139,9 @@ function outputSessionFileId({
   return getStudioSessionFile(fileId) ? fileId : null
 }
 
-function toImageOutputResult(output: StudioImageOutput): StudioMediaOutputResult {
+function toImageOutputResult(
+  output: StudioImageOutput
+): StudioMediaOutputResult {
   return {
     id: output.id,
     index: output.index,
@@ -1124,7 +1198,7 @@ export async function generateStudioImage(
   const modelId = input.modelId?.trim() || input.modelName
   const modelName = input.modelName.trim()
   const prompt = input.prompt.trim()
-  const params = input.params ?? {}
+  const rawParams = input.params ?? {}
   const attachments = mergeReferenceAttachments({
     attachments: input.attachments ?? [],
     references: input.references ?? [],
@@ -1148,6 +1222,7 @@ export async function generateStudioImage(
   }
 
   const fields = loadImageModelOperationFields(modelName, openapi.operationId)
+  const params = mergeFieldDefaultParams(fields, rawParams)
   const leaseOwner = createMediaJobLeaseOwner()
   const generation = createStudioImageGeneration({
     sessionId: input.sessionId,
@@ -1757,7 +1832,8 @@ function getOpenAiVideoTaskStatus(payload: unknown) {
 }
 
 function getTaskRawStatus(payload: unknown): string | null {
-  const direct = getAsyncTaskStatus(payload) ?? getOpenAiVideoTaskStatus(payload)
+  const direct =
+    getAsyncTaskStatus(payload) ?? getOpenAiVideoTaskStatus(payload)
 
   if (direct) {
     return direct
@@ -2089,7 +2165,9 @@ async function prepareAutoSavedVideoOutput({
   }
 }
 
-function toVideoOutputResult(output: StudioVideoOutput): StudioMediaOutputResult {
+function toVideoOutputResult(
+  output: StudioVideoOutput
+): StudioMediaOutputResult {
   return {
     id: output.id,
     index: output.index,
@@ -2462,7 +2540,7 @@ export async function submitStudioVideoGeneration(
   const modelId = input.modelId?.trim() || input.modelName
   const modelName = input.modelName.trim()
   const prompt = input.prompt.trim()
-  const params = input.params ?? {}
+  const rawParams = input.params ?? {}
   const media = mergeMediaReferenceAttachments({
     media: input.media ?? {},
     mediaReferences: input.mediaReferences ?? {},
@@ -2488,6 +2566,7 @@ export async function submitStudioVideoGeneration(
     throw new Error("Video operation fields are not available.")
   }
 
+  const params = mergeFieldDefaultParams(resolvedOperation.fields, rawParams)
   const leaseOwner = createMediaJobLeaseOwner()
   const generation = createStudioVideoGeneration({
     sessionId: input.sessionId,

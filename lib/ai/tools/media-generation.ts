@@ -6,6 +6,7 @@ import {
   getImageModelDisplayName,
   type ImageOpenapiRegistryEntry,
 } from "@/lib/image-model-openapi"
+import { loadImageModelOperationFields } from "@/lib/image-openapi"
 import { VIDEO_OPENAPI_MODELS } from "@/lib/generated/video-openapi-fields"
 import {
   getGeneratedMediaSessionFileId,
@@ -19,9 +20,16 @@ import {
   submitStudioVideoGeneration,
 } from "@/lib/studio-media-generation-service"
 import type { StudioMediaReference } from "@/lib/studio-media-generation-service"
-import type { StudioImageGeneration } from "@/lib/studio-types"
+import type {
+  StudioImageGeneration,
+  StudioImageParameterField,
+} from "@/lib/studio-types"
 import { listStudioVideoGenerations } from "@/lib/studio-video-db"
-import type { StudioVideoGeneration } from "@/lib/studio-video-types"
+import { loadVideoModelFields } from "@/lib/video-openapi"
+import type {
+  StudioVideoGeneration,
+  StudioVideoParameterField,
+} from "@/lib/studio-video-types"
 
 type StudioMediaToolOptions = {
   sessionId: string
@@ -34,6 +42,33 @@ type StudioMediaReadToolOptions = {
 }
 
 const paramsSchema = z.record(z.string(), z.unknown())
+const PARAMETER_SUMMARY_LIMIT = 18
+const PARAMETER_SCHEMA_LIMIT = 120
+const OPTION_SUMMARY_LIMIT = 12
+const DESCRIPTION_SUMMARY_MAX_CHARS = 180
+const LOW_VALUE_PARAMETER_NAMES = new Set([
+  "model",
+  "prompt",
+  "text",
+  "content",
+])
+const PARAMETER_PRIORITY = [
+  "size",
+  "aspectratio",
+  "ratio",
+  "resolution",
+  "quality",
+  "imagesize",
+  "duration",
+  "n",
+  "num_images",
+  "output_format",
+  "response_format",
+  "width",
+  "height",
+  "watermark",
+  "seed",
+]
 
 const imageAttachmentSchema = z
   .object({
@@ -96,7 +131,170 @@ function normalizeModelQuery(query: string | undefined) {
   return query?.trim().toLowerCase() ?? ""
 }
 
-function imageModelRows(query: string, maxResults: number) {
+function truncateDescription(value: string | undefined) {
+  const normalized = value?.replace(/\s+/g, " ").trim()
+
+  if (!normalized) {
+    return undefined
+  }
+
+  if (normalized.length <= DESCRIPTION_SUMMARY_MAX_CHARS) {
+    return normalized
+  }
+
+  return `${normalized.slice(0, DESCRIPTION_SUMMARY_MAX_CHARS - 3)}...`
+}
+
+function normalizedFieldName(value: string) {
+  return value.replace(/[^a-z0-9]+/gi, "").toLowerCase()
+}
+
+function fieldPriority(field: StudioImageParameterField) {
+  const normalized = normalizedFieldName(field.name)
+  const index = PARAMETER_PRIORITY.findIndex((name) => normalized === name)
+
+  if (index >= 0) {
+    return index
+  }
+
+  return field.advanced ? 100 : 50
+}
+
+function fieldOptions(options: StudioImageParameterField["options"]) {
+  if (!options?.length) {
+    return undefined
+  }
+
+  return options.slice(0, OPTION_SUMMARY_LIMIT).map((option) => option.value)
+}
+
+function fieldSuggestedValues(
+  suggestedValues: StudioImageParameterField["suggestedValues"]
+) {
+  if (!suggestedValues?.length) {
+    return undefined
+  }
+
+  return suggestedValues
+    .slice(0, OPTION_SUMMARY_LIMIT)
+    .map((option) => option.value)
+}
+
+function isVideoField(
+  field: StudioImageParameterField | StudioVideoParameterField
+): field is StudioVideoParameterField {
+  return "payloadPath" in field && Array.isArray(field.payloadPath)
+}
+
+function fieldParamKey(
+  field: StudioImageParameterField | StudioVideoParameterField
+) {
+  if (isVideoField(field)) {
+    return field.payloadPath.join(".") || field.name
+  }
+
+  return field.name
+}
+
+function summarizeParameterField(
+  field: StudioImageParameterField | StudioVideoParameterField
+) {
+  return {
+    name: field.name,
+    key: fieldParamKey(field),
+    kind: field.kind,
+    required: field.required,
+    advanced: field.advanced,
+    ...(field.defaultValue !== undefined
+      ? { defaultValue: field.defaultValue }
+      : {}),
+    ...(field.min !== undefined ? { min: field.min } : {}),
+    ...(field.max !== undefined ? { max: field.max } : {}),
+    ...(field.step !== undefined ? { step: field.step } : {}),
+    ...(field.multipleOf !== undefined ? { multipleOf: field.multipleOf } : {}),
+    ...(fieldOptions(field.options)
+      ? { options: fieldOptions(field.options) }
+      : {}),
+    ...(fieldSuggestedValues(field.suggestedValues)
+      ? { suggestedValues: fieldSuggestedValues(field.suggestedValues) }
+      : {}),
+    ...(truncateDescription(field.description)
+      ? { description: truncateDescription(field.description) }
+      : {}),
+  }
+}
+
+function summarizeMediaField(field: StudioImageParameterField) {
+  const videoField = isVideoField(field) ? field : null
+
+  return {
+    name: field.name,
+    key: fieldParamKey(field),
+    required: field.required,
+    acceptMultiple: Boolean(field.acceptMultiple),
+    acceptUrl: Boolean(field.acceptUrl),
+    ...(videoField?.mediaShape ? { mediaShape: videoField.mediaShape } : {}),
+    ...(videoField?.mediaRoleValues?.length
+      ? { mediaRoles: videoField.mediaRoleValues }
+      : {}),
+    ...(truncateDescription(field.description)
+      ? { description: truncateDescription(field.description) }
+      : {}),
+  }
+}
+
+function summarizeParameterSchema(
+  fields: Array<StudioImageParameterField | StudioVideoParameterField>,
+  parameterLimit = PARAMETER_SUMMARY_LIMIT
+) {
+  const visibleFields = fields.filter((field) => !field.hidden)
+  const parameterFields = visibleFields
+    .filter(
+      (field) =>
+        field.kind !== "image" &&
+        !LOW_VALUE_PARAMETER_NAMES.has(field.name.toLowerCase())
+    )
+    .sort((left, right) => {
+      const priority = fieldPriority(left) - fieldPriority(right)
+
+      return priority || left.name.localeCompare(right.name)
+    })
+  const summarizedParameters = parameterFields
+    .slice(0, parameterLimit)
+    .map(summarizeParameterField)
+  const defaultParams = Object.fromEntries(
+    parameterFields
+      .filter((field) => field.defaultValue !== undefined)
+      .map((field) => [fieldParamKey(field), field.defaultValue])
+  )
+  const mediaFields = visibleFields
+    .filter((field) => field.kind === "image")
+    .map(summarizeMediaField)
+
+  return {
+    paramsKey:
+      "Pass these under params by key; for video, payload-path keys such as parameters.resolution also work.",
+    parameters: summarizedParameters,
+    ...(parameterFields.length > summarizedParameters.length
+      ? {
+          moreParameters: parameterFields.length - summarizedParameters.length,
+        }
+      : {}),
+    ...(Object.keys(defaultParams).length ? { defaultParams } : {}),
+    ...(mediaFields.length ? { mediaFields } : {}),
+  }
+}
+
+function parameterDetailLimit(detail: "summary" | "schema") {
+  return detail === "schema" ? PARAMETER_SCHEMA_LIMIT : PARAMETER_SUMMARY_LIMIT
+}
+
+function imageModelRows(
+  query: string,
+  maxResults: number,
+  detail: "summary" | "schema" = "summary"
+) {
+  const parameterLimit = parameterDetailLimit(detail)
   const rows = Object.entries(IMAGE_MODEL_REGISTRY)
     .filter(([, entry]) => entry.supported && entry.openapi)
     .map(([modelName, entry]) => ({
@@ -104,15 +302,18 @@ function imageModelRows(query: string, maxResults: number) {
       modelName,
       label: getImageModelDisplayName(modelName),
       operations: [entry.openapi, entry.editOpenapi]
-        .filter(
-          (operation): operation is ImageOpenapiRegistryEntry =>
-            Boolean(operation)
+        .filter((operation): operation is ImageOpenapiRegistryEntry =>
+          Boolean(operation)
         )
         .map((operation) => ({
           operationId: operation.operationId,
           openapiFile: operation.file,
           adapter: operation.adapter,
           requiresReferenceImage: operation.adapter === "openai-images-edit",
+          parameterSchema: summarizeParameterSchema(
+            loadImageModelOperationFields(modelName, operation.operationId),
+            parameterLimit
+          ),
         })),
     }))
 
@@ -131,7 +332,12 @@ function imageModelRows(query: string, maxResults: number) {
     .slice(0, maxResults)
 }
 
-function videoModelRows(query: string, maxResults: number) {
+function videoModelRows(
+  query: string,
+  maxResults: number,
+  detail: "summary" | "schema" = "summary"
+) {
+  const parameterLimit = parameterDetailLimit(detail)
   const rows = VIDEO_OPENAPI_MODELS.map((entry) => ({
     kind: "video",
     title: entry.title,
@@ -140,6 +346,10 @@ function videoModelRows(query: string, maxResults: number) {
     openapiFile: entry.file,
     adapter: entry.adapter,
     contentType: entry.contentType,
+    parameterSchema: summarizeParameterSchema(
+      loadVideoModelFields(entry),
+      parameterLimit
+    ),
   }))
 
   return rows
@@ -155,6 +365,103 @@ function videoModelRows(query: string, maxResults: number) {
       )
     })
     .slice(0, maxResults)
+}
+
+function findImageModelEntry(modelName: string) {
+  const normalized = modelName.trim().toLowerCase()
+  const match = Object.entries(IMAGE_MODEL_REGISTRY).find(
+    ([candidate]) => candidate.toLowerCase() === normalized
+  )
+
+  if (!match) {
+    return null
+  }
+
+  const [resolvedModelName, entry] = match
+
+  return { modelName: resolvedModelName, entry }
+}
+
+function getImageModelSchema({
+  modelName,
+  operationId,
+}: {
+  modelName: string
+  operationId?: string
+}) {
+  const model = findImageModelEntry(modelName)
+
+  if (!model || !model.entry.supported || !model.entry.openapi) {
+    return null
+  }
+
+  const operations = [model.entry.openapi, model.entry.editOpenapi]
+    .filter((operation): operation is ImageOpenapiRegistryEntry =>
+      Boolean(operation)
+    )
+    .filter(
+      (operation) => !operationId || operation.operationId === operationId
+    )
+    .map((operation) => ({
+      operationId: operation.operationId,
+      openapiFile: operation.file,
+      adapter: operation.adapter,
+      requiresReferenceImage: operation.adapter === "openai-images-edit",
+      parameterSchema: summarizeParameterSchema(
+        loadImageModelOperationFields(model.modelName, operation.operationId),
+        PARAMETER_SCHEMA_LIMIT
+      ),
+    }))
+
+  if (!operations.length) {
+    return null
+  }
+
+  return {
+    kind: "image",
+    modelName: model.modelName,
+    label: getImageModelDisplayName(model.modelName),
+    operations,
+  }
+}
+
+function getVideoModelSchema({
+  modelName,
+  openapiFile,
+  operationId,
+}: {
+  modelName: string
+  openapiFile?: string
+  operationId?: string
+}) {
+  const normalizedModelName = modelName.trim().toLowerCase()
+  const rows = VIDEO_OPENAPI_MODELS.filter((entry) => {
+    if (operationId && entry.operationId !== operationId) {
+      return false
+    }
+
+    if (openapiFile && entry.file !== openapiFile) {
+      return false
+    }
+
+    return entry.modelValues.some(
+      (candidate) => candidate.toLowerCase() === normalizedModelName
+    )
+  }).map((entry) => ({
+    kind: "video",
+    title: entry.title,
+    modelNames: entry.modelValues,
+    operationId: entry.operationId,
+    openapiFile: entry.file,
+    adapter: entry.adapter,
+    contentType: entry.contentType,
+    parameterSchema: summarizeParameterSchema(
+      loadVideoModelFields(entry),
+      PARAMETER_SCHEMA_LIMIT
+    ),
+  }))
+
+  return rows.length ? rows : null
 }
 
 function outputSessionFileId({
@@ -281,24 +588,24 @@ function listMediaGenerations({
 
 export function createListStudioMediaGenerationModelsTool() {
   return tool(
-    async ({ kind, query, maxResults }) => {
+    async ({ kind, query, maxResults, detail }) => {
       const normalizedQuery = normalizeModelQuery(query)
       const count = Math.min(Math.max(maxResults ?? 20, 1), 50)
+      const schemaDetail = detail ?? "summary"
       const models =
         kind === "image"
-          ? imageModelRows(normalizedQuery, count)
+          ? imageModelRows(normalizedQuery, count, schemaDetail)
           : kind === "video"
-            ? videoModelRows(normalizedQuery, count)
+            ? videoModelRows(normalizedQuery, count, schemaDetail)
             : [
-                ...imageModelRows(normalizedQuery, count),
-                ...videoModelRows(normalizedQuery, count),
+                ...imageModelRows(normalizedQuery, count, schemaDetail),
+                ...videoModelRows(normalizedQuery, count, schemaDetail),
               ].slice(0, count)
 
       return JSON.stringify(
         {
           models,
-          note:
-            "Use modelName for generation. Pass operationId when selecting a non-default operation.",
+          note: "Use modelName for generation. Inspect operation parameterSchema and pass useful values in params instead of relying only on the prompt. Pass operationId when selecting a non-default operation.",
         },
         null,
         2
@@ -327,6 +634,13 @@ export function createListStudioMediaGenerationModelsTool() {
           .optional()
           .default(20)
           .describe("Maximum number of models to return."),
+        detail: z
+          .enum(["summary", "schema"])
+          .optional()
+          .default("summary")
+          .describe(
+            "Use summary for model discovery; use schema only when full parameter detail is needed."
+          ),
       }),
     }
   )
@@ -334,15 +648,15 @@ export function createListStudioMediaGenerationModelsTool() {
 
 export function createListStudioImageModelsTool() {
   return tool(
-    async ({ query, maxResults }) => {
+    async ({ query, maxResults, detail }) => {
       const normalizedQuery = normalizeModelQuery(query)
       const count = Math.min(Math.max(maxResults ?? 20, 1), 50)
+      const schemaDetail = detail ?? "summary"
 
       return JSON.stringify(
         {
-          models: imageModelRows(normalizedQuery, count),
-          note:
-            "Use modelName for generation. Pass operationId when selecting a non-default operation.",
+          models: imageModelRows(normalizedQuery, count, schemaDetail),
+          note: "Use modelName for generation. Inspect operation parameterSchema and pass useful values in params, such as size, aspectRatio, imageSize, quality, output_format, or reference image fields. Pass operationId when selecting a non-default operation.",
         },
         null,
         2
@@ -366,6 +680,13 @@ export function createListStudioImageModelsTool() {
           .optional()
           .default(20)
           .describe("Maximum number of models to return."),
+        detail: z
+          .enum(["summary", "schema"])
+          .optional()
+          .default("summary")
+          .describe(
+            "Use summary for model discovery; use schema only when full parameter detail is needed."
+          ),
       }),
     }
   )
@@ -373,15 +694,15 @@ export function createListStudioImageModelsTool() {
 
 export function createListStudioVideoModelsTool() {
   return tool(
-    async ({ query, maxResults }) => {
+    async ({ query, maxResults, detail }) => {
       const normalizedQuery = normalizeModelQuery(query)
       const count = Math.min(Math.max(maxResults ?? 20, 1), 50)
+      const schemaDetail = detail ?? "summary"
 
       return JSON.stringify(
         {
-          models: videoModelRows(normalizedQuery, count),
-          note:
-            "Use modelName for generation. Pass operationId and openapiFile when selecting a non-default operation.",
+          models: videoModelRows(normalizedQuery, count, schemaDetail),
+          note: "Use modelName for generation. Inspect parameterSchema and pass useful values in params or mediaReferences, such as ratio, resolution, duration, quality, first-frame, or last-frame fields. Pass operationId and openapiFile when selecting a non-default operation.",
         },
         null,
         2
@@ -405,6 +726,62 @@ export function createListStudioVideoModelsTool() {
           .optional()
           .default(20)
           .describe("Maximum number of models to return."),
+        detail: z
+          .enum(["summary", "schema"])
+          .optional()
+          .default("summary")
+          .describe(
+            "Use summary for model discovery; use schema only when full parameter detail is needed."
+          ),
+      }),
+    }
+  )
+}
+
+export function createGetStudioMediaModelSchemaTool() {
+  return tool(
+    async ({ kind, modelName, operationId, openapiFile }) => {
+      const schema =
+        kind === "image"
+          ? getImageModelSchema({ modelName, operationId })
+          : getVideoModelSchema({ modelName, operationId, openapiFile })
+
+      return JSON.stringify(
+        {
+          schema,
+          note: schema
+            ? "Use parameterSchema keys under params. For video media fields, use mediaReferences keyed by the listed payload-path key when possible."
+            : "No schema matched. Call studio_list_media_generation_models with a query first, then pass the exact modelName plus operationId/openapiFile when needed.",
+        },
+        null,
+        2
+      )
+    },
+    {
+      name: "studio_get_media_model_schema",
+      description:
+        "Get detailed provider parameter schema for one Studio image or video generation model after selecting it from the model list.",
+      schema: z.object({
+        kind: z
+          .enum(["image", "video"])
+          .describe("Whether to look up an image or video model."),
+        modelName: z
+          .string()
+          .trim()
+          .min(1)
+          .describe("Exact modelName from the media model list."),
+        operationId: z
+          .string()
+          .trim()
+          .min(1)
+          .optional()
+          .describe("Optional operationId to disambiguate an operation."),
+        openapiFile: z
+          .string()
+          .trim()
+          .min(1)
+          .optional()
+          .describe("Optional video OpenAPI file to disambiguate a model."),
       }),
     }
   )
@@ -486,8 +863,9 @@ export function createGetStudioMediaGenerationTool({
         sessionId,
       })
       const generation =
-        generations.find((candidate) => candidate.generationId === generationId)
-          ?? null
+        generations.find(
+          (candidate) => candidate.generationId === generationId
+        ) ?? null
 
       return JSON.stringify({ generation }, null, 2)
     },
@@ -537,7 +915,7 @@ export function createStudioGenerateImageTool({
     {
       name: "studio_generate_image",
       description:
-        "Generate or edit an image with Studio ModelVerse image models. Prefer references over data URLs for current-session files or prior image outputs. Returns a generation id, status, prompt, model, and output content/storage URLs when available.",
+        "Generate or edit an image with Studio ModelVerse image models. Use studio_list_image_models first when you need model-specific params; actively fill useful params such as size, aspectRatio, imageSize, quality, output_format, response_format, n, seed, or watermark based on the user's intent and the model's parameterSchema. Prefer references over data URLs for current-session files or prior image outputs. Returns a generation id, status, prompt, model, and output content/storage URLs when available.",
       schema: z.object({
         modelName: z
           .string()
@@ -557,17 +935,16 @@ export function createStudioGenerateImageTool({
           .trim()
           .min(1)
           .optional()
-          .describe("Optional OpenAPI operation id for edit or alternate modes."),
-        prompt: z
-          .string()
-          .trim()
-          .min(1)
-          .max(4_000)
-          .describe("Image prompt."),
+          .describe(
+            "Optional OpenAPI operation id for edit or alternate modes."
+          ),
+        prompt: z.string().trim().min(1).max(4_000).describe("Image prompt."),
         params: paramsSchema
           .optional()
           .default({})
-          .describe("Provider-specific parameter values keyed by field name."),
+          .describe(
+            "Provider-specific parameter values keyed by field name from the model parameterSchema, for example size, aspectRatio, imageSize, quality, output_format, response_format, n, seed, or watermark."
+          ),
         attachments: z
           .array(imageAttachmentSchema)
           .optional()
@@ -622,7 +999,7 @@ export function createStudioGenerateVideoTool({
     {
       name: "studio_generate_video",
       description:
-        "Submit a Studio ModelVerse video generation task. Prefer references over data URLs for current-session files or prior media outputs. Returns the generation id, running/error status, provider task id, prompt, model, and any output URLs already available.",
+        "Submit a Studio ModelVerse video generation task. Use studio_list_video_models first when you need model-specific params; actively fill useful params such as ratio, resolution, duration, quality, camera, motion, seed, or payload-path keys from parameterSchema. Prefer mediaReferences over data URLs for current-session files or prior media outputs. Returns the generation id, running/error status, provider task id, prompt, model, and any output URLs already available.",
       schema: z.object({
         modelName: z
           .string()
@@ -649,17 +1026,12 @@ export function createStudioGenerateVideoTool({
           .min(1)
           .optional()
           .describe("Optional OpenAPI file when disambiguating video models."),
-        prompt: z
-          .string()
-          .trim()
-          .min(1)
-          .max(8_000)
-          .describe("Video prompt."),
+        prompt: z.string().trim().min(1).max(8_000).describe("Video prompt."),
         params: paramsSchema
           .optional()
           .default({})
           .describe(
-            "Provider-specific parameter values keyed by field name or payload path."
+            "Provider-specific parameter values keyed by field name or payload path from parameterSchema, for example ratio, resolution, duration, quality, seed, or parameters.resolution."
           ),
         media: z
           .record(z.string(), z.array(mediaAttachmentSchema))

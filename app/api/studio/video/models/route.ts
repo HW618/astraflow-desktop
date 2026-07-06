@@ -128,7 +128,7 @@ export async function GET() {
   if (!credentials) {
     return NextResponse.json(
       { ok: false, message: "UCloud OAuth is not configured locally." },
-      { status: 401 }
+      { status: 403 }
     )
   }
 

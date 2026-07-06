@@ -277,7 +277,7 @@ export async function GET(request: Request) {
   if (!credentials) {
     return NextResponse.json(
       { ok: false, message: "UCloud OAuth is required." },
-      { status: 401 }
+      { status: 403 }
     )
   }
 
@@ -309,7 +309,7 @@ export async function POST(request: Request) {
   if (!credentials) {
     return NextResponse.json(
       { ok: false, message: "UCloud OAuth is required." },
-      { status: 401 }
+      { status: 403 }
     )
   }
 
@@ -395,7 +395,7 @@ export async function PATCH(request: Request) {
   if (!credentials) {
     return NextResponse.json(
       { ok: false, message: "UCloud OAuth is required." },
-      { status: 401 }
+      { status: 403 }
     )
   }
 
@@ -452,7 +452,7 @@ export async function DELETE(request: Request) {
   if (!credentials) {
     return NextResponse.json(
       { ok: false, message: "UCloud OAuth is required." },
-      { status: 401 }
+      { status: 403 }
     )
   }
 

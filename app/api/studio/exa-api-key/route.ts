@@ -32,7 +32,7 @@ export async function GET() {
   if (!requireOAuth()) {
     return NextResponse.json(
       { ok: false, message: "UCloud OAuth is required." },
-      { status: 401 }
+      { status: 403 }
     )
   }
 

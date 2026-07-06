@@ -45,8 +45,7 @@ export type PermissionGatewayContext = {
 }
 
 type PermissionCheckResult =
-  | { allowed: true }
-  | { allowed: false; message: string }
+  { allowed: true } | { allowed: false; message: string }
 
 function getRecord(value: unknown) {
   return typeof value === "object" && value !== null
@@ -137,6 +136,7 @@ export function getPermissionToolKind(toolName: string): PermissionToolKind {
       "studio_list_image_models",
       "studio_list_video_models",
       "studio_list_media_generation_models",
+      "studio_get_media_model_schema",
       "studio_list_media_generations",
       "studio_get_media_generation",
       "request_user_input",
@@ -296,11 +296,7 @@ export function wrapToolsWithPermissionGateway(
         }
 
         if (property === "call") {
-          return async (
-            input: unknown,
-            config?: unknown,
-            tags?: string[]
-          ) => {
+          return async (input: unknown, config?: unknown, tags?: string[]) => {
             const permission = await requestToolPermission({
               context,
               input,
