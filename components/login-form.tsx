@@ -388,7 +388,11 @@ function LoginForm() {
       <Card className="overflow-hidden border-border/70 bg-card/92 shadow-2xl shadow-black/6 dark:shadow-black/40 supports-backdrop-filter:backdrop-blur-xl">
         <CardHeader className="pb-3 text-center">
           <div className="flex justify-center">
-            <AstraFlowLogo className="h-10" fetchPriority="high" />
+            <AstraFlowLogo
+              className="h-10"
+              fetchPriority="high"
+              loading="eager"
+            />
           </div>
         </CardHeader>
 

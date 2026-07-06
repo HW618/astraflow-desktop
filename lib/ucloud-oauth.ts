@@ -525,7 +525,12 @@ export async function ensureValidStudioOAuthTokens() {
   }
 
   if (!current.refreshToken) {
-    return current.expiresAt && current.expiresAt <= Date.now() ? null : current
+    if (current.expiresAt && current.expiresAt <= Date.now()) {
+      clearStudioOAuthTokens()
+      return null
+    }
+
+    return current
   }
 
   if (globalThis.astraflowOAuthRefreshPromise) {

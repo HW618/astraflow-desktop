@@ -4,6 +4,7 @@ import * as React from "react"
 import { usePathname } from "next/navigation"
 
 import { AppSidebar } from "@/components/app-sidebar"
+import { AuthSessionGuard } from "@/components/auth-session-guard"
 import { StudioOnboardingTour } from "@/components/onboarding-tour"
 import { SidebarToggleButton } from "@/components/sidebar-toggle-button"
 import { Titlebar } from "@/components/titlebar"
@@ -167,6 +168,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
   if (pathname === "/login") {
     return (
       <div className="flex h-svh min-h-0 flex-col bg-background">
+        <AuthSessionGuard />
         <Titlebar className="bg-background" />
         <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
       </div>
@@ -188,6 +190,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
         } as React.CSSProperties
       }
     >
+      <AuthSessionGuard />
       <ElectronCollapsedDragCorner />
       <DesktopCollapsedSidebarTrigger />
       <div className="flex min-h-0 w-full flex-1">

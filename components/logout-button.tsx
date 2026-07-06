@@ -13,10 +13,19 @@ type LogoutButtonProps = {
 async function logout() {
   const response = await fetch("/api/studio/oauth/logout", {
     method: "POST",
+    cache: "no-store",
   })
 
   if (!response.ok) {
-    throw new Error("Logout failed")
+    let detail: unknown = null
+
+    try {
+      detail = await response.json()
+    } catch {
+      detail = await response.text().catch(() => null)
+    }
+
+    console.warn("Logout request failed.", detail)
   }
 }
 
@@ -28,9 +37,10 @@ function LogoutButton({ className }: LogoutButtonProps = {}) {
     try {
       setPending(true)
       await logout()
-      window.location.replace("/login")
+    } catch (error) {
+      console.warn("Logout request failed.", error)
     } finally {
-      setPending(false)
+      window.location.replace("/login")
     }
   }
 

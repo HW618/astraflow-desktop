@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils"
 type AstraFlowLogoProps = {
   className?: string
   fetchPriority?: "high" | "low" | "auto"
+  loading?: "eager" | "lazy"
 }
 
 const logos = {
@@ -21,7 +22,11 @@ const logos = {
   },
 } as const
 
-function AstraFlowLogo({ className, fetchPriority }: AstraFlowLogoProps) {
+function AstraFlowLogo({
+  className,
+  fetchPriority,
+  loading,
+}: AstraFlowLogoProps) {
   const { locale } = useI18n()
   const logo = logos[locale]
 
@@ -34,6 +39,7 @@ function AstraFlowLogo({ className, fetchPriority }: AstraFlowLogoProps) {
         height={logo.light.height}
         className={cn("block h-8 w-auto dark:hidden", className)}
         fetchPriority={fetchPriority}
+        loading={loading}
       />
       <Image
         src={logo.dark.src}
@@ -42,6 +48,7 @@ function AstraFlowLogo({ className, fetchPriority }: AstraFlowLogoProps) {
         height={logo.dark.height}
         className={cn("hidden h-8 w-auto dark:block", className)}
         fetchPriority={fetchPriority}
+        loading={loading}
       />
     </>
   )

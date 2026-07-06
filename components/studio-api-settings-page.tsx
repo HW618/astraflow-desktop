@@ -6,6 +6,7 @@ import {
   RiCheckLine,
   RiDeleteBinLine,
   RiFileCopyLine,
+  RiInformationLine,
   RiKey2Line,
   RiLoader4Line,
   RiPencilLine,
@@ -40,6 +41,13 @@ import {
   FieldLabel,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import {
+  Popover,
+  PopoverContent,
+  PopoverHeader,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@/components/ui/popover"
 import {
   Select,
   SelectContent,
@@ -113,6 +121,7 @@ type ApiKeyStatusFilter = "all" | "active" | "inactive" | "modelverse-off"
 
 type StudioApiSettingsPageProps = {
   onSelectedKeyChange?: (configured: boolean) => void
+  embedded?: boolean
 }
 
 const emptyForm: ApiKeyFormState = {
@@ -335,6 +344,7 @@ async function writeClipboard(value: string) {
 }
 
 function StudioApiSettingsPage({
+  embedded = false,
   onSelectedKeyChange,
 }: StudioApiSettingsPageProps = {}) {
   const { locale, t } = useI18n()
@@ -724,9 +734,21 @@ function StudioApiSettingsPage({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
-      <main className="min-h-0 flex-1 overflow-y-auto">
-        <div className="flex flex-col gap-4 p-4 lg:p-6">
+    <div
+      className={cn(
+        "flex min-w-0 flex-col",
+        embedded
+          ? "bg-transparent"
+          : "min-h-0 flex-1 overflow-hidden bg-background"
+      )}
+    >
+      <main
+        className={cn(
+          "min-w-0",
+          embedded ? "overflow-visible" : "min-h-0 flex-1 overflow-y-auto"
+        )}
+      >
+        <div className={cn("flex flex-col gap-4", !embedded && "p-4 lg:p-6")}>
           <div className="flex flex-col gap-3 rounded-4xl bg-card/70 p-3 shadow-sm ring-1 ring-foreground/5 dark:ring-foreground/10">
             <div className="flex flex-wrap items-center gap-2">
               <div className="relative min-w-0 flex-1 basis-64 sm:max-w-sm">
@@ -789,19 +811,14 @@ function StudioApiSettingsPage({
             </div>
           </div>
 
-          <Card className="rounded-4xl py-0">
+          <Card className="overflow-hidden rounded-4xl py-0">
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1150px] table-fixed text-sm">
+              <table className="w-full min-w-[700px] table-fixed text-sm">
                 <colgroup>
-                  <col className="w-[145px]" />
-                  <col className="w-[140px]" />
-                  <col className="w-[145px]" />
-                  <col className="w-[90px]" />
-                  <col className="w-[145px]" />
-                  <col className="w-[150px]" />
-                  <col className="w-[110px]" />
-                  <col className="w-[115px]" />
-                  <col className="w-[110px]" />
+                  <col className="w-[28%]" />
+                  <col className="w-[26%]" />
+                  <col className="w-[24%]" />
+                  <col className="w-[22%]" />
                 </colgroup>
                 <thead className="border-b bg-muted/35">
                   <tr className="text-center text-xs font-medium text-muted-foreground">
@@ -815,21 +832,6 @@ function StudioApiSettingsPage({
                       {t.studioApiKeyPreview}
                     </th>
                     <th className="px-3 py-3 font-medium">
-                      {t.studioApiKeyStatus}
-                    </th>
-                    <th className="px-3 py-3 font-medium">
-                      {t.studioApiKeyAccess}
-                    </th>
-                    <th className="px-3 py-3 font-medium">
-                      {t.studioApiKeyLimits}
-                    </th>
-                    <th className="px-3 py-3 font-medium">
-                      {t.studioApiKeyModels}
-                    </th>
-                    <th className="px-3 py-3 font-medium">
-                      {t.studioApiKeyCreatedAt}
-                    </th>
-                    <th className="px-3 py-3 font-medium">
                       {t.studioApiKeyActions}
                     </th>
                   </tr>
@@ -837,7 +839,7 @@ function StudioApiSettingsPage({
                 <tbody className="divide-y">
                   {isLoading ? (
                     <tr>
-                      <td className="h-48 px-3 py-8 text-center" colSpan={9}>
+                      <td className="h-48 px-3 py-8 text-center" colSpan={4}>
                         <div className="flex items-center justify-center gap-2 text-muted-foreground">
                           <RiLoader4Line className="size-4 animate-spin" />
                           {t.studioApiKeyLoading}
@@ -909,77 +911,150 @@ function StudioApiSettingsPage({
                               </Button>
                             </div>
                           </td>
-                          <td className="px-3 py-3 align-middle">
-                            <Badge
-                              variant={
-                                apiKey.status === 1 ? "secondary" : "outline"
-                              }
-                            >
-                              {apiKey.status === 1
-                                ? t.studioApiKeyStatusActive
-                                : t.studioApiKeyStatusInactive}
-                            </Badge>
-                          </td>
-                          <td className="px-3 py-3 align-middle">
-                            <div className="flex flex-wrap justify-center gap-1.5">
-                              <Badge
-                                variant={
-                                  apiKey.modelverseDisabled === 1
-                                    ? "outline"
-                                    : "secondary"
-                                }
-                              >
-                                {apiKey.modelverseDisabled === 1
-                                  ? t.studioApiKeyModelverseOff
-                                  : t.studioApiKeyModelverseOn}
-                              </Badge>
-                              <Badge
-                                variant={
-                                  apiKey.sandboxDisabled === 1
-                                    ? "outline"
-                                    : "secondary"
-                                }
-                              >
-                                {apiKey.sandboxDisabled === 1
-                                  ? t.studioApiKeySandboxOff
-                                  : t.studioApiKeySandboxOn}
-                              </Badge>
-                            </div>
-                          </td>
-                          <td className="px-3 py-3 align-middle">
-                            <div className="flex flex-col items-center gap-1 text-xs text-muted-foreground">
-                              <span>
-                                {t.studioApiKeyDailyShort}:{" "}
-                                <span className="text-foreground">
-                                  {formatAmount(apiKey.dailyUsedAmount)}
-                                </span>
-                                /
-                                <span className="text-foreground">
-                                  {formatAmount(apiKey.dailyLimitAmount)}
-                                </span>
-                              </span>
-                              <span>
-                                {t.studioApiKeyMonthlyShort}:{" "}
-                                <span className="text-foreground">
-                                  {formatAmount(apiKey.monthlyUsedAmount)}
-                                </span>
-                                /
-                                <span className="text-foreground">
-                                  {formatAmount(apiKey.monthlyLimitAmount)}
-                                </span>
-                              </span>
-                            </div>
-                          </td>
-                          <td className="px-3 py-3 align-middle">
-                            <Badge variant="outline" title={modelTitle}>
-                              {renderModels(apiKey)}
-                            </Badge>
-                          </td>
-                          <td className="px-3 py-3 align-middle text-muted-foreground">
-                            {formatUnixTime(apiKey.createdAt, locale)}
-                          </td>
-                          <td className="px-3 py-3 align-middle">
-                            <div className="flex items-center justify-center gap-1.5">
+                          <td className="px-2 py-3 align-middle whitespace-nowrap">
+                            <div className="flex items-center justify-center gap-1">
+                              <Popover>
+                                <PopoverTrigger asChild>
+                                  <Button
+                                    aria-label={t.studioApiKeyDetails}
+                                    size="icon-sm"
+                                    title={t.studioApiKeyDetails}
+                                    type="button"
+                                    variant="outline"
+                                  >
+                                    <RiInformationLine />
+                                  </Button>
+                                </PopoverTrigger>
+                                <PopoverContent
+                                  align="end"
+                                  className="w-80 gap-3 rounded-3xl p-3"
+                                >
+                                  <PopoverHeader>
+                                    <PopoverTitle className="truncate text-sm">
+                                      {apiKey.name || "-"}
+                                    </PopoverTitle>
+                                  </PopoverHeader>
+
+                                  <div className="grid gap-2 text-sm">
+                                    <div className="flex items-center justify-between gap-3 rounded-2xl bg-muted/55 px-3 py-2">
+                                      <span className="text-muted-foreground">
+                                        {t.studioApiKeyStatus}
+                                      </span>
+                                      <Badge
+                                        variant={
+                                          apiKey.status === 1
+                                            ? "secondary"
+                                            : "outline"
+                                        }
+                                      >
+                                        {apiKey.status === 1
+                                          ? t.studioApiKeyStatusActive
+                                          : t.studioApiKeyStatusInactive}
+                                      </Badge>
+                                    </div>
+
+                                    <div className="rounded-2xl bg-muted/55 px-3 py-2">
+                                      <div className="mb-2 text-muted-foreground">
+                                        {t.studioApiKeyAccess}
+                                      </div>
+                                      <div className="flex flex-wrap gap-1.5">
+                                        <Badge
+                                          variant={
+                                            apiKey.modelverseDisabled === 1
+                                              ? "outline"
+                                              : "secondary"
+                                          }
+                                        >
+                                          {apiKey.modelverseDisabled === 1
+                                            ? t.studioApiKeyModelverseOff
+                                            : t.studioApiKeyModelverseOn}
+                                        </Badge>
+                                        <Badge
+                                          variant={
+                                            apiKey.sandboxDisabled === 1
+                                              ? "outline"
+                                              : "secondary"
+                                          }
+                                        >
+                                          {apiKey.sandboxDisabled === 1
+                                            ? t.studioApiKeySandboxOff
+                                            : t.studioApiKeySandboxOn}
+                                        </Badge>
+                                      </div>
+                                    </div>
+
+                                    <div className="grid gap-1 rounded-2xl bg-muted/55 px-3 py-2">
+                                      <div className="text-muted-foreground">
+                                        {t.studioApiKeyLimits}
+                                      </div>
+                                      <div className="flex items-center justify-between gap-3">
+                                        <span className="text-muted-foreground">
+                                          {t.studioApiKeyDailyShort}
+                                        </span>
+                                        <span className="font-medium">
+                                          {formatAmount(apiKey.dailyUsedAmount)}
+                                          /
+                                          {formatAmount(apiKey.dailyLimitAmount)}
+                                        </span>
+                                      </div>
+                                      <div className="flex items-center justify-between gap-3">
+                                        <span className="text-muted-foreground">
+                                          {t.studioApiKeyMonthlyShort}
+                                        </span>
+                                        <span className="font-medium">
+                                          {formatAmount(
+                                            apiKey.monthlyUsedAmount
+                                          )}
+                                          /
+                                          {formatAmount(
+                                            apiKey.monthlyLimitAmount
+                                          )}
+                                        </span>
+                                      </div>
+                                    </div>
+
+                                    <div className="rounded-2xl bg-muted/55 px-3 py-2">
+                                      <div className="mb-2 flex items-center justify-between gap-3">
+                                        <span className="text-muted-foreground">
+                                          {t.studioApiKeyModels}
+                                        </span>
+                                        <Badge
+                                          variant="outline"
+                                          title={modelTitle}
+                                        >
+                                          {renderModels(apiKey)}
+                                        </Badge>
+                                      </div>
+                                      {apiKey.grantedModels.length > 0 &&
+                                      !apiKey.grantedModels.includes("all") ? (
+                                        <div className="max-h-24 overflow-y-auto rounded-xl bg-background px-2 py-1 font-mono text-xs text-muted-foreground">
+                                          {apiKey.grantedModels.map((model) => (
+                                            <div
+                                              key={model}
+                                              className="truncate"
+                                              title={model}
+                                            >
+                                              {model}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ) : null}
+                                    </div>
+
+                                    <div className="flex items-center justify-between gap-3 rounded-2xl bg-muted/55 px-3 py-2">
+                                      <span className="text-muted-foreground">
+                                        {t.studioApiKeyCreatedAt}
+                                      </span>
+                                      <span className="font-medium">
+                                        {formatUnixTime(
+                                          apiKey.createdAt,
+                                          locale
+                                        )}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </PopoverContent>
+                              </Popover>
                               <Button
                                 aria-label={t.studioApiKeyUseForApp}
                                 disabled={
@@ -1021,7 +1096,7 @@ function StudioApiSettingsPage({
                     })
                   ) : (
                     <tr>
-                      <td className="h-48 px-3 py-8 text-center" colSpan={9}>
+                      <td className="h-48 px-3 py-8 text-center" colSpan={4}>
                         <div className="flex flex-col items-center gap-2 text-muted-foreground">
                           <span className="font-medium text-foreground">
                             {apiKeys.length

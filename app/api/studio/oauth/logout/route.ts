@@ -12,13 +12,16 @@ export const runtime = "nodejs"
 export async function POST(request: Request) {
   const originError = requireSameOriginRequest(request)
 
-  if (originError) {
-    return originError
-  }
-
   clearStudioExaApiKey()
   clearStudioModelverseApiKey()
   clearStudioOAuthTokens()
+
+  if (originError) {
+    return NextResponse.json({
+      ok: true,
+      warning: "Invalid request origin was ignored for local logout.",
+    })
+  }
 
   return NextResponse.json({
     ok: true,

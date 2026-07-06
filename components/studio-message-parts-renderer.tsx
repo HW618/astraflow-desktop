@@ -1496,8 +1496,100 @@ function SandboxOutputSection({
   )
 }
 
+type ParsedJsonToolOutput = {
+  code: string
+  summary: string
+}
+
+function isJsonRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function getJsonToolOutputSummary(value: unknown) {
+  if (Array.isArray(value)) {
+    return `${value.length} ${value.length === 1 ? "item" : "items"}`
+  }
+
+  if (!isJsonRecord(value)) {
+    return ""
+  }
+
+  const keys = Object.keys(value)
+
+  if (keys.length === 1) {
+    const key = keys[0]
+    const nestedValue = value[key]
+
+    if (Array.isArray(nestedValue)) {
+      return `${key} · ${nestedValue.length}`
+    }
+
+    if (isJsonRecord(nestedValue)) {
+      return `${key} · ${Object.keys(nestedValue).length}`
+    }
+  }
+
+  return `${keys.length} ${keys.length === 1 ? "field" : "fields"}`
+}
+
+function getJsonToolOutput(output: string): ParsedJsonToolOutput | null {
+  const trimmed = output.trim()
+
+  if (!trimmed || (!trimmed.startsWith("{") && !trimmed.startsWith("["))) {
+    return null
+  }
+
+  try {
+    const value = JSON.parse(trimmed) as unknown
+
+    if (!Array.isArray(value) && !isJsonRecord(value)) {
+      return null
+    }
+
+    const code = JSON.stringify(value, null, 2)
+
+    return typeof code === "string"
+      ? { code, summary: getJsonToolOutputSummary(value) }
+      : null
+  } catch {
+    return null
+  }
+}
+
+function JsonToolOutput({ parsed }: { parsed: ParsedJsonToolOutput }) {
+  return (
+    <CodeBlock className="rounded-2xl shadow-sm">
+      <CodeBlockGroup className="gap-3 border-b bg-muted/40 px-3 py-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <RiCodeLine
+            aria-hidden
+            className="size-4 shrink-0 text-muted-foreground"
+          />
+          <span className="truncate text-sm font-medium">JSON</span>
+          {parsed.summary ? (
+            <Badge variant="outline" className="shrink-0">
+              {parsed.summary}
+            </Badge>
+          ) : null}
+        </div>
+      </CodeBlockGroup>
+      <CodeBlockCode
+        code={parsed.code}
+        language="json"
+        className="max-h-[520px] overflow-auto"
+      />
+    </CodeBlock>
+  )
+}
+
 function SandboxToolOutput({ output }: { output: string }) {
   const { t } = useI18n()
+  const jsonOutput = getJsonToolOutput(output)
+
+  if (jsonOutput) {
+    return <JsonToolOutput parsed={jsonOutput} />
+  }
+
   const parsed = parseSandboxToolOutput(output)
   const hasStructuredOutput =
     parsed.isSandboxOutput ||

@@ -8,6 +8,7 @@ import {
   RiFileCopyLine,
   RiFolderLine,
   RiIdCardLine,
+  RiKey2Line,
   RiLoader4Line,
   RiLogoutBoxRLine,
   RiMailLine,
@@ -23,6 +24,7 @@ import type { RemixiconComponentType } from "@remixicon/react"
 import { toast } from "sonner"
 
 import { AppInfoButton } from "@/components/app-info-button"
+import { StudioApiSettingsPage } from "@/components/studio-api-settings-page"
 import { StudioAgentModelSettingsPage } from "@/components/studio-agent-model-settings-page"
 import { useTheme } from "@/components/theme-provider"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -86,7 +88,7 @@ type ProjectsResponse =
       message?: string
     }
 
-type SettingsDialogSection = "account" | "agents" | "system"
+type SettingsDialogSection = "account" | "api-keys" | "agents" | "system"
 
 type AccountSettingsDialogProps = {
   open: boolean
@@ -293,6 +295,9 @@ function AccountSettingsDialog({
     locale === "zh"
       ? {
           accountManagement: "账户管理",
+          apiKeySettings: "API Key 设置",
+          apiKeySettingsDesc:
+            "管理 Modelverse API Key、用量配额和本机应用选择。",
           agentSettings: "Agent 设置",
           agentModelSettings: "Agent 模型设置",
           agentModelSettingsDesc:
@@ -325,6 +330,9 @@ function AccountSettingsDialog({
         }
       : {
           accountManagement: "Account",
+          apiKeySettings: "API keys",
+          apiKeySettingsDesc:
+            "Manage Modelverse API keys, quotas, and local app selection.",
           agentSettings: "Agent settings",
           agentModelSettings: "Agent models",
           agentModelSettingsDesc:
@@ -369,6 +377,13 @@ function AccountSettingsDialog({
       title: copy.accountManagement,
       description: copy.settingsDescription,
       icon: RiUser3Line,
+    },
+    {
+      id: "api-keys",
+      label: copy.apiKeySettings,
+      title: copy.apiKeySettings,
+      description: copy.apiKeySettingsDesc,
+      icon: RiKey2Line,
     },
     {
       id: "agents",
@@ -791,6 +806,10 @@ function AccountSettingsDialog({
 
               {activeSection === "agents" ? (
                 <StudioAgentModelSettingsPage embedded />
+              ) : null}
+
+              {activeSection === "api-keys" ? (
+                <StudioApiSettingsPage embedded />
               ) : null}
 
               {activeSection === "system" ? (
