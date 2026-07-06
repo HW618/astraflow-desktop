@@ -229,6 +229,24 @@ function getImageOutputSrc(output: StudioImageOutput) {
   return output.dataUrl ?? getImageOutputContentUrl(output.id)
 }
 
+function mergeSubmittedGeneration(
+  current: StudioImageGeneration[],
+  optimisticId: string,
+  result: StudioImageGeneration
+) {
+  let replaced = false
+  const next = current.map((generation) => {
+    if (generation.id === optimisticId || generation.id === result.id) {
+      replaced = true
+      return result
+    }
+
+    return generation
+  })
+
+  return replaced ? next : [...next, result]
+}
+
 function StudioImageWorkbench({
   sessionId,
   onSessionChange,
@@ -260,6 +278,11 @@ function StudioImageWorkbench({
   const [savingOutputId, setSavingOutputId] = React.useState<string | null>(
     null
   )
+  const activeSessionIdRef = React.useRef(sessionId)
+
+  React.useEffect(() => {
+    activeSessionIdRef.current = sessionId
+  }, [sessionId])
 
   const selectedModel = React.useMemo(
     () => models.supported.find((option) => option.id === selectedModelId),
@@ -381,9 +404,13 @@ function StudioImageWorkbench({
     async (activeSessionId: string) => {
       try {
         const next = await fetchImageGenerations(activeSessionId)
-        setGenerations(next)
+        if (activeSessionIdRef.current === activeSessionId) {
+          setGenerations(next)
+        }
       } catch {
-        setGenerations([])
+        if (activeSessionIdRef.current === activeSessionId) {
+          setGenerations([])
+        }
       }
     },
     []
@@ -552,6 +579,7 @@ function StudioImageWorkbench({
             getFallbackImageTitle(promptText)
           )
           activeSessionId = session.id
+          activeSessionIdRef.current = activeSessionId
           onSessionChange(activeSessionId)
           onSessionsChange()
         }
@@ -575,10 +603,11 @@ function StudioImageWorkbench({
         })
 
         setGenerations((current) =>
-          current.map((generation) =>
-            generation.id === optimisticId ? result : generation
-          )
+          activeSessionIdRef.current === activeSessionId
+            ? mergeSubmittedGeneration(current, optimisticId, result)
+            : current
         )
+        void reloadGenerations(activeSessionId)
         onSessionsChange()
       } catch (error) {
         const message =

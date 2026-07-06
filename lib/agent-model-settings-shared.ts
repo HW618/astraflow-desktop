@@ -12,6 +12,21 @@ export const AGENT_RUNTIME_IDS = [
 
 export type AgentRuntimeId = (typeof AGENT_RUNTIME_IDS)[number]
 
+export const PUBLIC_AGENT_RUNTIME_IDS = [
+  "astraflow",
+  "codex",
+  "claude-code",
+  "opencode",
+] as const satisfies readonly AgentRuntimeId[]
+
+export type PublicAgentRuntimeId = (typeof PUBLIC_AGENT_RUNTIME_IDS)[number]
+
+export function isPublicAgentRuntimeId(
+  runtimeId: string
+): runtimeId is PublicAgentRuntimeId {
+  return PUBLIC_AGENT_RUNTIME_IDS.some((publicId) => publicId === runtimeId)
+}
+
 export const AGENT_MODEL_PROTOCOLS = [
   "openai-chat",
   "openai-responses",

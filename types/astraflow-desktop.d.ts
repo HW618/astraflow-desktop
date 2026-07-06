@@ -73,6 +73,7 @@ type AstraFlowDesktopBridge = {
     path: string
   ) => Promise<AstraFlowSidePanelDataUrlFile>
   sidePanelShowItem: (path: string) => Promise<boolean>
+  sidePanelOpenPath: (path: string) => Promise<boolean>
   browserClearData: () => Promise<boolean>
   terminalCreate: (
     options?: AstraFlowTerminalCreateOptions

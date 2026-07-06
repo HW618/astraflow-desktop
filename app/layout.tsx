@@ -1,6 +1,7 @@
 import localFont from "next/font/local"
 
 import "./globals.css"
+import "@xterm/xterm/css/xterm.css"
 import { AppShell } from "@/components/app-shell"
 import { ThemeProvider } from "@/components/theme-provider"
 import { I18nProvider } from "@/components/i18n-provider"

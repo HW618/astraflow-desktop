@@ -826,6 +826,19 @@ function showSidePanelPathInFolder(path) {
   }
 }
 
+async function openSidePanelPath(path) {
+  if (typeof path !== "string" || !path.trim()) {
+    return false
+  }
+
+  try {
+    const errorMessage = await shell.openPath(resolveSidePanelFilePath(path))
+    return errorMessage === ""
+  } catch {
+    return false
+  }
+}
+
 async function clearSidePanelBrowserData() {
   await session.defaultSession.clearStorageData()
   await session.defaultSession.clearCache()
@@ -1203,6 +1216,9 @@ function setupAppIpc() {
   )
   ipcMain.handle("astraflow:side-panel-show-item", (_event, path) =>
     showSidePanelPathInFolder(path)
+  )
+  ipcMain.handle("astraflow:side-panel-open-path", (_event, path) =>
+    openSidePanelPath(path)
   )
   ipcMain.handle("astraflow:browser-clear-data", async () =>
     clearSidePanelBrowserData()

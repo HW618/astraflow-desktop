@@ -251,6 +251,7 @@ const TEXT_FILE_EXTENSIONS = new Set([
   "env",
   "go",
   "h",
+  "htm",
   "html",
   "java",
   "js",
@@ -4277,6 +4278,16 @@ function StudioTextFilePreview({
     return <StudioMarkdownFilePreview file={file} copy={copy} />
   }
 
+  const isHtml =
+    entry.extension === "html" ||
+    entry.extension === "htm" ||
+    entry.name.endsWith(".html") ||
+    entry.name.endsWith(".htm")
+
+  if (isHtml && !file.truncated) {
+    return <StudioHtmlFilePreview entry={entry} file={file} />
+  }
+
   return (
     <div className="min-h-full bg-background">
       <CodeBlock className="min-w-max rounded-none border-0 bg-transparent">
@@ -4291,6 +4302,75 @@ function StudioTextFilePreview({
           {copy.truncated}
         </p>
       ) : null}
+    </div>
+  )
+}
+
+function StudioHtmlFilePreview({
+  entry,
+  file,
+}: {
+  entry: AstraFlowSidePanelDirectoryEntry
+  file: AstraFlowSidePanelTextFile
+}) {
+  const { t } = useI18n()
+  const [view, setView] = React.useState<"rendered" | "source">("rendered")
+
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-background">
+      <div className="flex h-9 shrink-0 items-center justify-between gap-2 border-b px-3">
+        <span className="min-w-0 truncate text-xs text-muted-foreground">
+          {entry.name}
+        </span>
+        <div className="flex shrink-0 items-center gap-1 rounded-lg bg-muted/60 p-0.5">
+          <button
+            type="button"
+            onClick={() => setView("rendered")}
+            className={cn(
+              "rounded-md px-2 py-0.5 text-xs transition-colors",
+              view === "rendered"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            {t.studioFilePreviewRendered}
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("source")}
+            className={cn(
+              "rounded-md px-2 py-0.5 text-xs transition-colors",
+              view === "source"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            {t.studioFilePreviewSource}
+          </button>
+        </div>
+      </div>
+      {view === "rendered" ? (
+        <div className="min-h-0 flex-1 bg-white">
+          <iframe
+            key={entry.path}
+            title={entry.name}
+            srcDoc={file.content}
+            className="size-full border-0 bg-white"
+            sandbox="allow-scripts allow-forms allow-popups allow-modals"
+            referrerPolicy="no-referrer"
+          />
+        </div>
+      ) : (
+        <div className="min-h-0 flex-1 overflow-auto">
+          <CodeBlock className="min-w-max rounded-none border-0 bg-transparent">
+            <CodeBlockCode
+              code={file.content}
+              language={inferCodeLanguage(entry)}
+              className="text-[12px] leading-5 [&>pre]:min-h-full [&>pre]:px-4 [&>pre]:py-4"
+            />
+          </CodeBlock>
+        </div>
+      )}
     </div>
   )
 }
@@ -5949,6 +6029,7 @@ function MessageVersionsDialog({
   const { t } = useI18n()
   const [versions, setVersions] = React.useState<StudioMessage[]>([message])
   const [activeIndex, setActiveIndex] = React.useState(0)
+  const [chatEnvironment] = useChatEnvironment()
 
   React.useEffect(() => {
     if (!open) {
@@ -6045,6 +6126,7 @@ function MessageVersionsDialog({
             activities={activeVersion.activities}
             parts={activeVersion.parts}
             sessionId={activeVersion.sessionId}
+            environment={chatEnvironment}
           />
         </div>
       </DialogContent>
@@ -6063,6 +6145,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const [liked, setLiked] = React.useState<boolean | null>(null)
   const [copied, setCopied] = React.useState(false)
   const [versionsOpen, setVersionsOpen] = React.useState(false)
+  const [chatEnvironment] = useChatEnvironment()
   const copyableContent = message.content || message.reasoningContent
   const modelLabel = getStoredChatModelLabel(message.model)
   const showTopLevelReasoning = !hasRenderableReasoningParts(message.parts)
@@ -6098,6 +6181,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
             parts={message.parts}
             sessionId={message.sessionId}
             streaming={isStreaming}
+            environment={chatEnvironment}
           />
         )}
         {!isStreaming ? (

@@ -2,7 +2,6 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "driver.js/dist/driver.css";
-@import "@xterm/xterm/css/xterm.css";
 
 @plugin "@tailwindcss/typography";
 

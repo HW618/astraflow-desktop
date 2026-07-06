@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server"
 
 import { getAppAuthState } from "@/lib/app-auth"
+import {
+  PUBLIC_AGENT_RUNTIME_IDS,
+  isPublicAgentRuntimeId,
+} from "@/lib/agent-model-settings-shared"
 import { listAgentRuntimeInfos } from "@/lib/agent/runtime"
 import "@/lib/studio-chat-runner"
 
@@ -19,6 +23,14 @@ async function requireAuthenticatedRequest() {
   return null
 }
 
+function publicRuntimeOrder(runtimeId: string) {
+  const index = PUBLIC_AGENT_RUNTIME_IDS.findIndex(
+    (publicRuntimeId) => publicRuntimeId === runtimeId
+  )
+
+  return index >= 0 ? index : PUBLIC_AGENT_RUNTIME_IDS.length
+}
+
 export async function GET() {
   const authError = await requireAuthenticatedRequest()
 
@@ -28,6 +40,11 @@ export async function GET() {
 
   return NextResponse.json({
     ok: true,
-    data: listAgentRuntimeInfos(),
+    data: listAgentRuntimeInfos()
+      .filter((runtime) => isPublicAgentRuntimeId(runtime.id))
+      .sort(
+        (left, right) =>
+          publicRuntimeOrder(left.id) - publicRuntimeOrder(right.id)
+      ),
   })
 }

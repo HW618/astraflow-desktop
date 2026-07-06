@@ -39,7 +39,7 @@ import {
 import { useI18n } from "@/components/i18n-provider"
 import {
   AGENT_MODEL_PROTOCOLS,
-  AGENT_RUNTIME_IDS,
+  PUBLIC_AGENT_RUNTIME_IDS,
   type AgentModelDefinition,
   type AgentModelProtocol,
   type AgentModelSettingsPayload,
@@ -413,7 +413,7 @@ function StudioAgentModelSettingsPage({
 
       {payload ? (
         <section className="grid gap-3">
-          {AGENT_RUNTIME_IDS.map((runtimeId) => {
+          {PUBLIC_AGENT_RUNTIME_IDS.map((runtimeId) => {
             const setting = payload.runtimes[runtimeId]
             const compatibleModels = payload.models.filter((model) =>
               modelSupportsRuntime(model, runtimeId)
@@ -445,12 +445,8 @@ function StudioAgentModelSettingsPage({
                         runtimeId={runtimeId}
                         className={cn(
                           "size-5",
-                          (runtimeId === "claude-code" ||
-                            runtimeId === "claude-native") &&
-                            "text-[#D97757]",
-                          (runtimeId === "codex" ||
-                            runtimeId === "codex-direct") &&
-                            "text-foreground"
+                          runtimeId === "claude-code" && "text-[#D97757]",
+                          runtimeId === "codex" && "text-foreground"
                         )}
                       />
                     </span>
@@ -647,7 +643,7 @@ function StudioAgentModelSettingsPage({
                   {copy.supportedAgents}
                 </FieldLegend>
                 <div className="flex flex-wrap gap-2">
-                  {AGENT_RUNTIME_IDS.map((runtimeId) => {
+                  {PUBLIC_AGENT_RUNTIME_IDS.map((runtimeId) => {
                     const checked = form.supportedRuntimeIds.includes(runtimeId)
 
                     return (

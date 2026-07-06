@@ -11,9 +11,12 @@ import {
   RiDeleteBinLine,
   RiDownloadLine,
   RiExternalLinkLine,
+  RiEyeLine,
   RiFileAddLine,
   RiFileEditLine,
   RiFileTextLine,
+  RiFolderOpenLine,
+  RiGlobalLine,
   RiImageLine,
   RiQuestionLine,
   RiRobot2Line,
@@ -46,8 +49,17 @@ import {
 } from "@/components/ui/chain-of-thought"
 import { CollapsibleContent } from "@/components/ui/collapsible"
 import { MessageContent } from "@/components/ui/message"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
 import { useI18n } from "@/components/i18n-provider"
 import { getMcpToolDisplayName, isMcpToolName } from "@/lib/mcp"
+import {
+  STUDIO_OPEN_MARKDOWN_TARGET_EVENT,
+  type StudioOpenMarkdownTargetDetail,
+} from "@/lib/studio-markdown-open"
 import type {
   StudioMessageActivity,
   StudioMessagePart,
@@ -67,6 +79,15 @@ type StudioMediaGenerationPart = Extract<
   StudioMessagePart,
   { type: "media_generation" }
 >
+
+type MessageRenderEnvironment = "remote" | "local"
+
+const MessageRenderEnvironmentContext =
+  React.createContext<MessageRenderEnvironment>("local")
+
+function useMessageRenderEnvironment() {
+  return React.useContext(MessageRenderEnvironmentContext)
+}
 
 const markdownClassName =
   "prose-sm max-w-none leading-7 text-foreground dark:prose-invert prose-headings:font-heading prose-headings:text-foreground prose-h1:text-xl prose-h2:mt-4 prose-h2:text-lg prose-h3:mt-3 prose-h3:text-base prose-p:my-2 prose-a:text-primary prose-code:rounded-sm prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:font-mono prose-pre:my-3 prose-table:my-3 prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2"
@@ -1694,9 +1715,11 @@ function useLazyToolActivityDetails(defaultOpen: boolean, resetKey: string) {
 function InlineToolActivity({
   activity,
   leftIcon,
+  renderDetails,
 }: {
   activity: StudioMessageActivity
   leftIcon: React.ReactNode
+  renderDetails?: (activity: StudioMessageActivity) => React.ReactNode
 }) {
   const { t } = useI18n()
   const defaultOpen = activity.status === "error"
@@ -1717,9 +1740,11 @@ function InlineToolActivity({
           {renderActivityInlineLabel(activity, t)}
         </ChainOfThoughtTrigger>
         <ChainOfThoughtContent>
-          {shouldRenderDetails ? (
-            <ToolActivityDetails activity={activity} />
-          ) : null}
+          {shouldRenderDetails
+            ? renderDetails
+              ? renderDetails(activity)
+              : <ToolActivityDetails activity={activity} />
+            : null}
         </ChainOfThoughtContent>
       </ChainOfThoughtStep>
     </ChainOfThought>
@@ -1727,6 +1752,13 @@ function InlineToolActivity({
 }
 
 function FileToolActivity({ activity }: { activity: StudioMessageActivity }) {
+  if (
+    activity.toolName === "write_file" ||
+    activity.toolName === "edit_file"
+  ) {
+    return <FileWriteActivity activity={activity} />
+  }
+
   return (
     <InlineToolActivity
       activity={activity}
@@ -1738,6 +1770,417 @@ function FileToolActivity({ activity }: { activity: StudioMessageActivity }) {
         )
       }
     />
+  )
+}
+
+const previewableTextExtensions = new Set(["html", "htm", "svg", "md", "markdown"])
+const previewableImageExtensions = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "bmp",
+  "ico",
+  "avif",
+])
+
+function getFilePathExtension(path: string) {
+  const name = path.split(/[\\/]/).filter(Boolean).at(-1) ?? path
+
+  return name.includes(".") ? (name.split(".").at(-1)?.toLowerCase() ?? "") : ""
+}
+
+function getFilePathName(path: string) {
+  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path
+}
+
+function isPreviewableWrittenFile(path: string) {
+  const extension = getFilePathExtension(path)
+
+  return (
+    previewableTextExtensions.has(extension) ||
+    previewableImageExtensions.has(extension)
+  )
+}
+
+type WrittenFileInfo = {
+  path: string
+  kind: "create" | "edit"
+  oldText: string
+  newText: string
+}
+
+function getWrittenFileInfo(
+  activity: StudioMessageActivity
+): WrittenFileInfo | null {
+  if (
+    activity.toolName !== "write_file" &&
+    activity.toolName !== "edit_file"
+  ) {
+    return null
+  }
+
+  const path = getFileToolTarget(activity.input)
+
+  if (!path) {
+    return null
+  }
+
+  const parsed = parseToolInputObject(activity.input)
+
+  if (activity.toolName === "write_file") {
+    const content =
+      parsed && typeof parsed.content === "string" ? parsed.content : ""
+
+    return { path, kind: "create", oldText: "", newText: content }
+  }
+
+  const oldText =
+    parsed && typeof parsed.old_string === "string" ? parsed.old_string : ""
+  const newText =
+    parsed && typeof parsed.new_string === "string" ? parsed.new_string : ""
+
+  if (!oldText && !newText) {
+    return null
+  }
+
+  return { path, kind: "edit", oldText, newText }
+}
+
+function getWrittenFileTypeLabel(
+  path: string,
+  t: ReturnType<typeof useI18n>["t"]
+) {
+  const extension = getFilePathExtension(path)
+
+  if (extension === "html" || extension === "htm" || extension === "svg") {
+    return t.studioFileWebsiteLabel
+  }
+
+  if (previewableImageExtensions.has(extension)) {
+    return t.studioFileImageLabel
+  }
+
+  return t.studioFileDocumentLabel
+}
+
+type DiffLine = { type: "add" | "del" | "context"; text: string }
+
+const MAX_DIFF_LINES = 600
+
+function computeLineDiff(oldText: string, newText: string): DiffLine[] {
+  const oldLines = oldText.length ? oldText.split("\n") : []
+  const newLines = newText.length ? newText.split("\n") : []
+
+  if (oldLines.length === 0) {
+    return newLines.map((text) => ({ type: "add", text }))
+  }
+
+  if (newLines.length === 0) {
+    return oldLines.map((text) => ({ type: "del", text }))
+  }
+
+  // Guard against an oversized DP matrix for very large edits.
+  if (oldLines.length * newLines.length > 2_000_000) {
+    return [
+      ...oldLines.map((text): DiffLine => ({ type: "del", text })),
+      ...newLines.map((text): DiffLine => ({ type: "add", text })),
+    ]
+  }
+
+  const n = oldLines.length
+  const m = newLines.length
+  const dp: number[][] = Array.from({ length: n + 1 }, () =>
+    new Array<number>(m + 1).fill(0)
+  )
+
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] =
+        oldLines[i] === newLines[j]
+          ? dp[i + 1][j + 1] + 1
+          : Math.max(dp[i + 1][j], dp[i][j + 1])
+    }
+  }
+
+  const result: DiffLine[] = []
+  let i = 0
+  let j = 0
+
+  while (i < n && j < m) {
+    if (oldLines[i] === newLines[j]) {
+      result.push({ type: "context", text: oldLines[i] })
+      i++
+      j++
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      result.push({ type: "del", text: oldLines[i] })
+      i++
+    } else {
+      result.push({ type: "add", text: newLines[j] })
+      j++
+    }
+  }
+
+  while (i < n) {
+    result.push({ type: "del", text: oldLines[i] })
+    i++
+  }
+
+  while (j < m) {
+    result.push({ type: "add", text: newLines[j] })
+    j++
+  }
+
+  return result
+}
+
+function FileDiffView({
+  info,
+}: {
+  info: WrittenFileInfo
+}) {
+  const { t } = useI18n()
+  const lines = React.useMemo(
+    () => computeLineDiff(info.oldText, info.newText),
+    [info.oldText, info.newText]
+  )
+  const additions = lines.filter((line) => line.type === "add").length
+  const deletions = lines.filter((line) => line.type === "del").length
+  const visibleLines = lines.slice(0, MAX_DIFF_LINES)
+  const hiddenCount = lines.length - visibleLines.length
+
+  return (
+    <CodeBlock className="overflow-hidden rounded-2xl shadow-sm">
+      <CodeBlockGroup className="gap-3 border-b bg-muted/40 px-3 py-2">
+        <div className="flex min-w-0 items-center gap-2">
+          {info.kind === "create" ? (
+            <RiFileAddLine
+              aria-hidden
+              className="size-4 shrink-0 text-muted-foreground"
+            />
+          ) : (
+            <RiFileEditLine
+              aria-hidden
+              className="size-4 shrink-0 text-muted-foreground"
+            />
+          )}
+          <span className="truncate font-mono text-sm font-medium">
+            {getFilePathName(info.path)}
+          </span>
+          {info.kind === "create" ? (
+            <Badge variant="outline" className="shrink-0">
+              {t.studioFileNewFile}
+            </Badge>
+          ) : null}
+        </div>
+        <span className="shrink-0 font-mono text-xs text-muted-foreground">
+          {t.studioFileDiffChanges(additions, deletions)}
+        </span>
+      </CodeBlockGroup>
+      <div className="max-h-[420px] overflow-auto py-1 font-mono text-[12px] leading-5">
+        {visibleLines.map((line, index) => (
+          <div
+            key={index}
+            className={cn(
+              "flex gap-2 px-3 whitespace-pre",
+              line.type === "add" &&
+                "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+              line.type === "del" &&
+                "bg-red-500/10 text-red-700 dark:text-red-300",
+              line.type === "context" && "text-muted-foreground"
+            )}
+          >
+            <span className="w-3 shrink-0 text-center opacity-60 select-none">
+              {line.type === "add" ? "+" : line.type === "del" ? "-" : " "}
+            </span>
+            <span className="min-w-0">{line.text || "​"}</span>
+          </div>
+        ))}
+      </div>
+      {hiddenCount > 0 ? (
+        <div className="border-t px-3 py-1.5 text-xs text-muted-foreground">
+          {`+${hiddenCount}`}
+        </div>
+      ) : null}
+    </CodeBlock>
+  )
+}
+
+function dispatchOpenFilePreview(path: string) {
+  if (typeof window === "undefined") {
+    return
+  }
+
+  window.dispatchEvent(
+    new CustomEvent<StudioOpenMarkdownTargetDetail>(
+      STUDIO_OPEN_MARKDOWN_TARGET_EVENT,
+      { detail: { href: path, source: "link" } }
+    )
+  )
+}
+
+function WrittenFileOpenCardMenuItem({
+  icon,
+  label,
+  onSelect,
+}: {
+  icon: React.ReactNode
+  label: string
+  onSelect: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-muted"
+    >
+      <span className="flex size-4 shrink-0 items-center justify-center text-muted-foreground">
+        {icon}
+      </span>
+      <span className="min-w-0 truncate">{label}</span>
+    </button>
+  )
+}
+
+function WrittenFileOpenCard({ info }: { info: WrittenFileInfo }) {
+  const { t } = useI18n()
+  const [menuOpen, setMenuOpen] = React.useState(false)
+  const bridge = typeof window !== "undefined" ? window.astraflowDesktop : undefined
+  const canOpenInBrowser = Boolean(bridge?.sidePanelOpenPath)
+  const canReveal = Boolean(bridge?.sidePanelShowItem)
+  const extension = getFilePathExtension(info.path)
+  const isImage = previewableImageExtensions.has(extension)
+
+  const handlePreview = () => {
+    setMenuOpen(false)
+    dispatchOpenFilePreview(info.path)
+  }
+
+  const handleOpenInBrowser = () => {
+    setMenuOpen(false)
+    void bridge?.sidePanelOpenPath?.(info.path)
+  }
+
+  const handleReveal = () => {
+    setMenuOpen(false)
+    void bridge?.sidePanelShowItem?.(info.path)
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-2xl border bg-card px-3 py-2 shadow-sm">
+      <button
+        type="button"
+        onClick={handlePreview}
+        className="flex min-w-0 flex-1 items-center gap-3 text-left"
+      >
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground">
+          {isImage ? (
+            <RiImageLine aria-hidden className="size-5" />
+          ) : (
+            <RiGlobalLine aria-hidden className="size-5" />
+          )}
+        </span>
+        <span className="flex min-w-0 flex-col">
+          <span className="truncate text-sm font-medium">
+            {getFilePathName(info.path)}
+          </span>
+          <span className="truncate text-xs text-muted-foreground">
+            {getWrittenFileTypeLabel(info.path, t)}
+          </span>
+        </span>
+      </button>
+      <Popover open={menuOpen} onOpenChange={setMenuOpen}>
+        <PopoverTrigger asChild>
+          <Button variant="outline" size="sm" className="shrink-0 rounded-2xl">
+            <span>{t.studioFileOpenIn}</span>
+            <RiArrowDownSLine aria-hidden />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="end" className="w-56 gap-0.5 rounded-2xl p-1">
+          <WrittenFileOpenCardMenuItem
+            icon={<RiEyeLine aria-hidden className="size-4" />}
+            label={t.studioFileOpenPreview}
+            onSelect={handlePreview}
+          />
+          {canOpenInBrowser ? (
+            <WrittenFileOpenCardMenuItem
+              icon={<RiExternalLinkLine aria-hidden className="size-4" />}
+              label={t.studioFileOpenBrowser}
+              onSelect={handleOpenInBrowser}
+            />
+          ) : null}
+          {canReveal ? (
+            <WrittenFileOpenCardMenuItem
+              icon={<RiFolderOpenLine aria-hidden className="size-4" />}
+              label={t.studioFileRevealInFolder}
+              onSelect={handleReveal}
+            />
+          ) : null}
+        </PopoverContent>
+      </Popover>
+    </div>
+  )
+}
+
+function FileWriteActivity({
+  activity,
+}: {
+  activity: StudioMessageActivity
+}) {
+  const { t } = useI18n()
+  const environment = useMessageRenderEnvironment()
+  const info = getWrittenFileInfo(activity)
+
+  if (!info) {
+    return (
+      <InlineToolActivity
+        activity={activity}
+        leftIcon={
+          activity.status === "complete" ? (
+            <RiCheckLine aria-hidden className="size-4" />
+          ) : (
+            <RiFileTextLine aria-hidden className="size-4" />
+          )
+        }
+      />
+    )
+  }
+
+  const showOpenCard =
+    environment === "local" &&
+    activity.status === "complete" &&
+    isPreviewableWrittenFile(info.path)
+  const failureOutput =
+    activity.status === "error" ? getActivityDetailOutput(activity, t) : ""
+
+  return (
+    <div className="flex min-w-0 flex-col gap-2">
+      <InlineToolActivity
+        activity={activity}
+        leftIcon={
+          activity.status === "complete" ? (
+            <RiCheckLine aria-hidden className="size-4" />
+          ) : (
+            <RiFileTextLine aria-hidden className="size-4" />
+          )
+        }
+        renderDetails={() => (
+          <div className="space-y-2 border-l pl-3">
+            <FileDiffView info={info} />
+            {failureOutput ? (
+              <>
+                <div className="text-xs font-semibold text-destructive uppercase">
+                  {t.studioToolError}
+                </div>
+                <SandboxToolOutput output={failureOutput} />
+              </>
+            ) : null}
+          </div>
+        )}
+      />
+      {showOpenCard ? <WrittenFileOpenCard info={info} /> : null}
+    </div>
   )
 }
 
@@ -2676,12 +3119,14 @@ export const MessagePartsRenderer = React.memo(function MessagePartsRenderer({
   parts,
   sessionId,
   streaming = false,
+  environment = "local",
 }: {
   content: string
   activities: StudioMessageActivity[]
   parts: StudioMessagePart[]
   sessionId?: string | null
   streaming?: boolean
+  environment?: MessageRenderEnvironment
 }) {
   const renderableParts = getRenderableMessageParts({
     content,
@@ -2700,56 +3145,57 @@ export const MessagePartsRenderer = React.memo(function MessagePartsRenderer({
   )
 
   return (
-    <div className="flex w-full min-w-0 flex-col gap-1.5">
-      {renderableParts.map((part, index) => {
-        if (part.type === "tool") {
-          return <AssistantActivity key={part.id} activity={part.activity} />
-        }
+    <MessageRenderEnvironmentContext.Provider value={environment}>
+      <div className="flex w-full min-w-0 flex-col gap-1.5">
+        {renderableParts.map((part, index) => {
+          if (part.type === "tool") {
+            return <AssistantActivity key={part.id} activity={part.activity} />
+          }
 
-        if (part.type === "reasoning") {
+          if (part.type === "reasoning") {
+            return (
+              <AssistantReasoning
+                key={part.id}
+                content={part.content}
+                durationMs={part.durationMs}
+                isStreaming={
+                  streaming &&
+                  index === lastReasoningPartIndex &&
+                  part.durationMs === null
+                }
+              />
+            )
+          }
+
+          if (part.type === "plan") {
+            return <AssistantPlan key={part.id} todos={part.todos} />
+          }
+
+          if (part.type === "permission") {
+            return null
+          }
+
+          if (part.type === "user_input") {
+            return null
+          }
+
+          if (part.type === "subagent") {
+            return <AssistantSubagent key={part.id} part={part} />
+          }
+
+          if (part.type === "file") {
+            return <AssistantFileChange key={part.id} part={part} />
+          }
+
+          if (part.type === "media_generation") {
+            return <AssistantMediaGeneration key={part.id} part={part} />
+          }
+
+          if (!part.content.trim()) {
+            return null
+          }
+
           return (
-            <AssistantReasoning
-              key={part.id}
-              content={part.content}
-              durationMs={part.durationMs}
-              isStreaming={
-                streaming &&
-                index === lastReasoningPartIndex &&
-                part.durationMs === null
-              }
-            />
-          )
-        }
-
-        if (part.type === "plan") {
-          return <AssistantPlan key={part.id} todos={part.todos} />
-        }
-
-        if (part.type === "permission") {
-          return null
-        }
-
-        if (part.type === "user_input") {
-          return null
-        }
-
-        if (part.type === "subagent") {
-          return <AssistantSubagent key={part.id} part={part} />
-        }
-
-        if (part.type === "file") {
-          return <AssistantFileChange key={part.id} part={part} />
-        }
-
-        if (part.type === "media_generation") {
-          return <AssistantMediaGeneration key={part.id} part={part} />
-        }
-
-        if (!part.content.trim()) {
-          return null
-        }
-
-        return (
             <MessageContent
               key={part.id}
               markdown
@@ -2757,17 +3203,18 @@ export const MessagePartsRenderer = React.memo(function MessagePartsRenderer({
               mediaUrlMap={mediaUrlMap}
               streaming={streaming && index === lastTextPartIndex}
               className={cn(
-              "bg-transparent p-0",
-              markdownClassName,
-              streaming &&
-                index === lastTextPartIndex &&
-                streamingPulseDotClassName
-            )}
-          >
-            {part.content}
-          </MessageContent>
-        )
-      })}
-    </div>
+                "bg-transparent p-0",
+                markdownClassName,
+                streaming &&
+                  index === lastTextPartIndex &&
+                  streamingPulseDotClassName
+              )}
+            >
+              {part.content}
+            </MessageContent>
+          )
+        })}
+      </div>
+    </MessageRenderEnvironmentContext.Provider>
   )
 })

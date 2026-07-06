@@ -35,6 +35,8 @@ contextBridge.exposeInMainWorld("astraflowDesktop", {
     ipcRenderer.invoke("astraflow:side-panel-read-file-data-url", filePath),
   sidePanelShowItem: (path) =>
     ipcRenderer.invoke("astraflow:side-panel-show-item", path),
+  sidePanelOpenPath: (path) =>
+    ipcRenderer.invoke("astraflow:side-panel-open-path", path),
   browserClearData: () => ipcRenderer.invoke("astraflow:browser-clear-data"),
   terminalCreate: (options) =>
     ipcRenderer.invoke("astraflow:terminal-create", options),
