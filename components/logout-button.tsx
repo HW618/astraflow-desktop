@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button"
 
 type LogoutButtonProps = {
   className?: string
+  variant?: React.ComponentProps<typeof Button>["variant"]
+  size?: React.ComponentProps<typeof Button>["size"]
 }
 
 async function logout() {
@@ -29,7 +31,11 @@ async function logout() {
   }
 }
 
-function LogoutButton({ className }: LogoutButtonProps = {}) {
+function LogoutButton({
+  className,
+  variant = "ghost",
+  size = "sm",
+}: LogoutButtonProps = {}) {
   const { t } = useI18n()
   const [pending, setPending] = React.useState(false)
 
@@ -47,8 +53,8 @@ function LogoutButton({ className }: LogoutButtonProps = {}) {
   return (
     <Button
       type="button"
-      variant="ghost"
-      size="sm"
+      variant={variant}
+      size={size}
       onClick={handleLogout}
       disabled={pending}
       aria-label={t.logout}
@@ -65,4 +71,4 @@ function LogoutButton({ className }: LogoutButtonProps = {}) {
   )
 }
 
-export { LogoutButton }
+export { LogoutButton, logout }

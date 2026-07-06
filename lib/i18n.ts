@@ -23,12 +23,10 @@ const en = {
   settingsPersonalGroup: "Personal",
   settingsIntegrationsGroup: "Integrations",
   settingsProfileNav: "Profile",
-  settingsAccountNav: "Account",
   settingsApiKeysNav: "API Keys",
   settingsAgentsNav: "Agents",
   settingsProfileDescription:
     "Manage your identity, active project, and local app preferences.",
-  settingsAccountDescription: "Manage account, project, and app preferences.",
   settingsApiKeysDescription:
     "Manage Modelverse API keys and AstraFlow API key access for this app.",
   settingsAgentsDescription:
@@ -91,10 +89,10 @@ const en = {
   loginFailed: "UCloud login failed.",
   loginStartFailed: "Failed to start UCloud login.",
   loginCompleteFailed: "Failed to complete UCloud login.",
-  loginUseAstraFlowApiKey: "Use company API Key",
-  loginAstraFlowApiKeyPlaceholder: "Paste your company-distributed API Key",
+  loginUseAstraFlowApiKey: "Use API Key",
+  loginAstraFlowApiKeyPlaceholder: "Paste API Key",
   loginAstraFlowApiKeySubmit: "Log in with API Key",
-  loginAstraFlowApiKeyRequired: "Enter your company-distributed API Key.",
+  loginAstraFlowApiKeyRequired: "Enter API Key.",
   loginAstraFlowApiKeyCompleting: "Validating API Key with Modelverse...",
   loginAstraFlowApiKeyFailed: "Failed to sign in with this API Key.",
   // CodeBox
@@ -856,13 +854,11 @@ const en = {
     "This API key will be deleted from UCloud. This action cannot be undone.",
   studioApiKeyNoMatches: "No API keys match the current search.",
   studioAstraFlowApiKeyTitle: "AstraFlow API Key",
-  studioAstraFlowApiKeyDescription:
-    "This company-distributed API Key is used for login and model calls when UCloud OAuth is unavailable.",
+  studioAstraFlowApiKeyDescription: "Custom API Key",
   studioAstraFlowApiKeyAdd: "Add key",
   studioAstraFlowApiKeyChange: "Change Key",
   studioAstraFlowApiKeyChangeTitle: "Change AstraFlow API Key",
-  studioAstraFlowApiKeyChangeDescription:
-    "Paste a company-distributed Modelverse API Key. AstraFlow validates it before saving.",
+  studioAstraFlowApiKeyChangeDescription: "Paste API Key",
   studioAstraFlowApiKeyChanged: "AstraFlow API Key saved.",
   studioAstraFlowApiKeyLoadFailed: "Failed to load AstraFlow API Key.",
   studioAstraFlowApiKeyChangeFailed: "Failed to validate AstraFlow API Key.",
@@ -1007,11 +1003,9 @@ const zh: Dictionary = {
   settingsPersonalGroup: "个人",
   settingsIntegrationsGroup: "集成",
   settingsProfileNav: "个人资料",
-  settingsAccountNav: "账号",
   settingsApiKeysNav: "API 密钥",
   settingsAgentsNav: "Agent 模型",
   settingsProfileDescription: "管理你的身份、当前项目和本机应用偏好。",
-  settingsAccountDescription: "管理账号、项目和应用偏好。",
   settingsApiKeysDescription:
     "管理此应用使用的 Modelverse API 密钥和 AstraFlow API Key。",
   settingsAgentsDescription: "配置每个 Agent 运行时的默认模型并管理自定义模型。",
@@ -1072,10 +1066,10 @@ const zh: Dictionary = {
   loginFailed: "UCloud 登录失败。",
   loginStartFailed: "启动 UCloud 登录失败。",
   loginCompleteFailed: "完成 UCloud 登录失败。",
-  loginUseAstraFlowApiKey: "使用公司 API Key 登录",
-  loginAstraFlowApiKeyPlaceholder: "粘贴公司分发的 API Key",
+  loginUseAstraFlowApiKey: "使用 API Key 登录",
+  loginAstraFlowApiKeyPlaceholder: "粘贴 API Key",
   loginAstraFlowApiKeySubmit: "使用 API Key 登录",
-  loginAstraFlowApiKeyRequired: "请输入公司分发的 API Key。",
+  loginAstraFlowApiKeyRequired: "请输入 API Key。",
   loginAstraFlowApiKeyCompleting: "正在通过 Modelverse 校验 API Key...",
   loginAstraFlowApiKeyFailed: "使用这个 API Key 登录失败。",
   // CodeBox
@@ -1813,12 +1807,12 @@ const zh: Dictionary = {
   studioApiKeyNoMatches: "没有匹配当前搜索的 API Key。",
   studioAstraFlowApiKeyTitle: "AstraFlow API Key",
   studioAstraFlowApiKeyDescription:
-    "这个公司分发的 API Key 用于在没有 UCloud OAuth 时登录，并用于后续模型调用。",
+    "自定义 API Key",
   studioAstraFlowApiKeyAdd: "添加 Key",
   studioAstraFlowApiKeyChange: "更换 Key",
   studioAstraFlowApiKeyChangeTitle: "更换 AstraFlow API Key",
   studioAstraFlowApiKeyChangeDescription:
-    "粘贴公司分发的 Modelverse API Key。AstraFlow 会先校验再保存。",
+    "粘贴API Key",
   studioAstraFlowApiKeyChanged: "AstraFlow API Key 已保存。",
   studioAstraFlowApiKeyLoadFailed: "加载 AstraFlow API Key 失败。",
   studioAstraFlowApiKeyChangeFailed: "校验 AstraFlow API Key 失败。",

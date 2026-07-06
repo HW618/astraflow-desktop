@@ -4,7 +4,9 @@
       "Bash(awk -F: '$1 > 5900 && $1 < 6000')",
       "Read(//home/jason.mei/.claude/plugins/**)",
       "Read(//home/jason.mei/**)",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Skill(shadcn)",
+      "Skill(shadcn:*)"
     ]
   }
 }

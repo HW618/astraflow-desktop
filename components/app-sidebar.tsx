@@ -12,10 +12,9 @@ import {
   RiDeleteBinLine,
   RiExternalLinkLine,
   RiFileListLine,
-  RiFileCopyLine,
-  RiFolderLine,
   RiImageLine,
   RiLoader4Line,
+  RiLogoutBoxRLine,
   RiMicLine,
   RiMore2Line,
   RiPencilLine,
@@ -34,7 +33,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { useI18n } from "@/components/i18n-provider"
 import { requestStudioOnboardingTour } from "@/components/onboarding-tour"
 import { Button } from "@/components/ui/button"
-import { LogoutButton } from "@/components/logout-button"
+import { logout } from "@/components/logout-button"
 import { Titlebar } from "@/components/titlebar"
 import {
   Dialog,
@@ -45,10 +44,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover"
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import {
   Sidebar,
@@ -269,49 +272,30 @@ function SidebarAccountMenu({
   loading: boolean
   onOpenSettings: (href: string) => void
 }) {
-  const { locale, t } = useI18n()
-  const [open, setOpen] = React.useState(false)
-  const copy =
-    locale === "zh"
-      ? {
-          personalAccount: "个人账户",
-          copyAccount: "复制账户信息",
-          copied: "已复制账户信息。",
-          copyFailed: "复制失败。",
-        }
-      : {
-          personalAccount: "Personal account",
-          copyAccount: "Copy account info",
-          copied: "Account info copied.",
-          copyFailed: "Copy failed.",
-        }
+  const { t } = useI18n()
+  const [loggingOut, setLoggingOut] = React.useState(false)
   const displayName =
     user?.displayName || user?.userName || user?.userEmail || t.account
   const email = user?.userEmail || user?.userName || displayName
 
-  function openSettings(href: string) {
-    setOpen(false)
-    onOpenSettings(href)
-  }
-
-  async function copyAccountInfo() {
+  async function handleLogout() {
     try {
-      await window.navigator.clipboard.writeText(
-        [displayName, email].filter(Boolean).join(" ")
-      )
-      toast.success(copy.copied)
-    } catch {
-      toast.error(copy.copyFailed)
+      setLoggingOut(true)
+      await logout()
+    } catch (error) {
+      console.warn("Logout request failed.", error)
+    } finally {
+      window.location.replace("/login")
     }
   }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
         <button
           type="button"
           aria-label={displayName}
-          className="flex w-full min-w-0 items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-sm transition-[background-color,color,width,height,padding] group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-0 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:outline-none"
+          className="flex w-full min-w-0 items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-sm transition-[background-color,color,width,height,padding] group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-0 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:outline-none aria-expanded:bg-sidebar-accent aria-expanded:text-sidebar-accent-foreground"
         >
           <Avatar className="size-8">
             <AvatarFallback className="bg-primary text-primary-foreground">
@@ -325,87 +309,41 @@ function SidebarAccountMenu({
             </span>
           </span>
         </button>
-      </PopoverTrigger>
-      <PopoverContent
-        align="end"
-        side="right"
-        className="w-[21.5rem] gap-2 rounded-3xl p-3"
-      >
-        <div className="flex min-w-0 items-start justify-between gap-3 px-2 py-2">
-          <div className="flex min-w-0 items-center gap-3">
-            <Avatar className="size-10">
-              <AvatarFallback className="bg-primary text-primary-foreground">
-                {loading ? "..." : getInitials(displayName)}
-              </AvatarFallback>
-            </Avatar>
-            <div className="min-w-0">
-              <div className="truncate text-base font-semibold">
-                {displayName}
-              </div>
-              <div className="truncate text-xs text-muted-foreground">
-                {email}
-              </div>
-            </div>
-          </div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            aria-label={copy.copyAccount}
-            title={copy.copyAccount}
-            onClick={() => void copyAccountInfo()}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="top" align="start" sideOffset={6}>
+        <DropdownMenuLabel className="truncate py-1.5">
+          {email}
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuGroup>
+          <DropdownMenuItem
+            onSelect={() => onOpenSettings("/settings/profile")}
           >
-            <RiFileCopyLine />
-          </Button>
-        </div>
-
-        <div className="mx-2 rounded-2xl bg-primary/10 px-3 py-2">
-          <div className="text-xs font-medium text-muted-foreground">
-            {copy.personalAccount}
-          </div>
-          <div className="mt-1 truncate text-sm font-semibold text-primary">
-            {displayName}
-          </div>
-        </div>
-
-        <div className="my-1 border-t" />
-        <Button
-          type="button"
-          variant="ghost"
-          className="w-full justify-start rounded-2xl"
-          onClick={() => openSettings("/settings/profile")}
+            <RiUser3Line aria-hidden />
+            {t.profile}
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => onOpenSettings("/settings")}>
+            <RiSettings3Line aria-hidden />
+            {t.settings}
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          disabled={loggingOut}
+          onSelect={(event) => {
+            event.preventDefault()
+            void handleLogout()
+          }}
         >
-          <RiUser3Line data-icon="inline-start" />
-          {t.profile}
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          className="w-full justify-start rounded-2xl"
-          onClick={() => openSettings("/settings/account")}
-        >
-          <RiFolderLine data-icon="inline-start" />
-          {t.project}
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          className="w-full justify-start rounded-2xl"
-          onClick={() => openSettings("/settings/account")}
-        >
-          <RiSettings3Line data-icon="inline-start" />
-          {t.settings}
-        </Button>
-        <div className="flex items-center justify-between rounded-2xl px-3 py-2">
-          <span className="text-sm font-medium text-muted-foreground">
-            {t.appInfo}
-          </span>
-          <AppInfoButton className="h-8 rounded-xl" />
-        </div>
-        <div className="my-1 border-t" />
-        <LogoutButton className="w-full justify-start rounded-2xl" />
-      </PopoverContent>
-    </Popover>
+          {loggingOut ? (
+            <RiLoader4Line className="animate-spin" aria-hidden />
+          ) : (
+            <RiLogoutBoxRLine aria-hidden />
+          )}
+          {t.logout}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
@@ -518,8 +456,6 @@ function AppSidebar() {
   const [isLoadingSessions, setIsLoadingSessions] = React.useState(true)
   const [projectsLoadFailed, setProjectsLoadFailed] = React.useState(false)
   const [isLoadingProjects, setIsLoadingProjects] = React.useState(true)
-  const [menuSessionId, setMenuSessionId] = React.useState<string | null>(null)
-  const [menuProjectId, setMenuProjectId] = React.useState<string | null>(null)
   const [lastSelectedProjectId, setLastSelectedProjectId] = React.useState<
     string | null
   >(null)
@@ -803,11 +739,8 @@ function AppSidebar() {
 
   function renderSessionActions(session: StudioSession) {
     return (
-      <Popover
-        open={menuSessionId === session.id}
-        onOpenChange={(open) => setMenuSessionId(open ? session.id : null)}
-      >
-        <PopoverTrigger asChild>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
           <SidebarMenuAction
             aria-label={t.studioSessionActions}
             showOnHover
@@ -815,33 +748,28 @@ function AppSidebar() {
           >
             <RiMore2Line aria-hidden />
           </SidebarMenuAction>
-        </PopoverTrigger>
-        <PopoverContent align="start" side="right" className="w-40 gap-0.5 p-1">
-          <button
-            type="button"
-            className="flex w-full items-center gap-2 px-2.5 py-2 text-sm hover:bg-accent hover:text-accent-foreground [&_svg]:size-4"
-            onClick={() => {
-              setMenuSessionId(null)
-              setRenameValue(session.title)
-              setRenameTarget(session)
-            }}
-          >
-            <RiPencilLine aria-hidden />
-            {t.studioRename}
-          </button>
-          <button
-            type="button"
-            className="flex w-full items-center gap-2 px-2.5 py-2 text-sm text-destructive hover:bg-destructive/10 [&_svg]:size-4"
-            onClick={() => {
-              setMenuSessionId(null)
-              setDeleteTarget(session)
-            }}
-          >
-            <RiDeleteBinLine aria-hidden />
-            {t.studioDelete}
-          </button>
-        </PopoverContent>
-      </Popover>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" side="right" className="w-44">
+          <DropdownMenuGroup>
+            <DropdownMenuItem
+              onSelect={() => {
+                setRenameValue(session.title)
+                setRenameTarget(session)
+              }}
+            >
+              <RiPencilLine aria-hidden />
+              {t.studioRename}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              variant="destructive"
+              onSelect={() => setDeleteTarget(session)}
+            >
+              <RiDeleteBinLine aria-hidden />
+              {t.studioDelete}
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
     )
   }
 
@@ -1131,13 +1059,8 @@ function AppSidebar() {
                           <RiPencilLine aria-hidden />
                         </SidebarMenuAction>
 
-                        <Popover
-                          open={menuProjectId === project.id}
-                          onOpenChange={(open) =>
-                            setMenuProjectId(open ? project.id : null)
-                          }
-                        >
-                          <PopoverTrigger asChild>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
                             <SidebarMenuAction
                               aria-label={t.studioSessionActions}
                               className="top-1.5! right-1.5 rounded-lg"
@@ -1146,50 +1069,42 @@ function AppSidebar() {
                             >
                               <RiMore2Line aria-hidden />
                             </SidebarMenuAction>
-                          </PopoverTrigger>
-                          <PopoverContent
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent
                             align="start"
                             side="right"
-                            className="w-64 gap-0.5 p-1"
+                            className="w-64"
                           >
-                            <button
-                              type="button"
-                              className="flex w-full items-center gap-2 px-2.5 py-2 text-sm hover:bg-accent hover:text-accent-foreground [&_svg]:size-4"
-                              onClick={() => {
-                                setMenuProjectId(null)
-                                void handleOpenProject(project.id)
-                              }}
-                            >
-                              <RiExternalLinkLine aria-hidden />
-                              {t.studioLocalProjectOpen}
-                            </button>
-                            <button
-                              type="button"
-                              className="flex w-full items-center gap-2 px-2.5 py-2 text-sm hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4"
-                              disabled={project.permissionRuleCount === 0}
-                              onClick={() => {
-                                setMenuProjectId(null)
-                                setClearPermissionTarget(project)
-                              }}
-                            >
-                              <RiCheckLine aria-hidden />
-                              {t.studioPermissionClearAllowedWithCount(
-                                project.permissionRuleCount
-                              )}
-                            </button>
-                            <button
-                              type="button"
-                              className="flex w-full items-center gap-2 px-2.5 py-2 text-sm text-destructive hover:bg-destructive/10 [&_svg]:size-4"
-                              onClick={() => {
-                                setMenuProjectId(null)
-                                setDeleteProjectTarget(project)
-                              }}
-                            >
-                              <RiDeleteBinLine aria-hidden />
-                              {t.studioDelete}
-                            </button>
-                          </PopoverContent>
-                        </Popover>
+                            <DropdownMenuGroup>
+                              <DropdownMenuItem
+                                onSelect={() =>
+                                  void handleOpenProject(project.id)
+                                }
+                              >
+                                <RiExternalLinkLine aria-hidden />
+                                {t.studioLocalProjectOpen}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                disabled={project.permissionRuleCount === 0}
+                                onSelect={() =>
+                                  setClearPermissionTarget(project)
+                                }
+                              >
+                                <RiCheckLine aria-hidden />
+                                {t.studioPermissionClearAllowedWithCount(
+                                  project.permissionRuleCount
+                                )}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                variant="destructive"
+                                onSelect={() => setDeleteProjectTarget(project)}
+                              >
+                                <RiDeleteBinLine aria-hidden />
+                                {t.studioDelete}
+                              </DropdownMenuItem>
+                            </DropdownMenuGroup>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
 
                         {isExpanded ? (
                           <SidebarMenuSub className="mx-4 mt-0.5 border-sidebar-border/70 px-2 py-0.5">

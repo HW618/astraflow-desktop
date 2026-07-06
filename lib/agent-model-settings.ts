@@ -30,7 +30,7 @@ const DEFAULT_RUNTIME_MODEL_SETTINGS: AgentModelSettings["runtimes"] = {
   },
   codex: {
     useLocalSettings: false,
-    defaultModel: "gpt-5.4",
+    defaultModel: "gpt-5.5",
   },
   "codex-direct": {
     useLocalSettings: false,

@@ -9,8 +9,8 @@ import {
   RiEyeOffLine,
   RiFileCopyLine,
   RiInformationLine,
-  RiKey2Line,
   RiLoader4Line,
+  RiMore2Line,
   RiPencilLine,
   RiRefreshLine,
   RiSearchLine,
@@ -18,16 +18,16 @@ import {
 import { toast } from "sonner"
 
 import { useI18n } from "@/components/i18n-provider"
+import {
+  SettingsEmptyRow,
+  SettingsPage,
+  SettingsPageHeader,
+  SettingsRow,
+  SettingsSection,
+} from "@/components/settings-ui"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
   DialogContent,
@@ -37,29 +37,39 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
   Field,
   FieldDescription,
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import {
-  Popover,
-  PopoverContent,
-  PopoverHeader,
-  PopoverTitle,
-  PopoverTrigger,
-} from "@/components/ui/popover"
+import { Label } from "@/components/ui/label"
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
 import { UCLOUD_PROJECT_CHANGED_EVENT } from "@/lib/project-selection"
-import { cn } from "@/lib/utils"
 
 type ApiEnvelope<T> =
   | {
@@ -135,11 +145,6 @@ type ApiKeyFormState = {
 
 type ApiKeyStatusFilter = "all" | "active" | "inactive" | "modelverse-off"
 
-type StudioApiSettingsPageProps = {
-  onSelectedKeyChange?: (configured: boolean) => void
-  embedded?: boolean
-}
-
 const emptyForm: ApiKeyFormState = {
   name: "",
   modelverseEnabled: true,
@@ -208,6 +213,7 @@ function formatUnixTime(value: number | null, locale?: string) {
   }
 
   return new Intl.DateTimeFormat(locale, {
+    year: "numeric",
     month: "short",
     day: "numeric",
     hour: "2-digit",
@@ -303,13 +309,6 @@ function apiKeyMatchesStatus(
   return apiKey.modelverseDisabled === 1
 }
 
-function checkboxClassName(disabled?: boolean) {
-  return cn(
-    "mt-0.5 size-4 shrink-0 rounded border-border accent-primary",
-    disabled && "cursor-not-allowed opacity-50"
-  )
-}
-
 function copyWithFallback(value: string) {
   const textarea = document.createElement("textarea")
   const selection = document.getSelection()
@@ -359,10 +358,51 @@ async function writeClipboard(value: string) {
   return copyWithFallback(value)
 }
 
-function StudioApiSettingsPage({
-  embedded = false,
-  onSelectedKeyChange,
-}: StudioApiSettingsPageProps = {}) {
+function CheckboxCard({
+  checked,
+  disabled,
+  hint,
+  onCheckedChange,
+  title,
+}: {
+  checked: boolean
+  disabled?: boolean
+  hint: string
+  onCheckedChange: (checked: boolean) => void
+  title: string
+}) {
+  return (
+    <Label className="flex items-start gap-3 rounded-xl border border-border/70 bg-background px-3 py-2.5 font-normal has-disabled:opacity-60">
+      <Checkbox
+        checked={checked}
+        className="mt-0.5"
+        disabled={disabled}
+        onCheckedChange={(value) => onCheckedChange(value === true)}
+      />
+      <span className="grid min-w-0 gap-0.5">
+        <span className="text-sm font-medium">{title}</span>
+        <span className="text-xs text-muted-foreground">{hint}</span>
+      </span>
+    </Label>
+  )
+}
+
+function DetailItem({
+  label,
+  children,
+}: {
+  label: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4 py-2">
+      <span className="shrink-0 text-sm text-muted-foreground">{label}</span>
+      <span className="min-w-0 text-right text-sm font-medium">{children}</span>
+    </div>
+  )
+}
+
+function StudioApiSettingsPage() {
   const { locale, t } = useI18n()
   const [data, setData] = React.useState<ModelverseApiKeysPayload | null>(null)
   const [isLoading, setIsLoading] = React.useState(true)
@@ -376,7 +416,8 @@ function StudioApiSettingsPage({
   const [form, setForm] = React.useState<ApiKeyFormState>(emptyForm)
   const [deleteTarget, setDeleteTarget] =
     React.useState<ManagedModelverseApiKey | null>(null)
-  const [copiedKeyId, setCopiedKeyId] = React.useState("")
+  const [detailsTarget, setDetailsTarget] =
+    React.useState<ManagedModelverseApiKey | null>(null)
   const [astraFlowApiKey, setAstraFlowApiKey] =
     React.useState<AstraFlowApiKeyPayload | null>(null)
   const [astraFlowApiKeyVisible, setAstraFlowApiKeyVisible] =
@@ -393,6 +434,19 @@ function StudioApiSettingsPage({
   const [exaConfigured, setExaConfigured] = React.useState(false)
   const [exaInput, setExaInput] = React.useState("")
   const [exaSaving, setExaSaving] = React.useState(false)
+
+  const copy =
+    locale === "zh"
+      ? {
+          keyCopied: "密钥已复制。",
+          summary: (visible: number, total: number) =>
+            `${visible} / ${total} 个密钥`,
+        }
+      : {
+          keyCopied: "Key copied.",
+          summary: (visible: number, total: number) =>
+            `${visible} of ${total} keys`,
+        }
 
   const apiKeys = React.useMemo(() => data?.items ?? [], [data?.items])
   const selectedKeyId = data?.selected?.id ?? ""
@@ -460,14 +514,12 @@ function StudioApiSettingsPage({
             )
 
             setData(apiKeysPayload)
-            onSelectedKeyChange?.(Boolean(apiKeysPayload.selected))
           } catch (apiKeysError) {
             setData({
               projectId: preferredProjectId ?? "",
               items: [],
               selected: null,
             })
-            onSelectedKeyChange?.(false)
             showError(
               apiKeysError instanceof Error
                 ? apiKeysError.message
@@ -480,7 +532,6 @@ function StudioApiSettingsPage({
             items: [],
             selected: null,
           })
-          onSelectedKeyChange?.(false)
         }
 
         try {
@@ -496,7 +547,9 @@ function StudioApiSettingsPage({
           setExaConfigured(false)
           setExaInput("")
           showError(
-            exaError instanceof Error ? exaError.message : t.studioExaApiKeyError
+            exaError instanceof Error
+              ? exaError.message
+              : t.studioExaApiKeyError
           )
         }
       } catch (loadError) {
@@ -515,7 +568,6 @@ function StudioApiSettingsPage({
       }
     },
     [
-      onSelectedKeyChange,
       redirectToLogin,
       showError,
       t.studioApiKeysLoadFailed,
@@ -540,6 +592,7 @@ function StudioApiSettingsPage({
       setEditingKeyId("")
       setForm(emptyForm)
       setDeleteTarget(null)
+      setDetailsTarget(null)
       void loadSettings(projectId)
     }
 
@@ -634,7 +687,6 @@ function StudioApiSettingsPage({
           )
 
       setData(next)
-      onSelectedKeyChange?.(Boolean(next.selected))
       setFormOpen(false)
       setEditingKeyId("")
       setForm(emptyForm)
@@ -680,7 +732,6 @@ function StudioApiSettingsPage({
       )
 
       setData(next)
-      onSelectedKeyChange?.(Boolean(next.selected))
       showSuccess(t.studioApiKeySelected)
     } catch (selectError) {
       if (selectError instanceof LoginRequiredError) {
@@ -721,7 +772,6 @@ function StudioApiSettingsPage({
       )
 
       setData(next)
-      onSelectedKeyChange?.(Boolean(next.selected))
       setDeleteTarget(null)
       showSuccess(t.studioApiKeyDeleted)
 
@@ -803,7 +853,6 @@ function StudioApiSettingsPage({
       setAstraFlowApiKeyVisible(false)
       setAstraFlowApiKeyChangeOpen(false)
       setAstraFlowApiKeyInput("")
-      onSelectedKeyChange?.(true)
       showSuccess(t.studioAstraFlowApiKeyChanged)
     } catch (saveError) {
       if (saveError instanceof LoginRequiredError) {
@@ -857,10 +906,7 @@ function StudioApiSettingsPage({
       return
     }
 
-    setCopiedKeyId(apiKey.id)
-    window.setTimeout(() => {
-      setCopiedKeyId((current) => (current === apiKey.id ? "" : current))
-    }, 1600)
+    toast.success(copy.keyCopied)
   }
 
   function renderModels(apiKey: ManagedModelverseApiKey) {
@@ -883,555 +929,352 @@ function StudioApiSettingsPage({
     !astraFlowApiKey?.fullKey || astraFlowApiKeySaving
 
   return (
-    <div
-      className={cn(
-        "flex min-w-0 flex-col",
-        embedded
-          ? "bg-transparent"
-          : "min-h-0 flex-1 overflow-hidden bg-background"
-      )}
-    >
-      <main
-        className={cn(
-          "min-w-0",
-          embedded ? "overflow-visible" : "min-h-0 flex-1 overflow-y-auto"
-        )}
+    <SettingsPage>
+      <SettingsPageHeader
+        busy={isLoading || isBusy}
+        description={t.settingsApiKeysDescription}
+        title={t.settingsApiKeysNav}
+      />
+
+      <SettingsSection
+        action={
+          <Badge variant={astraFlowApiKey?.configured ? "secondary" : "outline"}>
+            {astraFlowApiKey?.configured
+              ? t.studioApiKeyConfigured
+              : t.studioApiKeyNotConfigured}
+          </Badge>
+        }
+        description={t.studioAstraFlowApiKeyDescription}
+        title={t.studioAstraFlowApiKeyTitle}
       >
-        <div className={cn("flex flex-col gap-6", !embedded && "w-full")}>
-          {!embedded ? (
-            <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0">
-                <h1 className="text-3xl font-semibold tracking-normal">
-                  {t.settingsApiKeysNav}
-                </h1>
-                <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
-                  {t.settingsApiKeysDescription}
-                </p>
-              </div>
-              {isLoading || isBusy ? (
+        <div className="flex flex-col gap-2 px-4 py-3">
+          <div className="flex items-center gap-1.5">
+            <code
+              className="flex h-8 min-w-0 flex-1 items-center overflow-hidden rounded-lg bg-muted px-2.5 font-mono text-[0.8125rem] whitespace-nowrap"
+              title={astraFlowApiKeyDisplay}
+            >
+              <span className="truncate">{astraFlowApiKeyDisplay}</span>
+            </code>
+            <Button
+              aria-label={
+                astraFlowApiKeyVisible
+                  ? t.studioAstraFlowApiKeyHide
+                  : t.studioAstraFlowApiKeyShow
+              }
+              disabled={!astraFlowApiKey?.configured}
+              onClick={() => setAstraFlowApiKeyVisible((current) => !current)}
+              size="icon-sm"
+              title={
+                astraFlowApiKeyVisible
+                  ? t.studioAstraFlowApiKeyHide
+                  : t.studioAstraFlowApiKeyShow
+              }
+              type="button"
+              variant="ghost"
+            >
+              {astraFlowApiKeyVisible ? <RiEyeOffLine /> : <RiEyeLine />}
+            </Button>
+            <Button
+              aria-label={t.studioCopy}
+              disabled={astraFlowApiKeyCopyDisabled}
+              onClick={() => void copyAstraFlowApiKey()}
+              size="icon-sm"
+              title={t.studioCopy}
+              type="button"
+              variant="ghost"
+            >
+              {astraFlowApiKeyCopied ? <RiCheckLine /> : <RiFileCopyLine />}
+            </Button>
+            <Button
+              disabled={astraFlowApiKeySaving}
+              onClick={() => setAstraFlowApiKeyChangeOpen(true)}
+              size="sm"
+              type="button"
+              variant={astraFlowApiKey?.configured ? "outline" : "default"}
+            >
+              {astraFlowApiKeySaving ? (
                 <RiLoader4Line
-                  className="mt-2 size-5 shrink-0 animate-spin text-muted-foreground"
-                  aria-hidden
+                  className="animate-spin"
+                  data-icon="inline-start"
                 />
-              ) : null}
-            </div>
-          ) : null}
-          <section className="grid gap-2">
-            <h2 className="text-sm font-medium text-foreground">
-              {t.settingsManagedKeysSection}
-            </h2>
-            <div className="overflow-hidden rounded-xl border bg-card">
-            <div className="flex flex-wrap items-center gap-2 border-b p-3">
-              <div className="relative min-w-0 flex-1 basis-64 sm:max-w-sm">
-                <RiSearchLine className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  aria-label={t.studioApiKeySearch}
-                  className="pl-9"
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder={t.studioApiKeySearch}
-                  value={search}
-                />
-              </div>
+              ) : (
+                <RiPencilLine data-icon="inline-start" />
+              )}
+              {astraFlowApiKey?.configured
+                ? t.studioAstraFlowApiKeyChange
+                : t.studioAstraFlowApiKeyAdd}
+            </Button>
+          </div>
+          <p className="text-[0.8125rem]/5 text-muted-foreground">
+            {t.studioAstraFlowApiKeyCurrentHint}
+          </p>
+        </div>
+      </SettingsSection>
 
-              <Select
-                onValueChange={(value) =>
-                  setStatusFilter(value as ApiKeyStatusFilter)
-                }
-                value={statusFilter}
-              >
-                <SelectTrigger aria-label={t.studioApiKeyStatus} size="sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">{t.studioApiKeyStatusAll}</SelectItem>
-                  <SelectItem value="active">
-                    {t.studioApiKeyStatusActive}
-                  </SelectItem>
-                  <SelectItem value="inactive">
-                    {t.studioApiKeyStatusInactive}
-                  </SelectItem>
-                  <SelectItem value="modelverse-off">
-                    {t.studioApiKeyStatusModelverseDisabled}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
+      <SettingsSection
+        action={
+          <>
+            <Button
+              aria-label={t.refresh}
+              disabled={isLoading}
+              onClick={() => void loadSettings()}
+              size="icon-sm"
+              title={t.refresh}
+              type="button"
+              variant="ghost"
+            >
+              <RiRefreshLine
+                className={isLoading ? "animate-spin" : undefined}
+              />
+            </Button>
+            <Button
+              disabled={!ucloudOAuthConfigured}
+              onClick={openCreateForm}
+              size="sm"
+              type="button"
+            >
+              <RiAddLine data-icon="inline-start" />
+              {t.studioApiKeyNew}
+            </Button>
+          </>
+        }
+        description={t.studioApiKeyFormHint}
+        title={t.settingsManagedKeysSection}
+      >
+        <div className="flex items-center gap-2 px-3 py-2.5">
+          <div className="relative min-w-0 flex-1 sm:max-w-64">
+            <RiSearchLine
+              aria-hidden
+              className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
+            />
+            <Input
+              aria-label={t.studioApiKeySearch}
+              className="h-8 pl-8"
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder={t.studioApiKeySearch}
+              value={search}
+            />
+          </div>
+          <Select
+            onValueChange={(value) =>
+              setStatusFilter(value as ApiKeyStatusFilter)
+            }
+            value={statusFilter}
+          >
+            <SelectTrigger aria-label={t.studioApiKeyStatus} size="sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem value="all">{t.studioApiKeyStatusAll}</SelectItem>
+                <SelectItem value="active">
+                  {t.studioApiKeyStatusActive}
+                </SelectItem>
+                <SelectItem value="inactive">
+                  {t.studioApiKeyStatusInactive}
+                </SelectItem>
+                <SelectItem value="modelverse-off">
+                  {t.studioApiKeyStatusModelverseDisabled}
+                </SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+          <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+            {copy.summary(visibleKeys.length, apiKeys.length)}
+          </span>
+        </div>
 
-              <div className="text-sm text-muted-foreground">
-                {t.studioApiSettingsSummary(visibleKeys.length, apiKeys.length)}
-              </div>
-
-              <div className="ml-auto flex items-center gap-2">
-                <Button
-                  disabled={isLoading}
-                  onClick={() => void loadSettings()}
-                  size="sm"
-                  variant="outline"
-                >
-                  {isLoading ? (
-                    <RiLoader4Line className="animate-spin" />
-                  ) : (
-                    <RiRefreshLine />
-                  )}
-                  {t.refresh}
-                </Button>
-                <Button
-                  disabled={!ucloudOAuthConfigured}
-                  onClick={openCreateForm}
-                  size="sm"
-                >
-                  <RiAddLine />
-                  {t.studioApiKeyNew}
-                </Button>
-              </div>
-            </div>
-
-          <div className="border-b py-4">
-            <CardHeader className="rounded-none">
-              <CardTitle>{t.studioAstraFlowApiKeyTitle}</CardTitle>
-              <CardDescription>
-                {t.studioAstraFlowApiKeyDescription}
-              </CardDescription>
-              <CardAction>
-                <Badge
-                  variant={astraFlowApiKey?.configured ? "secondary" : "outline"}
-                >
-                  {astraFlowApiKey?.configured
-                    ? t.studioApiKeyConfigured
-                    : t.studioApiKeyNotConfigured}
-                </Badge>
-              </CardAction>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-3">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <code
-                  className="flex min-h-10 min-w-0 flex-1 items-center rounded-2xl bg-muted px-3 py-2 font-mono text-sm break-all"
-                  title={astraFlowApiKeyDisplay}
-                >
-                  {astraFlowApiKeyDisplay}
-                </code>
-                <div className="flex items-center gap-2">
-                  <Button
-                    disabled={!astraFlowApiKey?.configured}
-                    onClick={() =>
-                      setAstraFlowApiKeyVisible((current) => !current)
-                    }
-                    size="icon-sm"
-                    title={
-                      astraFlowApiKeyVisible
-                        ? t.studioAstraFlowApiKeyHide
-                        : t.studioAstraFlowApiKeyShow
-                    }
-                    type="button"
-                    variant="outline"
-                  >
-                    {astraFlowApiKeyVisible ? <RiEyeOffLine /> : <RiEyeLine />}
-                  </Button>
-                  <Button
-                    disabled={astraFlowApiKeyCopyDisabled}
-                    onClick={() => void copyAstraFlowApiKey()}
-                    size="icon-sm"
-                    title={t.studioCopy}
-                    type="button"
-                    variant="outline"
-                  >
-                    {astraFlowApiKeyCopied ? (
-                      <RiCheckLine />
-                    ) : (
-                      <RiFileCopyLine />
-                    )}
-                  </Button>
-                  <Button
-                    disabled={astraFlowApiKeySaving}
-                    onClick={() => setAstraFlowApiKeyChangeOpen(true)}
-                    size="sm"
-                    type="button"
-                    variant={astraFlowApiKey?.configured ? "outline" : "default"}
-                  >
-                    {astraFlowApiKeySaving ? (
-                      <RiLoader4Line className="animate-spin" />
-                    ) : (
-                      <RiPencilLine />
-                    )}
-                    {astraFlowApiKey?.configured
-                      ? t.studioAstraFlowApiKeyChange
-                      : t.studioAstraFlowApiKeyAdd}
-                  </Button>
+        {isLoading ? (
+          <div className="grid gap-3 px-4 py-4">
+            {[0, 1, 2].map((index) => (
+              <div className="flex items-center justify-between gap-4" key={index}>
+                <div className="grid flex-1 gap-1.5">
+                  <Skeleton className="h-4 w-40" />
+                  <Skeleton className="h-3 w-64" />
                 </div>
+                <Skeleton className="h-7 w-20" />
               </div>
-              <p className="text-sm text-muted-foreground">
-                {t.studioAstraFlowApiKeyCurrentHint}
-              </p>
-            </CardContent>
+            ))}
           </div>
+        ) : visibleKeys.length ? (
+          visibleKeys.map((apiKey) => {
+            const isSelected = selectedKeyId === apiKey.id
 
-          <div className="overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[700px] table-fixed text-sm">
-                <colgroup>
-                  <col className="w-[28%]" />
-                  <col className="w-[26%]" />
-                  <col className="w-[24%]" />
-                  <col className="w-[22%]" />
-                </colgroup>
-                <thead className="border-b bg-muted/35">
-                  <tr className="text-center text-xs font-medium text-muted-foreground">
-                    <th className="px-3 py-3 font-medium">
-                      {t.studioApiKeyName}
-                    </th>
-                    <th className="px-3 py-3 font-medium">
-                      {t.studioApiKeyKeyId}
-                    </th>
-                    <th className="px-3 py-3 font-medium">
-                      {t.studioApiKeyPreview}
-                    </th>
-                    <th className="px-3 py-3 font-medium">
-                      {t.studioApiKeyActions}
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {isLoading ? (
-                    <tr>
-                      <td className="h-48 px-3 py-8 text-center" colSpan={4}>
-                        <div className="flex items-center justify-center gap-2 text-muted-foreground">
-                          <RiLoader4Line className="size-4 animate-spin" />
-                          {t.studioApiKeyLoading}
-                        </div>
-                      </td>
-                    </tr>
-                  ) : visibleKeys.length ? (
-                    visibleKeys.map((apiKey) => {
-                      const isSelected = selectedKeyId === apiKey.id
-                      const modelTitle =
-                        apiKey.grantedModels.length > 0
-                          ? apiKey.grantedModels.join("\n")
-                          : undefined
-
-                      return (
-                        <tr
-                          className={cn(
-                            "text-center transition-colors hover:bg-muted/35",
-                            isSelected && "bg-primary/5"
-                          )}
-                          key={apiKey.id}
-                        >
-                          <td className="px-3 py-3 align-middle">
-                            <div className="flex min-w-0 flex-col items-center gap-1.5">
-                              <span
-                                className="max-w-full truncate font-medium"
-                                title={apiKey.name}
-                              >
-                                {apiKey.name || "-"}
-                              </span>
-                              {isSelected ? (
-                                <Badge variant="default">
-                                  <RiCheckLine />
-                                  {t.studioApiKeyInUse}
-                                </Badge>
-                              ) : null}
-                            </div>
-                          </td>
-                          <td className="px-3 py-3 align-middle">
-                            <code
-                              className="mx-auto block max-w-full truncate rounded-2xl bg-muted px-2 py-1 font-mono text-xs"
-                              title={apiKey.id}
-                            >
-                              {apiKey.id}
-                            </code>
-                          </td>
-                          <td className="px-3 py-3 align-middle">
-                            <div className="flex min-w-0 items-center justify-center gap-1.5">
-                              <code
-                                className="block max-w-[92px] min-w-0 truncate rounded-2xl bg-muted px-2 py-1 font-mono text-xs"
-                                title={t.studioApiKeySecretHidden}
-                              >
-                                {apiKey.keyPreview || "-"}
-                              </code>
-                              <Button
-                                aria-label={t.studioCopy}
-                                disabled={!apiKey.key}
-                                onClick={() => void copyApiKey(apiKey)}
-                                size="icon-xs"
-                                title={t.studioCopy}
-                                type="button"
-                                variant="ghost"
-                              >
-                                {copiedKeyId === apiKey.id ? (
-                                  <RiCheckLine />
-                                ) : (
-                                  <RiFileCopyLine />
-                                )}
-                              </Button>
-                            </div>
-                          </td>
-                          <td className="px-2 py-3 align-middle whitespace-nowrap">
-                            <div className="flex items-center justify-center gap-1">
-                              <Popover>
-                                <PopoverTrigger asChild>
-                                  <Button
-                                    aria-label={t.studioApiKeyDetails}
-                                    size="icon-sm"
-                                    title={t.studioApiKeyDetails}
-                                    type="button"
-                                    variant="outline"
-                                  >
-                                    <RiInformationLine />
-                                  </Button>
-                                </PopoverTrigger>
-                                <PopoverContent
-                                  align="end"
-                                  className="w-80 gap-3 rounded-3xl p-3"
-                                >
-                                  <PopoverHeader>
-                                    <PopoverTitle className="truncate text-sm">
-                                      {apiKey.name || "-"}
-                                    </PopoverTitle>
-                                  </PopoverHeader>
-
-                                  <div className="grid gap-2 text-sm">
-                                    <div className="flex items-center justify-between gap-3 rounded-2xl bg-muted/55 px-3 py-2">
-                                      <span className="text-muted-foreground">
-                                        {t.studioApiKeyStatus}
-                                      </span>
-                                      <Badge
-                                        variant={
-                                          apiKey.status === 1
-                                            ? "secondary"
-                                            : "outline"
-                                        }
-                                      >
-                                        {apiKey.status === 1
-                                          ? t.studioApiKeyStatusActive
-                                          : t.studioApiKeyStatusInactive}
-                                      </Badge>
-                                    </div>
-
-                                    <div className="rounded-2xl bg-muted/55 px-3 py-2">
-                                      <div className="mb-2 text-muted-foreground">
-                                        {t.studioApiKeyAccess}
-                                      </div>
-                                      <div className="flex flex-wrap gap-1.5">
-                                        <Badge
-                                          variant={
-                                            apiKey.modelverseDisabled === 1
-                                              ? "outline"
-                                              : "secondary"
-                                          }
-                                        >
-                                          {apiKey.modelverseDisabled === 1
-                                            ? t.studioApiKeyModelverseOff
-                                            : t.studioApiKeyModelverseOn}
-                                        </Badge>
-                                        <Badge
-                                          variant={
-                                            apiKey.sandboxDisabled === 1
-                                              ? "outline"
-                                              : "secondary"
-                                          }
-                                        >
-                                          {apiKey.sandboxDisabled === 1
-                                            ? t.studioApiKeySandboxOff
-                                            : t.studioApiKeySandboxOn}
-                                        </Badge>
-                                      </div>
-                                    </div>
-
-                                    <div className="grid gap-1 rounded-2xl bg-muted/55 px-3 py-2">
-                                      <div className="text-muted-foreground">
-                                        {t.studioApiKeyLimits}
-                                      </div>
-                                      <div className="flex items-center justify-between gap-3">
-                                        <span className="text-muted-foreground">
-                                          {t.studioApiKeyDailyShort}
-                                        </span>
-                                        <span className="font-medium">
-                                          {formatAmount(apiKey.dailyUsedAmount)}
-                                          /
-                                          {formatAmount(apiKey.dailyLimitAmount)}
-                                        </span>
-                                      </div>
-                                      <div className="flex items-center justify-between gap-3">
-                                        <span className="text-muted-foreground">
-                                          {t.studioApiKeyMonthlyShort}
-                                        </span>
-                                        <span className="font-medium">
-                                          {formatAmount(
-                                            apiKey.monthlyUsedAmount
-                                          )}
-                                          /
-                                          {formatAmount(
-                                            apiKey.monthlyLimitAmount
-                                          )}
-                                        </span>
-                                      </div>
-                                    </div>
-
-                                    <div className="rounded-2xl bg-muted/55 px-3 py-2">
-                                      <div className="mb-2 flex items-center justify-between gap-3">
-                                        <span className="text-muted-foreground">
-                                          {t.studioApiKeyModels}
-                                        </span>
-                                        <Badge
-                                          variant="outline"
-                                          title={modelTitle}
-                                        >
-                                          {renderModels(apiKey)}
-                                        </Badge>
-                                      </div>
-                                      {apiKey.grantedModels.length > 0 &&
-                                      !apiKey.grantedModels.includes("all") ? (
-                                        <div className="max-h-24 overflow-y-auto rounded-xl bg-background px-2 py-1 font-mono text-xs text-muted-foreground">
-                                          {apiKey.grantedModels.map((model) => (
-                                            <div
-                                              key={model}
-                                              className="truncate"
-                                              title={model}
-                                            >
-                                              {model}
-                                            </div>
-                                          ))}
-                                        </div>
-                                      ) : null}
-                                    </div>
-
-                                    <div className="flex items-center justify-between gap-3 rounded-2xl bg-muted/55 px-3 py-2">
-                                      <span className="text-muted-foreground">
-                                        {t.studioApiKeyCreatedAt}
-                                      </span>
-                                      <span className="font-medium">
-                                        {formatUnixTime(
-                                          apiKey.createdAt,
-                                          locale
-                                        )}
-                                      </span>
-                                    </div>
-                                  </div>
-                                </PopoverContent>
-                              </Popover>
-                              <Button
-                                aria-label={t.studioApiKeyUseForApp}
-                                disabled={
-                                  isBusy ||
-                                  isSelected ||
-                                  apiKey.modelverseDisabled === 1
-                                }
-                                onClick={() => void setApiKeyForApp(apiKey)}
-                                size="icon-sm"
-                                title={t.studioApiKeyUseForApp}
-                                variant={isSelected ? "secondary" : "ghost"}
-                              >
-                                {isSelected ? <RiCheckLine /> : <RiKey2Line />}
-                              </Button>
-                              <Button
-                                aria-label={t.studioApiKeyEdit}
-                                disabled={isBusy}
-                                onClick={() => openEditForm(apiKey)}
-                                size="icon-sm"
-                                title={t.studioApiKeyEdit}
-                                variant="ghost"
-                              >
-                                <RiPencilLine />
-                              </Button>
-                              <Button
-                                aria-label={t.studioApiKeyDelete}
-                                disabled={isBusy}
-                                onClick={() => setDeleteTarget(apiKey)}
-                                size="icon-sm"
-                                title={t.studioApiKeyDelete}
-                                variant="ghost"
-                              >
-                                <RiDeleteBinLine />
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      )
-                    })
-                  ) : (
-                    <tr>
-                      <td className="h-48 px-3 py-8 text-center" colSpan={4}>
-                        <div className="flex flex-col items-center gap-2 text-muted-foreground">
-                          <span className="font-medium text-foreground">
-                            {apiKeys.length
-                              ? t.studioApiKeyNoMatches
-                              : t.studioApiKeyNoKeys}
-                          </span>
-                          {!apiKeys.length ? (
-                            <span>{t.studioApiKeyEmptyHint}</span>
-                          ) : null}
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-            </div>
-          </section>
-
-          <Card className="rounded-xl shadow-none" size="sm">
-            <CardHeader>
-              <CardTitle>{t.studioExaApiKeyLabel}</CardTitle>
-              <CardDescription>{t.studioExaApiKeyHint}</CardDescription>
-              <CardAction>
-                <Badge variant={exaConfigured ? "secondary" : "outline"}>
-                  {exaConfigured
-                    ? t.studioApiKeyConfigured
-                    : t.studioApiKeyNotConfigured}
-                </Badge>
-              </CardAction>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-3">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <Input
-                  className="sm:max-w-md"
-                  onChange={(event) => setExaInput(event.target.value)}
-                  placeholder={t.studioExaApiKeyPlaceholder}
-                  type="password"
-                  value={exaInput}
-                />
-                <div className="flex items-center gap-2">
-                  <Button
-                    disabled={exaSaving || !exaInput.trim()}
-                    onClick={() => void saveExaApiKey()}
-                    size="sm"
-                  >
-                    {exaSaving ? (
-                      <RiLoader4Line className="animate-spin" />
-                    ) : (
-                      <RiCheckLine />
-                    )}
-                    {t.studioExaApiKeySave}
-                  </Button>
-                  {exaConfigured ? (
-                    <Button
-                      disabled={exaSaving}
-                      onClick={() => void saveExaApiKey("")}
-                      size="sm"
-                      variant="outline"
+            return (
+              <div
+                className="flex items-center justify-between gap-4 px-4 py-2.5"
+                key={apiKey.id}
+              >
+                <div className="min-w-0">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span
+                      className="truncate text-sm font-medium"
+                      title={apiKey.name}
                     >
-                      {t.studioExaApiKeyClear}
+                      {apiKey.name || "-"}
+                    </span>
+                    {isSelected ? (
+                      <Badge>
+                        <RiCheckLine />
+                        {t.studioApiKeyInUse}
+                      </Badge>
+                    ) : null}
+                    {apiKey.status !== 1 ? (
+                      <Badge variant="outline">
+                        {t.studioApiKeyStatusInactive}
+                      </Badge>
+                    ) : null}
+                    {apiKey.modelverseDisabled === 1 ? (
+                      <Badge variant="outline">
+                        {t.studioApiKeyModelverseOff}
+                      </Badge>
+                    ) : null}
+                  </div>
+                  <div className="mt-0.5 flex min-w-0 items-center gap-1.5 font-mono text-xs text-muted-foreground">
+                    <span className="truncate select-text" title={apiKey.id}>
+                      {apiKey.id}
+                    </span>
+                    <span aria-hidden>·</span>
+                    <span className="shrink-0">
+                      {apiKey.keyPreview || "-"}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex shrink-0 items-center gap-1">
+                  {!isSelected ? (
+                    <Button
+                      disabled={isBusy || apiKey.modelverseDisabled === 1}
+                      onClick={() => void setApiKeyForApp(apiKey)}
+                      size="sm"
+                      type="button"
+                      variant="ghost"
+                    >
+                      {t.studioApiKeyUseForApp}
                     </Button>
                   ) : null}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        aria-label={t.studioApiKeyActions}
+                        size="icon-sm"
+                        type="button"
+                        variant="ghost"
+                      >
+                        <RiMore2Line />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-48">
+                      <DropdownMenuGroup>
+                        <DropdownMenuItem
+                          onSelect={() => setDetailsTarget(apiKey)}
+                        >
+                          <RiInformationLine aria-hidden />
+                          {t.studioApiKeyDetails}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={!apiKey.key}
+                          onSelect={() => void copyApiKey(apiKey)}
+                        >
+                          <RiFileCopyLine aria-hidden />
+                          {t.studioCopy}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={isBusy}
+                          onSelect={() => openEditForm(apiKey)}
+                        >
+                          <RiPencilLine aria-hidden />
+                          {t.studioApiKeyEdit}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          disabled={isBusy}
+                          onSelect={() => setDeleteTarget(apiKey)}
+                          variant="destructive"
+                        >
+                          <RiDeleteBinLine aria-hidden />
+                          {t.studioApiKeyDelete}
+                        </DropdownMenuItem>
+                      </DropdownMenuGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
               </div>
-            </CardContent>
-          </Card>
-        </div>
-      </main>
+            )
+          })
+        ) : (
+          <SettingsEmptyRow>
+            <span className="font-medium text-foreground">
+              {apiKeys.length ? t.studioApiKeyNoMatches : t.studioApiKeyNoKeys}
+            </span>
+            {!apiKeys.length ? <span>{t.studioApiKeyEmptyHint}</span> : null}
+          </SettingsEmptyRow>
+        )}
+      </SettingsSection>
 
-      <Dialog open={formOpen} onOpenChange={(open) => !open && closeForm()}>
-        <DialogContent className="!top-0 !right-0 !left-auto !grid !h-svh !max-h-svh !w-[min(36rem,calc(100vw-1rem))] !max-w-none !translate-x-0 !translate-y-0 !grid-rows-[auto_minmax(0,1fr)_auto] !gap-0 !rounded-none !rounded-l-4xl !p-0">
-          <DialogHeader className="border-b p-6 pr-16">
-            <DialogTitle>
+      <SettingsSection
+        action={
+          <Badge variant={exaConfigured ? "secondary" : "outline"}>
+            {exaConfigured
+              ? t.studioApiKeyConfigured
+              : t.studioApiKeyNotConfigured}
+          </Badge>
+        }
+        description={t.studioExaApiKeyHint}
+        title={t.studioExaApiKeyLabel}
+      >
+        <SettingsRow label={t.studioExaApiKeyLabel}>
+          <Input
+            className="h-8 w-52"
+            onChange={(event) => setExaInput(event.target.value)}
+            placeholder={t.studioExaApiKeyPlaceholder}
+            type="password"
+            value={exaInput}
+          />
+          <Button
+            disabled={exaSaving || !exaInput.trim()}
+            onClick={() => void saveExaApiKey()}
+            size="sm"
+            type="button"
+          >
+            {exaSaving ? (
+              <RiLoader4Line className="animate-spin" data-icon="inline-start" />
+            ) : (
+              <RiCheckLine data-icon="inline-start" />
+            )}
+            {t.studioExaApiKeySave}
+          </Button>
+          {exaConfigured ? (
+            <Button
+              disabled={exaSaving}
+              onClick={() => void saveExaApiKey("")}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              {t.studioExaApiKeyClear}
+            </Button>
+          ) : null}
+        </SettingsRow>
+      </SettingsSection>
+
+      <Sheet
+        onOpenChange={(open) => {
+          if (!open) {
+            closeForm()
+          }
+        }}
+        open={formOpen}
+      >
+        <SheetContent className="w-full gap-0 p-0 sm:max-w-lg" side="right">
+          <SheetHeader className="border-b px-6 py-5">
+            <SheetTitle>
               {isEditing ? t.studioApiKeyEditTitle : t.studioApiKeyCreateTitle}
-            </DialogTitle>
-            <DialogDescription>{t.studioApiKeyFormHint}</DialogDescription>
-          </DialogHeader>
+            </SheetTitle>
+            <SheetDescription>{t.studioApiKeyFormHint}</SheetDescription>
+          </SheetHeader>
 
           <form
-            className="min-h-0 overflow-y-auto px-6 py-5"
+            className="min-h-0 flex-1 overflow-y-auto px-6 py-5"
             id="modelverse-api-key-form"
             onSubmit={submitForm}
           >
@@ -1450,43 +1293,22 @@ function StudioApiSettingsPage({
               </Field>
 
               <div className="grid gap-3 sm:grid-cols-2">
-                <label className="flex items-start gap-3 rounded-3xl border bg-card px-3 py-3">
-                  <input
-                    checked={form.modelverseEnabled}
-                    className={checkboxClassName()}
-                    onChange={(event) =>
-                      updateForm({ modelverseEnabled: event.target.checked })
-                    }
-                    type="checkbox"
-                  />
-                  <span className="min-w-0">
-                    <span className="block text-sm font-medium">
-                      {t.studioApiKeyModelverseEnabled}
-                    </span>
-                    <span className="block text-xs text-muted-foreground">
-                      {t.studioApiKeyModelverseOn}
-                    </span>
-                  </span>
-                </label>
-
-                <label className="flex items-start gap-3 rounded-3xl border bg-card px-3 py-3">
-                  <input
-                    checked={form.sandboxEnabled}
-                    className={checkboxClassName()}
-                    onChange={(event) =>
-                      updateForm({ sandboxEnabled: event.target.checked })
-                    }
-                    type="checkbox"
-                  />
-                  <span className="min-w-0">
-                    <span className="block text-sm font-medium">
-                      {t.studioApiKeySandboxEnabled}
-                    </span>
-                    <span className="block text-xs text-muted-foreground">
-                      {t.studioApiKeySandboxOn}
-                    </span>
-                  </span>
-                </label>
+                <CheckboxCard
+                  checked={form.modelverseEnabled}
+                  hint={t.studioApiKeyModelverseOn}
+                  onCheckedChange={(modelverseEnabled) =>
+                    updateForm({ modelverseEnabled })
+                  }
+                  title={t.studioApiKeyModelverseEnabled}
+                />
+                <CheckboxCard
+                  checked={form.sandboxEnabled}
+                  hint={t.studioApiKeySandboxOn}
+                  onCheckedChange={(sandboxEnabled) =>
+                    updateForm({ sandboxEnabled })
+                  }
+                  title={t.studioApiKeySandboxEnabled}
+                />
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2">
@@ -1521,31 +1343,21 @@ function StudioApiSettingsPage({
                 </Field>
               </div>
 
-              <label className="flex items-start gap-3 rounded-3xl border bg-card px-3 py-3">
-                <input
-                  checked={form.grantAllModels}
-                  className={checkboxClassName()}
-                  onChange={(event) =>
-                    updateForm({ grantAllModels: event.target.checked })
-                  }
-                  type="checkbox"
-                />
-                <span className="min-w-0">
-                  <span className="block text-sm font-medium">
-                    {t.studioApiKeyGrantAllModels}
-                  </span>
-                  <span className="block text-xs text-muted-foreground">
-                    {t.studioApiKeyAllModels}
-                  </span>
-                </span>
-              </label>
+              <CheckboxCard
+                checked={form.grantAllModels}
+                hint={t.studioApiKeyAllModels}
+                onCheckedChange={(grantAllModels) =>
+                  updateForm({ grantAllModels })
+                }
+                title={t.studioApiKeyGrantAllModels}
+              />
 
               <Field data-disabled={form.grantAllModels || undefined}>
                 <FieldLabel htmlFor="modelverse-api-key-granted-models">
                   {t.studioApiKeyGrantedModels}
                 </FieldLabel>
                 <Textarea
-                  className="min-h-28"
+                  className="min-h-24"
                   disabled={form.grantAllModels}
                   id="modelverse-api-key-granted-models"
                   onChange={(event) =>
@@ -1564,7 +1376,7 @@ function StudioApiSettingsPage({
                   {t.studioApiKeyIpWhitelist}
                 </FieldLabel>
                 <Textarea
-                  className="min-h-28"
+                  className="min-h-24"
                   id="modelverse-api-key-ip-whitelist"
                   onChange={(event) =>
                     updateForm({ ipWhitelist: event.target.value })
@@ -1574,29 +1386,17 @@ function StudioApiSettingsPage({
                 />
               </Field>
 
-              <label className="flex items-start gap-3 rounded-3xl border bg-card px-3 py-3">
-                <input
-                  checked={form.useForApp}
-                  className={checkboxClassName(!form.modelverseEnabled)}
-                  disabled={!form.modelverseEnabled}
-                  onChange={(event) =>
-                    updateForm({ useForApp: event.target.checked })
-                  }
-                  type="checkbox"
-                />
-                <span className="min-w-0">
-                  <span className="block text-sm font-medium">
-                    {t.studioApiKeyUseForApp}
-                  </span>
-                  <span className="block text-xs text-muted-foreground">
-                    {t.studioApiKeyUseAfterSave}
-                  </span>
-                </span>
-              </label>
+              <CheckboxCard
+                checked={form.useForApp}
+                disabled={!form.modelverseEnabled}
+                hint={t.studioApiKeyUseAfterSave}
+                onCheckedChange={(useForApp) => updateForm({ useForApp })}
+                title={t.studioApiKeyUseForApp}
+              />
             </FieldGroup>
           </form>
 
-          <DialogFooter className="border-t p-4">
+          <SheetFooter className="flex-row justify-end border-t px-6 py-4">
             <Button
               disabled={isSaving}
               onClick={closeForm}
@@ -1611,24 +1411,106 @@ function StudioApiSettingsPage({
               type="submit"
             >
               {isSaving ? (
-                <RiLoader4Line className="animate-spin" />
+                <RiLoader4Line
+                  className="animate-spin"
+                  data-icon="inline-start"
+                />
               ) : (
-                <RiCheckLine />
+                <RiCheckLine data-icon="inline-start" />
               )}
               {isEditing ? t.studioApiKeyUpdate : t.studioApiKeyCreate}
             </Button>
-          </DialogFooter>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
+
+      <Dialog
+        onOpenChange={(open) => !open && setDetailsTarget(null)}
+        open={Boolean(detailsTarget)}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="truncate">
+              {detailsTarget?.name || "-"}
+            </DialogTitle>
+            <DialogDescription className="truncate font-mono text-xs">
+              {detailsTarget?.id}
+            </DialogDescription>
+          </DialogHeader>
+          {detailsTarget ? (
+            <div className="divide-y divide-border/60">
+              <DetailItem label={t.studioApiKeyStatus}>
+                <Badge
+                  variant={detailsTarget.status === 1 ? "secondary" : "outline"}
+                >
+                  {detailsTarget.status === 1
+                    ? t.studioApiKeyStatusActive
+                    : t.studioApiKeyStatusInactive}
+                </Badge>
+              </DetailItem>
+              <DetailItem label={t.studioApiKeyAccess}>
+                <span className="flex flex-wrap justify-end gap-1.5">
+                  <Badge
+                    variant={
+                      detailsTarget.modelverseDisabled === 1
+                        ? "outline"
+                        : "secondary"
+                    }
+                  >
+                    {detailsTarget.modelverseDisabled === 1
+                      ? t.studioApiKeyModelverseOff
+                      : t.studioApiKeyModelverseOn}
+                  </Badge>
+                  <Badge
+                    variant={
+                      detailsTarget.sandboxDisabled === 1
+                        ? "outline"
+                        : "secondary"
+                    }
+                  >
+                    {detailsTarget.sandboxDisabled === 1
+                      ? t.studioApiKeySandboxOff
+                      : t.studioApiKeySandboxOn}
+                  </Badge>
+                </span>
+              </DetailItem>
+              <DetailItem label={t.studioApiKeyDailyShort}>
+                {formatAmount(detailsTarget.dailyUsedAmount)} /{" "}
+                {formatAmount(detailsTarget.dailyLimitAmount)}
+              </DetailItem>
+              <DetailItem label={t.studioApiKeyMonthlyShort}>
+                {formatAmount(detailsTarget.monthlyUsedAmount)} /{" "}
+                {formatAmount(detailsTarget.monthlyLimitAmount)}
+              </DetailItem>
+              <DetailItem label={t.studioApiKeyModels}>
+                {renderModels(detailsTarget)}
+              </DetailItem>
+              {detailsTarget.grantedModels.length > 0 &&
+              !detailsTarget.grantedModels.includes("all") ? (
+                <div className="max-h-28 overflow-y-auto py-2 font-mono text-xs text-muted-foreground">
+                  {detailsTarget.grantedModels.map((model) => (
+                    <div className="truncate" key={model} title={model}>
+                      {model}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              <DetailItem label={t.studioApiKeyCreatedAt}>
+                {formatUnixTime(detailsTarget.createdAt, locale)}
+              </DetailItem>
+            </div>
+          ) : null}
         </DialogContent>
       </Dialog>
 
       <Dialog
-        open={astraFlowApiKeyChangeOpen}
         onOpenChange={(open) => {
           setAstraFlowApiKeyChangeOpen(open)
           if (!open) {
             setAstraFlowApiKeyInput("")
           }
         }}
+        open={astraFlowApiKeyChangeOpen}
       >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -1660,9 +1542,12 @@ function StudioApiSettingsPage({
               type="button"
             >
               {astraFlowApiKeySaving ? (
-                <RiLoader4Line className="animate-spin" />
+                <RiLoader4Line
+                  className="animate-spin"
+                  data-icon="inline-start"
+                />
               ) : (
-                <RiCheckLine />
+                <RiCheckLine data-icon="inline-start" />
               )}
               {t.studioAstraFlowApiKeySave}
             </Button>
@@ -1671,8 +1556,8 @@ function StudioApiSettingsPage({
       </Dialog>
 
       <Dialog
-        open={Boolean(deleteTarget)}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
+        open={Boolean(deleteTarget)}
       >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -1680,7 +1565,7 @@ function StudioApiSettingsPage({
             <DialogDescription>{t.studioApiKeyDeleteConfirm}</DialogDescription>
           </DialogHeader>
           {deleteTarget ? (
-            <div className="rounded-3xl bg-muted px-3 py-2 text-sm">
+            <div className="rounded-xl bg-muted px-3 py-2 text-sm">
               <span className="font-medium">{deleteTarget.name}</span>
               <code className="mt-1 block truncate font-mono text-xs text-muted-foreground">
                 {deleteTarget.id}
@@ -1703,16 +1588,19 @@ function StudioApiSettingsPage({
               variant="destructive"
             >
               {isDeleting ? (
-                <RiLoader4Line className="animate-spin" />
+                <RiLoader4Line
+                  className="animate-spin"
+                  data-icon="inline-start"
+                />
               ) : (
-                <RiDeleteBinLine />
+                <RiDeleteBinLine data-icon="inline-start" />
               )}
               {t.studioDelete}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </SettingsPage>
   )
 }
 
