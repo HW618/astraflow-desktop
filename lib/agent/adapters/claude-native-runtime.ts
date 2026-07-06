@@ -5,8 +5,13 @@ import type {
   Options as ClaudeAgentOptions,
   PermissionResult,
   SDKMessage,
+  SlashCommand,
 } from "@anthropic-ai/claude-agent-sdk"
 
+import type {
+  PromptMention,
+  SlashCommandDescriptor,
+} from "@/lib/agent/composer-types"
 import { AgentEventQueue } from "@/lib/agent/event-queue"
 import type { AgentEvent } from "@/lib/agent/events"
 import {
@@ -69,6 +74,7 @@ const CLAUDE_NATIVE_RUNTIME_CAPABILITIES = {
   mcp: true,
   skills: true,
 }
+const CLAUDE_SUPPORTED_COMMANDS_TIMEOUT_MS = 2_500
 
 export const CLAUDE_NATIVE_RUNTIME_ID = "claude-native"
 
@@ -77,6 +83,11 @@ export const CLAUDE_NATIVE_RUNTIME_INFO = {
   label: "Claude Native",
   description: "Claude Code via the native Claude Agent SDK",
   capabilities: CLAUDE_NATIVE_RUNTIME_CAPABILITIES,
+  composer: {
+    slashCommands: "dynamic",
+    fileMentions: "text",
+    sessionMentions: true,
+  },
 } satisfies AgentRuntimeInfo
 
 export function createClaudeSdkMapperState(): ClaudeSdkMapperState {
@@ -135,6 +146,77 @@ function compactObject(entries: Array<[string, unknown]>) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error)
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
+  let timer: NodeJS.Timeout | null = null
+
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error("Timed out"))
+      }, timeoutMs)
+      timer.unref()
+    }),
+  ]).finally(() => {
+    if (timer) {
+      clearTimeout(timer)
+    }
+  })
+}
+
+function mapClaudeSlashCommands(
+  commands: SlashCommand[]
+): SlashCommandDescriptor[] {
+  return commands.flatMap((command) => {
+    const name = command.name.trim().replace(/^\/+/, "")
+
+    if (!name) {
+      return []
+    }
+
+    const descriptor: SlashCommandDescriptor = {
+      name,
+      description: command.description,
+      source: "runtime",
+    }
+    const inputHint = command.argumentHint?.trim()
+
+    if (inputHint) {
+      descriptor.inputHint = inputHint
+    }
+
+    return [descriptor]
+  })
+}
+
+async function emitClaudeSupportedCommands({
+  query,
+  queue,
+  signal,
+}: {
+  query: ReturnType<ClaudeAgentQuery>
+  queue: AgentEventQueue
+  signal: AbortSignal
+}) {
+  try {
+    const commands = await withTimeout(
+      query.supportedCommands(),
+      CLAUDE_SUPPORTED_COMMANDS_TIMEOUT_MS
+    )
+
+    if (signal.aborted) {
+      return
+    }
+
+    queue.push({
+      type: "available-commands",
+      commands: mapClaudeSlashCommands(commands),
+    })
+  } catch {
+    // Command discovery is opportunistic and must not block a run.
+  }
 }
 
 function isAbortLikeError(error: unknown, signal?: AbortSignal) {
@@ -252,6 +334,40 @@ function getLatestUserMessage(messages: BaseMessage[]) {
   return index >= 0 ? { index, message: messages[index] } : null
 }
 
+function getFilePromptMentions(message: BaseMessage) {
+  const mentions = (message as { additional_kwargs?: { mentions?: unknown } })
+    .additional_kwargs?.mentions
+
+  if (!Array.isArray(mentions)) {
+    return []
+  }
+
+  return mentions.filter(
+    (mention): mention is Extract<PromptMention, { kind: "file" | "folder" }> =>
+      typeof mention === "object" &&
+      mention !== null &&
+      (mention.kind === "file" || mention.kind === "folder") &&
+      typeof mention.path === "string" &&
+      mention.path.length > 0 &&
+      typeof mention.name === "string" &&
+      mention.name.length > 0
+  )
+}
+
+function appendReferencedFiles(text: string, message: BaseMessage) {
+  const paths = getFilePromptMentions(message)
+    .map((mention) => mention.path)
+    .filter((path) => !text.includes(path))
+
+  if (!paths.length) {
+    return text
+  }
+
+  return [text, ["Referenced files:", ...paths].join("\n")]
+    .filter((part) => part.trim().length > 0)
+    .join("\n\n")
+}
+
 function createClaudePrompt(messages: BaseMessage[]) {
   const latestUserMessage = getLatestUserMessage(messages)
 
@@ -259,7 +375,10 @@ function createClaudePrompt(messages: BaseMessage[]) {
     return ""
   }
 
-  const latestText = messageContentToText(latestUserMessage.message.content)
+  const latestText = appendReferencedFiles(
+    messageContentToText(latestUserMessage.message.content),
+    latestUserMessage.message
+  )
   const recap = createConversationRecap(messages, latestUserMessage.index)
 
   return recap ? `${recap}\n\nLatest user message:\n${latestText}` : latestText
@@ -1110,6 +1229,12 @@ async function runClaudeNativeSdk({
       runConfig,
       state,
     }),
+  })
+
+  void emitClaudeSupportedCommands({
+    query: sdkRun,
+    queue,
+    signal: input.signal,
   })
 
   input.signal.addEventListener("abort", abort, { once: true })

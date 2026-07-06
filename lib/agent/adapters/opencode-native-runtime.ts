@@ -5,6 +5,7 @@ import { delimiter, join } from "node:path"
 
 import { AgentEventQueue } from "@/lib/agent/event-queue"
 import type { AgentEvent } from "@/lib/agent/events"
+import type { PromptMention } from "@/lib/agent/composer-types"
 import type {
   AgentRunInput,
   AgentRuntime,
@@ -91,6 +92,11 @@ const OPENCODE_NATIVE_RUNTIME_INFO: AgentRuntimeInfo = {
     sandbox: false,
     mcp: true,
     skills: false,
+  },
+  composer: {
+    slashCommands: "none",
+    fileMentions: "text",
+    sessionMentions: true,
   },
 }
 
@@ -317,12 +323,54 @@ function getContentText(content: unknown) {
     .join("\n")
 }
 
+function getFilePromptMentions(message: AgentRunInput["messages"][number]) {
+  const mentions = (message as { additional_kwargs?: { mentions?: unknown } })
+    .additional_kwargs?.mentions
+
+  if (!Array.isArray(mentions)) {
+    return []
+  }
+
+  return mentions.filter(
+    (mention): mention is Extract<PromptMention, { kind: "file" | "folder" }> =>
+      typeof mention === "object" &&
+      mention !== null &&
+      (mention.kind === "file" || mention.kind === "folder") &&
+      typeof mention.path === "string" &&
+      mention.path.length > 0 &&
+      typeof mention.name === "string" &&
+      mention.name.length > 0
+  )
+}
+
+function appendReferencedFiles(
+  text: string,
+  message: AgentRunInput["messages"][number]
+) {
+  const paths = getFilePromptMentions(message)
+    .map((mention) => mention.path)
+    .filter((path) => !text.includes(path))
+
+  if (!paths.length) {
+    return text
+  }
+
+  return [text, ["Referenced files:", ...paths].join("\n")]
+    .filter((part) => part.trim().length > 0)
+    .join("\n\n")
+}
+
 function getLatestPromptText(messages: AgentRunInput["messages"]) {
   const latestHuman =
     [...messages].reverse().find((message) => message._getType() === "human") ??
     messages.at(-1)
 
-  return latestHuman ? getContentText(latestHuman.content).trim() : ""
+  return latestHuman
+    ? appendReferencedFiles(
+        getContentText(latestHuman.content),
+        latestHuman
+      ).trim()
+    : ""
 }
 
 function eventMatchesSession(

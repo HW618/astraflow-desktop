@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { homedir } from "node:os"
 
+import { HumanMessage, type BaseMessage } from "@langchain/core/messages"
 import type { StructuredToolInterface } from "@langchain/core/tools"
 import { createDeepAgent } from "deepagents"
 
@@ -44,6 +45,7 @@ import {
   type AgentRunInput,
   type AgentRuntime,
 } from "@/lib/agent/runtime"
+import type { PromptMention } from "@/lib/agent/composer-types"
 import { DEFAULT_CHAT_REASONING_EFFORT } from "@/lib/chat-models"
 import { isMcpToolName } from "@/lib/mcp"
 import { createModelverseChatModel } from "@/lib/modelverse-langchain"
@@ -102,6 +104,104 @@ function getRecord(value: unknown) {
   return typeof value === "object" && value !== null
     ? (value as Record<string, unknown>)
     : null
+}
+
+function messageContentToText(content: BaseMessage["content"]) {
+  if (typeof content === "string") {
+    return content
+  }
+
+  if (!Array.isArray(content)) {
+    return stringifyToolPayload(content)
+  }
+
+  return content
+    .map((part) => {
+      if (typeof part === "string") {
+        return part
+      }
+
+      const record = getRecord(part)
+
+      return typeof record?.text === "string"
+        ? record.text
+        : stringifyToolPayload(part)
+    })
+    .filter(Boolean)
+    .join("\n")
+}
+
+function getFilePromptMentions(message: BaseMessage) {
+  const mentions = (message as { additional_kwargs?: { mentions?: unknown } })
+    .additional_kwargs?.mentions
+
+  if (!Array.isArray(mentions)) {
+    return []
+  }
+
+  return mentions.filter(
+    (mention): mention is Extract<PromptMention, { kind: "file" | "folder" }> =>
+      typeof mention === "object" &&
+      mention !== null &&
+      (mention.kind === "file" || mention.kind === "folder") &&
+      typeof mention.path === "string" &&
+      mention.path.length > 0 &&
+      typeof mention.name === "string" &&
+      mention.name.length > 0
+  )
+}
+
+function appendTextToMessageContent(
+  content: BaseMessage["content"],
+  text: string
+) {
+  if (typeof content === "string") {
+    return [content, text].filter((part) => part.trim().length > 0).join("\n\n")
+  }
+
+  if (Array.isArray(content)) {
+    return [...content, { type: "text", text }] as BaseMessage["content"]
+  }
+
+  return [stringifyToolPayload(content), text]
+    .filter((part) => part.trim().length > 0)
+    .join("\n\n")
+}
+
+function appendLatestUserMentionPaths(messages: BaseMessage[]) {
+  const latestUserIndex = (() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index]._getType() === "human") {
+        return index
+      }
+    }
+
+    return -1
+  })()
+
+  if (latestUserIndex < 0) {
+    return messages
+  }
+
+  const latestUserMessage = messages[latestUserIndex]
+  const latestText = messageContentToText(latestUserMessage.content)
+  const paths = getFilePromptMentions(latestUserMessage)
+    .map((mention) => mention.path)
+    .filter((path) => !latestText.includes(path))
+
+  if (!paths.length) {
+    return messages
+  }
+
+  const mentionText = ["Referenced files:", ...paths].join("\n")
+  const nextMessages = [...messages]
+
+  nextMessages[latestUserIndex] = new HumanMessage({
+    content: appendTextToMessageContent(latestUserMessage.content, mentionText),
+    additional_kwargs: latestUserMessage.additional_kwargs,
+  })
+
+  return nextMessages
 }
 
 function isAbortLikeError(error: unknown, signal?: AbortSignal) {
@@ -241,6 +341,10 @@ function createDeepAgentsSessionFilesManifest(files: PreparedSessionFile[]) {
     return ""
   }
 
+  const isLocalManifest = files.every(
+    (file) => file.agentEnvironment === "local"
+  )
+
   return [
     "Session files already available to this Deep Agents filesystem backend:",
     ...files.map((file) =>
@@ -256,7 +360,9 @@ function createDeepAgentsSessionFilesManifest(files: PreparedSessionFile[]) {
         .filter(Boolean)
         .join(" | ")
     ),
-    "Use the listed path exactly with read_file, ls, grep, or execute. Prefer read_file over shell commands such as cat/head/tail, and do not invent ~/.astraflow/uploads paths.",
+    isLocalManifest
+      ? "Attachments live in the app's data directory - use the absolute paths listed here directly; do not search for them inside the project directory."
+      : "Use the listed path exactly with read_file, ls, grep, or execute. Prefer read_file over shell commands such as cat/head/tail, and do not invent ~/.astraflow/uploads paths.",
   ].join("\n")
 }
 
@@ -1097,7 +1203,7 @@ async function* streamDeepAgentsRun({
       }),
     })
     const run = await agent.streamEvents(
-      { messages },
+      { messages: appendLatestUserMentionPaths(messages) },
       {
         version: "v3",
         signal,
@@ -1180,6 +1286,11 @@ function getAstraflowRuntimeInfo() {
       mcp: true,
       skills: true,
     },
+    composer: {
+      slashCommands: "none",
+      fileMentions: "text",
+      sessionMentions: true,
+    },
   } satisfies AgentRuntime["info"]
 }
 
@@ -1196,6 +1307,11 @@ export const astraflowAgentRuntime: AgentRuntime = {
       sandbox: false,
       mcp: true,
       skills: true,
+    },
+    composer: {
+      slashCommands: "none",
+      fileMentions: "text",
+      sessionMentions: true,
     },
   },
   getInfo: getAstraflowRuntimeInfo,

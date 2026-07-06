@@ -12,6 +12,7 @@ import type {
   Thread as CodexAppServerThread,
   ThreadItem as CodexAppServerThreadItem,
   Turn as CodexAppServerTurn,
+  UserInput,
 } from "@/lib/generated/codex-app-server/v2"
 import {
   MODELVERSE_OPENAI_BASE_URL,
@@ -27,6 +28,7 @@ import type {
   AgentUserInputAnswer,
   AgentUserInputQuestion,
 } from "@/lib/agent/events"
+import type { PromptMention } from "@/lib/agent/composer-types"
 import {
   cancelSessionPermissions,
   requestPermission,
@@ -67,9 +69,10 @@ export type CodexDirectThreadItem =
 export type CodexDirectTurn =
   | CodexAppServerTurn
   | (Record<string, unknown> & {
-      error?:
-        | { message?: string | null; additionalDetails?: string | null }
-        | null
+      error?: {
+        message?: string | null
+        additionalDetails?: string | null
+      } | null
       id: string
       items?: CodexDirectThreadItem[]
       status?: string
@@ -151,6 +154,11 @@ const CODEX_DIRECT_RUNTIME_INFO: AgentRuntimeInfo = {
     sandbox: true,
     mcp: false,
     skills: false,
+  },
+  composer: {
+    slashCommands: "static",
+    fileMentions: "structured",
+    sessionMentions: true,
   },
 }
 
@@ -1275,7 +1283,8 @@ export function mapCodexDirectThreadToAgentEvents(
   const threadRecord = getRecord(thread)
   const threadTrace = {
     providerSessionId: getNullableString(threadRecord?.sessionId) ?? undefined,
-    parentThreadId: getNullableString(threadRecord?.parentThreadId) ?? undefined,
+    parentThreadId:
+      getNullableString(threadRecord?.parentThreadId) ?? undefined,
     threadId: thread.id,
   }
 
@@ -1322,7 +1331,10 @@ export function mapCodexDirectNotificationToAgentEvents(
         : []
     }
     case "turn/plan/updated":
-      return withCodexTrace(createPlanUpdateEvent(params?.plan), notificationTrace)
+      return withCodexTrace(
+        createPlanUpdateEvent(params?.plan),
+        notificationTrace
+      )
     case "item/started": {
       const item = getRecord(params?.item)
 
@@ -1481,6 +1493,58 @@ function formatMessagesForCodexPrompt(messages: BaseMessage[]) {
   return formatted.join("\n\n")
 }
 
+function getLatestUserMessage(messages: BaseMessage[]) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messageType(messages[index]) === "human") {
+      return messages[index]
+    }
+  }
+
+  return messages.at(-1) ?? null
+}
+
+function getFilePromptMentions(messages: BaseMessage[]) {
+  const latestUserMessage = getLatestUserMessage(messages)
+  const mentions = (
+    latestUserMessage as { additional_kwargs?: { mentions?: unknown } } | null
+  )?.additional_kwargs?.mentions
+
+  if (!Array.isArray(mentions)) {
+    return []
+  }
+
+  return mentions.filter(
+    (mention): mention is Extract<PromptMention, { kind: "file" | "folder" }> =>
+      typeof mention === "object" &&
+      mention !== null &&
+      (mention.kind === "file" || mention.kind === "folder") &&
+      typeof mention.path === "string" &&
+      mention.path.length > 0 &&
+      typeof mention.name === "string" &&
+      mention.name.length > 0
+  )
+}
+
+function createCodexUserInput(prompt: string, messages: BaseMessage[]) {
+  const inputItems: UserInput[] = [
+    {
+      type: "text",
+      text: prompt,
+      text_elements: [],
+    },
+  ]
+
+  for (const mention of getFilePromptMentions(messages)) {
+    inputItems.push({
+      type: "mention",
+      name: mention.name,
+      path: mention.path,
+    })
+  }
+
+  return inputItems
+}
+
 function codexReasoningEffort(effort: ChatReasoningEffort | undefined) {
   return effort && effort !== "none" ? effort : null
 }
@@ -1514,13 +1578,7 @@ function createTurnStartParams({
 }) {
   return {
     effort: codexReasoningEffort(input.reasoningEffort),
-    input: [
-      {
-        type: "text",
-        text: prompt,
-        text_elements: [],
-      },
-    ],
+    input: createCodexUserInput(prompt, input.messages),
     model: resolvedModel.model,
     threadId,
   }

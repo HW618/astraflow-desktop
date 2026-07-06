@@ -6,6 +6,7 @@ import {
   getStudioMessage,
   getStudioSession,
   recordStudioAgentProviderEvent,
+  setStudioSessionAvailableCommands,
   updateStudioMessageSnapshot,
 } from "@/lib/studio-db"
 import type {
@@ -389,6 +390,8 @@ function getProviderRefForAgentEvent(event: AgentEvent) {
       return event.generationId
     case "file_change":
       return event.path
+    case "available-commands":
+      return null
     case "run_meta":
       return event.sessionRef ?? null
     case "text_delta":
@@ -1318,6 +1321,11 @@ function createSnapshotAccumulator() {
         return appendFilePart(event)
       case "media_generation":
         return upsertMediaGenerationPart(event)
+      case "available-commands":
+        debugIgnoredAgentEvent("available_commands_ignored", {
+          commandCount: event.commands.length,
+        })
+        return false
       case "permission_request":
         return upsertPermissionPart(event)
       case "user_input_request":
@@ -1531,6 +1539,16 @@ async function executeAgentRun({
         runtimeId: runtime.info.id,
         sessionId,
       })
+
+      if (event.type === "available-commands") {
+        try {
+          setStudioSessionAvailableCommands(sessionId, event.commands)
+        } catch (error) {
+          debugIgnoredAgentEvent("available_commands_cache_failed", {
+            message: error instanceof Error ? error.message : String(error),
+          })
+        }
+      }
 
       if (event.type === "error") {
         clearAbortWatchdog(record)

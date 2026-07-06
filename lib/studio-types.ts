@@ -1,3 +1,5 @@
+import type { PromptMention } from "@/lib/agent/composer-types"
+
 export const studioModes = ["chat", "image", "video", "audio"] as const
 
 export type StudioMode = (typeof studioModes)[number]
@@ -232,6 +234,7 @@ export type StudioMessage = {
   sessionId: string
   role: StudioMessageRole
   content: string
+  mentions?: PromptMention[]
   model: string | null
   versionGroupId: string | null
   versionIndex: number

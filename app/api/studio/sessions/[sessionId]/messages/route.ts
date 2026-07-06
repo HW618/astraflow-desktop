@@ -16,11 +16,71 @@ import {
   writeStudioFile,
 } from "@/lib/studio-file-storage"
 import { syncStudioMessageMediaParts } from "@/lib/studio-message-media-sync"
+import type { PromptMention } from "@/lib/agent/composer-types"
 import type { StudioAttachment } from "@/lib/studio-types"
 
 export const runtime = "nodejs"
 
 const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024
+const MAX_MENTIONS = 100
+
+function normalizePromptMentions(value: unknown): PromptMention[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  const mentions: PromptMention[] = []
+
+  for (const item of value.slice(0, MAX_MENTIONS)) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      continue
+    }
+
+    const record = item as Record<string, unknown>
+
+    if (record.kind === "file" || record.kind === "folder") {
+      const path = typeof record.path === "string" ? record.path.trim() : ""
+      const name = typeof record.name === "string" ? record.name.trim() : ""
+
+      if (!path || !name || path.length > 4_000 || name.length > 255) {
+        continue
+      }
+
+      if (record.kind === "file") {
+        const mention: PromptMention = { kind: "file", path, name }
+        const mimeType =
+          typeof record.mimeType === "string" ? record.mimeType.trim() : ""
+
+        if (mimeType && mimeType.length <= 255) {
+          mention.mimeType = mimeType
+        }
+
+        mentions.push(mention)
+        continue
+      }
+
+      mentions.push({ kind: "folder", path, name })
+      continue
+    }
+
+    if (record.kind === "session") {
+      const sessionId =
+        typeof record.sessionId === "string" ? record.sessionId.trim() : ""
+      const title = typeof record.title === "string" ? record.title.trim() : ""
+
+      if (
+        sessionId &&
+        title &&
+        sessionId.length <= 120 &&
+        title.length <= 255
+      ) {
+        mentions.push({ kind: "session", sessionId, title })
+      }
+    }
+  }
+
+  return mentions
+}
 
 const attachmentSchema = z.object({
   id: z.string().trim().min(1).max(120).optional(),
@@ -226,6 +286,7 @@ const createMessageSchema = z
       .default(null),
     status: z.enum(["complete", "streaming", "error"]).default("complete"),
     attachments: z.array(attachmentSchema).max(6).default([]),
+    mentions: z.unknown().optional().transform(normalizePromptMentions),
   })
   .refine(
     (value) =>

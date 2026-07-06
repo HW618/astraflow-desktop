@@ -325,14 +325,16 @@ function SettingsProfilePage() {
     selectedProject?.name || (isLoading ? t.projectLoading : t.project)
 
   return (
-    <section className="flex h-full min-h-0 flex-col bg-background">
-      <main className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex w-full max-w-5xl [zoom:0.9] flex-col gap-4 px-4 py-4 lg:px-6 lg:py-5">
+    <section className="flex min-h-0 flex-col bg-background">
+      <main className="min-h-0 flex-1">
+        <div className="mx-auto flex w-full max-w-5xl flex-col gap-5">
           <div className="flex min-w-0 items-center justify-between gap-3">
-            <h1 className="font-heading text-lg font-semibold">{t.profile}</h1>
+            <h1 className="font-heading text-4xl font-semibold tracking-normal">
+              {t.profile}
+            </h1>
             {isLoading || isSaving ? (
               <RiLoader4Line
-                className="size-4 shrink-0 animate-spin text-muted-foreground"
+                className="size-5 shrink-0 animate-spin text-muted-foreground"
                 aria-hidden
               />
             ) : null}

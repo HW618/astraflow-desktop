@@ -29,10 +29,6 @@ import type { RemixiconComponentType } from "@remixicon/react"
 import { ChevronRight, Folder, FolderGit2 } from "lucide-react"
 import { toast } from "sonner"
 
-import {
-  AccountSettingsDialog,
-  type SettingsDialogSection,
-} from "@/components/account-settings-dialog"
 import { AppInfoButton } from "@/components/app-info-button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { useI18n } from "@/components/i18n-provider"
@@ -271,7 +267,7 @@ function SidebarAccountMenu({
 }: {
   user: SidebarAccountUser | null
   loading: boolean
-  onOpenSettings: (section: SettingsDialogSection) => void
+  onOpenSettings: (href: string) => void
 }) {
   const { locale, t } = useI18n()
   const [open, setOpen] = React.useState(false)
@@ -293,9 +289,9 @@ function SidebarAccountMenu({
     user?.displayName || user?.userName || user?.userEmail || t.account
   const email = user?.userEmail || user?.userName || displayName
 
-  function openSettings(section: SettingsDialogSection) {
+  function openSettings(href: string) {
     setOpen(false)
-    onOpenSettings(section)
+    onOpenSettings(href)
   }
 
   async function copyAccountInfo() {
@@ -377,7 +373,7 @@ function SidebarAccountMenu({
           type="button"
           variant="ghost"
           className="w-full justify-start rounded-2xl"
-          onClick={() => openSettings("account")}
+          onClick={() => openSettings("/settings/profile")}
         >
           <RiUser3Line data-icon="inline-start" />
           {t.profile}
@@ -386,7 +382,7 @@ function SidebarAccountMenu({
           type="button"
           variant="ghost"
           className="w-full justify-start rounded-2xl"
-          onClick={() => openSettings("account")}
+          onClick={() => openSettings("/settings/account")}
         >
           <RiFolderLine data-icon="inline-start" />
           {t.project}
@@ -395,7 +391,7 @@ function SidebarAccountMenu({
           type="button"
           variant="ghost"
           className="w-full justify-start rounded-2xl"
-          onClick={() => openSettings("system")}
+          onClick={() => openSettings("/settings/account")}
         >
           <RiSettings3Line data-icon="inline-start" />
           {t.settings}
@@ -552,9 +548,6 @@ function AppSidebar() {
   const [accountUser, setAccountUser] =
     React.useState<SidebarAccountUser | null>(null)
   const [isAccountLoading, setIsAccountLoading] = React.useState(true)
-  const [settingsDialogOpen, setSettingsDialogOpen] = React.useState(false)
-  const [settingsDialogSection, setSettingsDialogSection] =
-    React.useState<SettingsDialogSection>("account")
 
   const redirectToLogin = React.useCallback(() => {
     window.location.replace("/login")
@@ -663,12 +656,11 @@ function AppSidebar() {
     })
   }, [loadAccount])
 
-  const openSettingsDialog = React.useCallback(
-    (section: SettingsDialogSection) => {
-      setSettingsDialogSection(section)
-      setSettingsDialogOpen(true)
+  const openSettingsPage = React.useCallback(
+    (href: string) => {
+      router.push(href)
     },
-    []
+    [router]
   )
 
   const navItems: NavItem[] = [
@@ -1084,7 +1076,7 @@ function AppSidebar() {
                           type="button"
                           aria-label={t.studioNewProjectSession}
                           title={t.studioNewProjectSession}
-                          className="top-1.5 right-7 rounded-lg"
+                          className="top-1.5! right-7 rounded-lg"
                           showOnHover
                           onClick={(event) => {
                             event.preventDefault()
@@ -1104,7 +1096,7 @@ function AppSidebar() {
                           <PopoverTrigger asChild>
                             <SidebarMenuAction
                               aria-label={t.studioSessionActions}
-                              className="top-1.5 right-1.5 rounded-lg"
+                              className="top-1.5! right-1.5 rounded-lg"
                               showOnHover
                               onClick={(event) => event.stopPropagation()}
                             >
@@ -1294,22 +1286,12 @@ function AppSidebar() {
               <SidebarAccountMenu
                 user={accountUser}
                 loading={isAccountLoading}
-                onOpenSettings={openSettingsDialog}
+                onOpenSettings={openSettingsPage}
               />
             </div>
           </div>
         </SidebarFooter>
       </Sidebar>
-
-      {settingsDialogOpen ? (
-        <AccountSettingsDialog
-          open={settingsDialogOpen}
-          defaultSection={settingsDialogSection}
-          user={accountUser}
-          loading={isAccountLoading}
-          onOpenChange={setSettingsDialogOpen}
-        />
-      ) : null}
 
       <Dialog
         open={pathDialogOpen}

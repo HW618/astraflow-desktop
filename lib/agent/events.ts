@@ -1,3 +1,5 @@
+import type { SlashCommandDescriptor } from "@/lib/agent/composer-types"
+
 export type AgentTodo = {
   text: string
   status: "pending" | "in_progress" | "completed"
@@ -97,6 +99,10 @@ export type AgentEvent =
   | WithTrace<{
       type: "plan_update"
       todos: AgentTodo[]
+    }>
+  | WithTrace<{
+      type: "available-commands"
+      commands: SlashCommandDescriptor[]
     }>
   | WithTrace<{
       type: "subagent_start"

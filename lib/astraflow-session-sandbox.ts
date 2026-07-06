@@ -29,6 +29,7 @@ import type { StudioAttachment, StudioSessionFile } from "@/lib/studio-types"
 const SESSION_SANDBOX_ROOT = "/home/user/astraflow"
 const SESSION_UPLOAD_ROOT = `${SESSION_SANDBOX_ROOT}/uploads`
 const SESSION_OUTPUT_ROOT = `${SESSION_SANDBOX_ROOT}/outputs`
+const STUDIO_CHAT_DEBUG = process.env.ASTRAFLOW_STUDIO_CHAT_DEBUG === "1"
 
 export type SessionSandboxContext = {
   sandbox: Sandbox
@@ -227,7 +228,37 @@ async function uploadFileToSandbox({
   force: boolean
 }) {
   if (file.sandboxPath && !force) {
-    return file
+    let exists = false
+
+    try {
+      exists = await sandbox.files.exists(file.sandboxPath, {
+        requestTimeoutMs: ASTRAFLOW_SANDBOX_REQUEST_TIMEOUT_MS,
+      })
+    } catch (error) {
+      if (STUDIO_CHAT_DEBUG) {
+        console.info("[studio-chat:sandbox] sandbox_file_exists_failed", {
+          fileId: file.id,
+          sandboxId: sandbox.sandboxId,
+          sandboxPath: file.sandboxPath,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+
+    if (exists) {
+      return file
+    }
+
+    if (STUDIO_CHAT_DEBUG) {
+      console.info(
+        "[studio-chat:sandbox] re-uploading_file_missing_from_sandbox",
+        {
+          fileId: file.id,
+          sandboxId: sandbox.sandboxId,
+          sandboxPath: file.sandboxPath,
+        }
+      )
+    }
   }
 
   const sandboxPath = file.sandboxPath || createSessionSandboxUploadPath(file)

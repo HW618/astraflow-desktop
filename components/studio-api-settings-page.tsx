@@ -5,6 +5,8 @@ import {
   RiAddLine,
   RiCheckLine,
   RiDeleteBinLine,
+  RiEyeLine,
+  RiEyeOffLine,
   RiFileCopyLine,
   RiInformationLine,
   RiKey2Line,
@@ -103,6 +105,21 @@ type ModelverseApiKeysPayload = {
 type ExaApiKeyPayload = {
   configured: boolean
   updatedAt: string | null
+}
+
+type AstraFlowApiKeyPayload = {
+  configured: boolean
+  keyPreview: string | null
+  createdAt: string | null
+  updatedAt: string | null
+  fullKey?: string
+}
+
+type AuthStatusPayload = {
+  auth: {
+    configured: boolean
+  }
+  oauthConfigured: boolean
 }
 
 type ApiKeyFormState = {
@@ -361,6 +378,18 @@ function StudioApiSettingsPage({
   const [deleteTarget, setDeleteTarget] =
     React.useState<ManagedModelverseApiKey | null>(null)
   const [copiedKeyId, setCopiedKeyId] = React.useState("")
+  const [astraFlowApiKey, setAstraFlowApiKey] =
+    React.useState<AstraFlowApiKeyPayload | null>(null)
+  const [astraFlowApiKeyVisible, setAstraFlowApiKeyVisible] =
+    React.useState(false)
+  const [astraFlowApiKeyCopied, setAstraFlowApiKeyCopied] =
+    React.useState(false)
+  const [astraFlowApiKeySaving, setAstraFlowApiKeySaving] =
+    React.useState(false)
+  const [astraFlowApiKeyRotateOpen, setAstraFlowApiKeyRotateOpen] =
+    React.useState(false)
+  const [ucloudOAuthConfigured, setUcloudOAuthConfigured] =
+    React.useState(false)
   const [exaConfigured, setExaConfigured] = React.useState(false)
   const [exaInput, setExaInput] = React.useState("")
   const [exaSaving, setExaSaving] = React.useState(false)
@@ -406,23 +435,70 @@ function StudioApiSettingsPage({
         const searchParams = preferredProjectId
           ? `?projectId=${encodeURIComponent(preferredProjectId)}`
           : ""
-        const [apiKeysPayload, exa] = await Promise.all([
-          apiRequest<ModelverseApiKeysPayload>(
-            `/api/studio/modelverse-api-keys${searchParams}`,
-            undefined,
-            t.studioApiKeysLoadFailed
-          ),
-          apiRequest<ExaApiKeyPayload>(
+        const astraFlowKey = await apiRequest<AstraFlowApiKeyPayload>(
+          "/api/studio/astraflow-api-key",
+          undefined,
+          t.studioAstraFlowApiKeyLoadFailed
+        )
+        const authStatus = await apiRequest<AuthStatusPayload>(
+          "/api/studio/oauth/status",
+          undefined,
+          t.loginStatusLoadFailed
+        )
+
+        setAstraFlowApiKey(astraFlowKey)
+        setAstraFlowApiKeyVisible(false)
+        setAstraFlowApiKeyCopied(false)
+        setUcloudOAuthConfigured(authStatus.oauthConfigured)
+
+        if (authStatus.oauthConfigured) {
+          try {
+            const apiKeysPayload = await apiRequest<ModelverseApiKeysPayload>(
+              `/api/studio/modelverse-api-keys${searchParams}`,
+              undefined,
+              t.studioApiKeysLoadFailed
+            )
+
+            setData(apiKeysPayload)
+            onSelectedKeyChange?.(Boolean(apiKeysPayload.selected))
+          } catch (apiKeysError) {
+            setData({
+              projectId: preferredProjectId ?? "",
+              items: [],
+              selected: null,
+            })
+            onSelectedKeyChange?.(false)
+            showError(
+              apiKeysError instanceof Error
+                ? apiKeysError.message
+                : t.studioApiKeysLoadFailed
+            )
+          }
+        } else {
+          setData({
+            projectId: preferredProjectId ?? "",
+            items: [],
+            selected: null,
+          })
+          onSelectedKeyChange?.(false)
+        }
+
+        try {
+          const exa = await apiRequest<ExaApiKeyPayload>(
             "/api/studio/exa-api-key",
             undefined,
             t.studioExaApiKeyError
-          ),
-        ])
+          )
 
-        setData(apiKeysPayload)
-        onSelectedKeyChange?.(Boolean(apiKeysPayload.selected))
-        setExaConfigured(exa.configured)
-        setExaInput("")
+          setExaConfigured(exa.configured)
+          setExaInput("")
+        } catch (exaError) {
+          setExaConfigured(false)
+          setExaInput("")
+          showError(
+            exaError instanceof Error ? exaError.message : t.studioExaApiKeyError
+          )
+        }
       } catch (loadError) {
         if (loadError instanceof LoginRequiredError) {
           redirectToLogin()
@@ -443,7 +519,9 @@ function StudioApiSettingsPage({
       redirectToLogin,
       showError,
       t.studioApiKeysLoadFailed,
+      t.studioAstraFlowApiKeyLoadFailed,
       t.studioExaApiKeyError,
+      t.loginStatusLoadFailed,
     ]
   )
 
@@ -700,6 +778,60 @@ function StudioApiSettingsPage({
     }
   }
 
+  async function generateAstraFlowApiKey() {
+    try {
+      setAstraFlowApiKeySaving(true)
+      setAstraFlowApiKeyCopied(false)
+
+      const next = await apiRequest<AstraFlowApiKeyPayload>(
+        "/api/studio/astraflow-api-key",
+        {
+          method: "POST",
+        },
+        t.studioAstraFlowApiKeyGenerateFailed
+      )
+
+      setAstraFlowApiKey(next)
+      setAstraFlowApiKeyVisible(true)
+      setAstraFlowApiKeyRotateOpen(false)
+      showSuccess(t.studioAstraFlowApiKeyGenerated)
+    } catch (saveError) {
+      if (saveError instanceof LoginRequiredError) {
+        redirectToLogin()
+        return
+      }
+
+      showError(
+        saveError instanceof Error
+          ? saveError.message
+          : t.studioAstraFlowApiKeyGenerateFailed
+      )
+    } finally {
+      setAstraFlowApiKeySaving(false)
+    }
+  }
+
+  async function copyAstraFlowApiKey() {
+    const fullKey = astraFlowApiKey?.fullKey?.trim()
+
+    if (!fullKey) {
+      showError(t.studioAstraFlowApiKeyCopyUnavailable)
+      return
+    }
+
+    const copied = await writeClipboard(fullKey)
+
+    if (!copied) {
+      showError(t.requestFailed)
+      return
+    }
+
+    setAstraFlowApiKeyCopied(true)
+    window.setTimeout(() => {
+      setAstraFlowApiKeyCopied(false)
+    }, 1600)
+  }
+
   async function copyApiKey(apiKey: ManagedModelverseApiKey) {
     const apiKeyValue = apiKey.key?.trim()
 
@@ -733,6 +865,13 @@ function StudioApiSettingsPage({
     return t.studioApiKeyModelCount(apiKey.grantedModels.length)
   }
 
+  const astraFlowApiKeyDisplay =
+    astraFlowApiKeyVisible && astraFlowApiKey?.fullKey
+      ? astraFlowApiKey.fullKey
+      : astraFlowApiKey?.keyPreview || t.studioApiKeyNotConfigured
+  const astraFlowApiKeyCopyDisabled =
+    !astraFlowApiKey?.fullKey || astraFlowApiKeySaving
+
   return (
     <div
       className={cn(
@@ -749,6 +888,24 @@ function StudioApiSettingsPage({
         )}
       >
         <div className={cn("flex flex-col gap-4", !embedded && "p-4 lg:p-6")}>
+          {!embedded ? (
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h1 className="text-4xl font-semibold tracking-normal">
+                  {t.settingsApiKeysNav}
+                </h1>
+                <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
+                  {t.studioApiSettingsDescription}
+                </p>
+              </div>
+              {isLoading || isBusy ? (
+                <RiLoader4Line
+                  className="mt-2 size-5 shrink-0 animate-spin text-muted-foreground"
+                  aria-hidden
+                />
+              ) : null}
+            </div>
+          ) : null}
           <div className="flex flex-col gap-3 rounded-4xl bg-card/70 p-3 shadow-sm ring-1 ring-foreground/5 dark:ring-foreground/10">
             <div className="flex flex-wrap items-center gap-2">
               <div className="relative min-w-0 flex-1 basis-64 sm:max-w-sm">
@@ -803,13 +960,106 @@ function StudioApiSettingsPage({
                   )}
                   {t.refresh}
                 </Button>
-                <Button onClick={openCreateForm} size="sm">
+                <Button
+                  disabled={!ucloudOAuthConfigured}
+                  onClick={openCreateForm}
+                  size="sm"
+                >
                   <RiAddLine />
                   {t.studioApiKeyNew}
                 </Button>
               </div>
             </div>
           </div>
+
+          <Card className="rounded-4xl" size="sm">
+            <CardHeader>
+              <CardTitle>{t.studioAstraFlowApiKeyTitle}</CardTitle>
+              <CardDescription>
+                {t.studioAstraFlowApiKeyDescription}
+              </CardDescription>
+              <CardAction>
+                <Badge
+                  variant={astraFlowApiKey?.configured ? "secondary" : "outline"}
+                >
+                  {astraFlowApiKey?.configured
+                    ? t.studioApiKeyConfigured
+                    : t.studioApiKeyNotConfigured}
+                </Badge>
+              </CardAction>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <code
+                  className="flex min-h-10 min-w-0 flex-1 items-center rounded-2xl bg-muted px-3 py-2 font-mono text-sm break-all"
+                  title={astraFlowApiKeyDisplay}
+                >
+                  {astraFlowApiKeyDisplay}
+                </code>
+                <div className="flex items-center gap-2">
+                  <Button
+                    disabled={!astraFlowApiKey?.configured}
+                    onClick={() =>
+                      setAstraFlowApiKeyVisible((current) => !current)
+                    }
+                    size="icon-sm"
+                    title={
+                      astraFlowApiKeyVisible
+                        ? t.studioAstraFlowApiKeyHide
+                        : t.studioAstraFlowApiKeyShow
+                    }
+                    type="button"
+                    variant="outline"
+                  >
+                    {astraFlowApiKeyVisible ? <RiEyeOffLine /> : <RiEyeLine />}
+                  </Button>
+                  <Button
+                    disabled={astraFlowApiKeyCopyDisabled}
+                    onClick={() => void copyAstraFlowApiKey()}
+                    size="icon-sm"
+                    title={t.studioCopy}
+                    type="button"
+                    variant="outline"
+                  >
+                    {astraFlowApiKeyCopied ? (
+                      <RiCheckLine />
+                    ) : (
+                      <RiFileCopyLine />
+                    )}
+                  </Button>
+                  <Button
+                    disabled={astraFlowApiKeySaving}
+                    onClick={() =>
+                      astraFlowApiKey?.configured
+                        ? setAstraFlowApiKeyRotateOpen(true)
+                        : void generateAstraFlowApiKey()
+                    }
+                    size="sm"
+                    type="button"
+                    variant={astraFlowApiKey?.configured ? "outline" : "default"}
+                  >
+                    {astraFlowApiKeySaving ? (
+                      <RiLoader4Line className="animate-spin" />
+                    ) : (
+                      <RiRefreshLine />
+                    )}
+                    {astraFlowApiKey?.configured
+                      ? t.studioAstraFlowApiKeyRegenerate
+                      : t.studioAstraFlowApiKeyGenerate}
+                  </Button>
+                </div>
+              </div>
+              {astraFlowApiKey?.fullKey ? (
+                <p className="text-sm text-muted-foreground">
+                  {t.studioAstraFlowApiKeySaveWarning}
+                </p>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  {t.studioAstraFlowApiKeyHashOnlyHint}
+                </p>
+              )}
+            </CardContent>
+          </Card>
 
           <Card className="overflow-hidden rounded-4xl py-0">
             <div className="overflow-x-auto">
@@ -1361,6 +1611,43 @@ function StudioApiSettingsPage({
                 <RiCheckLine />
               )}
               {isEditing ? t.studioApiKeyUpdate : t.studioApiKeyCreate}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={astraFlowApiKeyRotateOpen}
+        onOpenChange={(open) => !open && setAstraFlowApiKeyRotateOpen(false)}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t.studioAstraFlowApiKeyRegenerateTitle}</DialogTitle>
+            <DialogDescription>
+              {t.studioAstraFlowApiKeyRegenerateConfirm}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              disabled={astraFlowApiKeySaving}
+              onClick={() => setAstraFlowApiKeyRotateOpen(false)}
+              type="button"
+              variant="outline"
+            >
+              {t.studioCancel}
+            </Button>
+            <Button
+              disabled={astraFlowApiKeySaving}
+              onClick={() => void generateAstraFlowApiKey()}
+              type="button"
+              variant="destructive"
+            >
+              {astraFlowApiKeySaving ? (
+                <RiLoader4Line className="animate-spin" />
+              ) : (
+                <RiRefreshLine />
+              )}
+              {t.studioAstraFlowApiKeyRegenerate}
             </Button>
           </DialogFooter>
         </DialogContent>

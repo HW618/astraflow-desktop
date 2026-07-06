@@ -38,6 +38,11 @@ const ACP_RUNTIME_CAPABILITIES = {
   mcp: true,
   skills: true,
 }
+const ACP_COMPOSER_CAPABILITIES = {
+  slashCommands: "dynamic",
+  fileMentions: "structured",
+  sessionMentions: true,
+} as const
 const ACP_RUNTIME_DEBUG = process.env.ASTRAFLOW_STUDIO_CHAT_DEBUG === "1"
 
 let codexProbe: CommandProbe | null = null
@@ -645,6 +650,7 @@ registerAcpRuntime(
     label: "Codex",
     description: "OpenAI Codex via Agent Client Protocol",
     capabilities: ACP_RUNTIME_CAPABILITIES,
+    composer: ACP_COMPOSER_CAPABILITIES,
   },
   probeCodexAcpCommand()
 )
@@ -655,6 +661,7 @@ registerAcpRuntime(
     label: "Claude Code",
     description: "Claude Code via Agent Client Protocol",
     capabilities: ACP_RUNTIME_CAPABILITIES,
+    composer: ACP_COMPOSER_CAPABILITIES,
   },
   probeClaudeCodeAcpCommand()
 )
@@ -665,6 +672,7 @@ registerAcpRuntime(
     label: "OpenCode",
     description: "OpenCode via Agent Client Protocol",
     capabilities: ACP_RUNTIME_CAPABILITIES,
+    composer: ACP_COMPOSER_CAPABILITIES,
   },
   probeOpenCodeAcpCommand()
 )

@@ -1,7 +1,10 @@
 import { redirect } from "next/navigation"
 import { NextResponse } from "next/server"
 
-import { getStudioModelverseApiKey } from "@/lib/studio-db"
+import {
+  getStudioAstraFlowApiKeySessionStatus,
+  getStudioModelverseApiKey,
+} from "@/lib/studio-db"
 import { ensureValidStudioOAuthTokens } from "@/lib/ucloud-oauth"
 
 const MUTATING_METHODS = new Set(["DELETE", "PATCH", "POST", "PUT"])
@@ -184,12 +187,15 @@ export function requireSameOriginRequest(request: Request) {
 
 export async function getAppAuthState() {
   const tokens = await ensureValidStudioOAuthTokens()
+  const astraFlowApiKeySession = getStudioAstraFlowApiKeySessionStatus()
   const modelverseApiKey = getStudioModelverseApiKey()
 
   return {
     oauthConfigured: Boolean(tokens?.accessToken),
     apiKeyConfigured: Boolean(modelverseApiKey?.key),
-    authenticated: Boolean(tokens?.accessToken),
+    astraFlowApiKeyAuthenticated: astraFlowApiKeySession.authenticated,
+    authenticated:
+      Boolean(tokens?.accessToken) || astraFlowApiKeySession.authenticated,
   }
 }
 

@@ -4,8 +4,10 @@ import { dirname, join } from "node:path"
 import {
   createCipheriv,
   createDecipheriv,
+  createHash,
   randomBytes,
   randomUUID,
+  timingSafeEqual,
 } from "node:crypto"
 
 import {
@@ -38,6 +40,10 @@ import type {
   CodeBoxSandboxStatus,
   CodeBoxVolume,
 } from "@/lib/codebox-types"
+import type {
+  PromptMention,
+  SlashCommandDescriptor,
+} from "@/lib/agent/composer-types"
 import type { InstalledSkill, SkillMeta } from "@/lib/skill-market"
 import { studioPermissionModes } from "@/lib/studio-types"
 import type {
@@ -76,6 +82,7 @@ type DbSessionRow = {
   chat_model: string | null
   chat_runtime_id: string | null
   chat_reasoning_effort: string | null
+  available_commands?: string | null
   created_at: string
   updated_at: string
 }
@@ -94,6 +101,7 @@ type DbMessageRow = {
   session_id: string
   role: StudioMessageRole
   content: string
+  mentions: string | null
   model: string | null
   version_group_id: string | null
   version_index: number | null
@@ -275,6 +283,19 @@ type CodeBoxGithubTokens = CodeBoxGithubStatus & {
   accessToken: string
 }
 
+export type StudioAstraFlowApiKeyStatus = {
+  configured: boolean
+  keyPreview: string | null
+  createdAt: string | null
+  updatedAt: string | null
+  fullKey?: string
+}
+
+export type StudioAstraFlowApiKeySessionStatus = {
+  authenticated: boolean
+  updatedAt: string | null
+}
+
 type CreateSessionInput = {
   mode: StudioMode
   title?: string
@@ -293,6 +314,7 @@ type CreateMessageInput = {
   sessionId: string
   role: StudioMessageRole
   content: string
+  mentions?: PromptMention[]
   model?: string | null
   versionGroupId?: string | null
   replacesMessageId?: string | null
@@ -563,7 +585,10 @@ type UpdateImageGenerationInput = {
 }
 
 const DEFAULT_SESSION_TITLE = "New chat"
+const ASTRAFLOW_API_KEY_PREFIX = "sk-astra"
 const STUDIO_MODELVERSE_API_KEY_SETTING = "modelverse_api_key"
+const STUDIO_ASTRAFLOW_API_KEY_SETTING = "astraflow_api_key"
+const STUDIO_ASTRAFLOW_API_KEY_SESSION_SETTING = "astraflow_api_key_session"
 const STUDIO_AGENT_MODEL_SETTINGS = "agent_model_settings"
 const SELECTED_UCLOUD_PROJECT_SETTING = "selected_ucloud_project"
 const STUDIO_EXA_API_KEY_SETTING = "exa_api_key"
@@ -592,6 +617,7 @@ const studioTableColumns = {
     { name: "chat_model", definition: "chat_model TEXT" },
     { name: "chat_runtime_id", definition: "chat_runtime_id TEXT" },
     { name: "chat_reasoning_effort", definition: "chat_reasoning_effort TEXT" },
+    { name: "available_commands", definition: "available_commands TEXT" },
     { name: "created_at", definition: "created_at TEXT NOT NULL DEFAULT ''" },
     { name: "updated_at", definition: "updated_at TEXT NOT NULL DEFAULT ''" },
   ],
@@ -608,6 +634,7 @@ const studioTableColumns = {
     { name: "session_id", definition: "session_id TEXT NOT NULL DEFAULT ''" },
     { name: "role", definition: "role TEXT NOT NULL DEFAULT 'assistant'" },
     { name: "content", definition: "content TEXT NOT NULL DEFAULT ''" },
+    { name: "mentions", definition: "mentions TEXT" },
     { name: "model", definition: "model TEXT" },
     { name: "version_group_id", definition: "version_group_id TEXT" },
     {
@@ -1175,6 +1202,7 @@ function initializeSchema(database: Database.Database) {
       chat_model TEXT,
       chat_runtime_id TEXT,
       chat_reasoning_effort TEXT,
+      available_commands TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -1193,6 +1221,7 @@ function initializeSchema(database: Database.Database) {
       session_id TEXT NOT NULL,
       role TEXT NOT NULL,
       content TEXT NOT NULL,
+      mentions TEXT,
       model TEXT,
       version_group_id TEXT,
       version_index INTEGER NOT NULL DEFAULT 1,
@@ -1809,6 +1838,111 @@ function parseJsonValue<T>(raw: string | null | undefined, fallback: T): T {
   }
 }
 
+function normalizeSlashCommandDescriptors(
+  value: unknown
+): SlashCommandDescriptor[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value.flatMap((item) => {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      return []
+    }
+
+    const record = item as Record<string, unknown>
+    const name = typeof record.name === "string" ? record.name.trim() : ""
+
+    if (!name) {
+      return []
+    }
+
+    const description =
+      typeof record.description === "string" ? record.description : ""
+    const source = record.source === "builtin" ? "builtin" : "runtime"
+    const descriptor: SlashCommandDescriptor = {
+      name,
+      description,
+      source,
+    }
+
+    if (typeof record.inputHint === "string" && record.inputHint.trim()) {
+      descriptor.inputHint = record.inputHint.trim()
+    }
+
+    if (typeof record.runtimeId === "string" && record.runtimeId.trim()) {
+      descriptor.runtimeId = record.runtimeId.trim()
+    }
+
+    return [descriptor]
+  })
+}
+
+function parseSlashCommandDescriptors(
+  raw: string | null | undefined
+): SlashCommandDescriptor[] {
+  return normalizeSlashCommandDescriptors(parseJsonValue(raw, [] as unknown[]))
+}
+
+function normalizePromptMentions(value: unknown): PromptMention[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  const mentions: PromptMention[] = []
+
+  for (const item of value) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      continue
+    }
+
+    const record = item as Record<string, unknown>
+    const kind = record.kind
+
+    if (kind === "file" || kind === "folder") {
+      const path = typeof record.path === "string" ? record.path.trim() : ""
+      const name = typeof record.name === "string" ? record.name.trim() : ""
+
+      if (!path || !name) {
+        continue
+      }
+
+      if (kind === "file") {
+        const mention: PromptMention = { kind, path, name }
+
+        if (
+          typeof record.mimeType === "string" &&
+          record.mimeType.trim().length > 0
+        ) {
+          mention.mimeType = record.mimeType.trim()
+        }
+
+        mentions.push(mention)
+        continue
+      }
+
+      mentions.push({ kind, path, name })
+      continue
+    }
+
+    if (kind === "session") {
+      const sessionId =
+        typeof record.sessionId === "string" ? record.sessionId.trim() : ""
+      const title = typeof record.title === "string" ? record.title.trim() : ""
+
+      if (sessionId && title) {
+        mentions.push({ kind, sessionId, title })
+      }
+    }
+  }
+
+  return mentions
+}
+
+function parsePromptMentions(raw: string | null | undefined): PromptMention[] {
+  return normalizePromptMentions(parseJsonValue(raw, [] as unknown[]))
+}
+
 function readMcpServerSecretMap(serverId: string) {
   const rows = getDb()
     .prepare(
@@ -2223,6 +2357,7 @@ function mapMessage(row: DbMessageRow): StudioMessage {
     sessionId: row.session_id,
     role: row.role,
     content: row.content,
+    mentions: parsePromptMentions(row.mentions),
     model: row.model,
     versionGroupId: row.version_group_id,
     versionIndex: row.version_index ?? 1,
@@ -3684,6 +3819,39 @@ export function getStudioSession(sessionId: string) {
   return row ? mapSession(row) : null
 }
 
+export function getStudioSessionAvailableCommands(
+  sessionId: string
+): SlashCommandDescriptor[] {
+  const row = getDb()
+    .prepare(
+      `
+        SELECT available_commands
+        FROM studio_sessions
+        WHERE id = ?
+      `
+    )
+    .get(sessionId) as { available_commands: string | null } | undefined
+
+  return parseSlashCommandDescriptors(row?.available_commands)
+}
+
+export function setStudioSessionAvailableCommands(
+  sessionId: string,
+  commands: SlashCommandDescriptor[]
+) {
+  const result = getDb()
+    .prepare(
+      `
+        UPDATE studio_sessions
+        SET available_commands = ?
+        WHERE id = ?
+      `
+    )
+    .run(JSON.stringify(normalizeSlashCommandDescriptors(commands)), sessionId)
+
+  return result.changes > 0
+}
+
 export function createStudioSession({
   mode,
   title,
@@ -3935,6 +4103,7 @@ export function listStudioMessages(sessionId: string) {
           message.session_id,
           message.role,
           message.content,
+          message.mentions,
           message.model,
           message.version_group_id,
           message.version_index,
@@ -3993,6 +4162,7 @@ export function listStudioMessageVersions(
           message.session_id,
           message.role,
           message.content,
+          message.mentions,
           message.model,
           message.version_group_id,
           message.version_index,
@@ -4038,6 +4208,7 @@ export function getStudioMessage(messageId: string) {
           message.session_id,
           message.role,
           message.content,
+          message.mentions,
           message.model,
           message.version_group_id,
           message.version_index,
@@ -4073,6 +4244,7 @@ export function createStudioMessage({
   sessionId,
   role,
   content,
+  mentions = [],
   model = null,
   versionGroupId = null,
   replacesMessageId = null,
@@ -4161,6 +4333,7 @@ export function createStudioMessage({
       sessionId,
       role,
       content,
+      mentions,
       model,
       versionGroupId: resolvedVersionGroupId,
       versionIndex,
@@ -4184,6 +4357,7 @@ export function createStudioMessage({
               session_id,
               role,
               content,
+              mentions,
               model,
               version_group_id,
               version_index,
@@ -4202,6 +4376,7 @@ export function createStudioMessage({
               @sessionId,
               @role,
               @content,
+              @mentions,
               @model,
               @versionGroupId,
               @versionIndex,
@@ -4221,6 +4396,7 @@ export function createStudioMessage({
         sessionId: message.sessionId,
         role: message.role,
         content: message.content,
+        mentions: mentions.length ? JSON.stringify(mentions) : null,
         model: message.model,
         versionGroupId: message.versionGroupId,
         versionIndex: message.versionIndex,
@@ -4995,6 +5171,183 @@ export function listStudioSavedGenericFiles(): StudioGenericLibraryFile[] {
   }))
 }
 
+type StoredAstraFlowApiKeyRecord = {
+  version: 1
+  salt: string
+  hash: string
+  prefix: string
+  last4: string
+  createdAt: string
+}
+
+function hashAstraFlowApiKey(apiKey: string, salt: string) {
+  return createHash("sha256").update(`${salt}:${apiKey}`).digest("hex")
+}
+
+function maskAstraFlowApiKey(last4: string) {
+  return `${ASTRAFLOW_API_KEY_PREFIX}-****${last4}`
+}
+
+function parseStoredAstraFlowApiKeyRecord():
+  | (StoredAstraFlowApiKeyRecord & { updatedAt: string })
+  | null {
+  const row = readStudioSetting(STUDIO_ASTRAFLOW_API_KEY_SETTING)
+
+  if (!row?.value) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(row.value) as Partial<StoredAstraFlowApiKeyRecord>
+
+    if (
+      parsed.version !== 1 ||
+      parsed.prefix !== ASTRAFLOW_API_KEY_PREFIX ||
+      !parsed.salt ||
+      !parsed.hash ||
+      !parsed.last4 ||
+      !parsed.createdAt
+    ) {
+      return null
+    }
+
+    return {
+      version: 1,
+      salt: parsed.salt,
+      hash: parsed.hash,
+      prefix: parsed.prefix,
+      last4: parsed.last4,
+      createdAt: parsed.createdAt,
+      updatedAt: row.updated_at,
+    }
+  } catch {
+    return null
+  }
+}
+
+export function getStudioAstraFlowApiKeyStatus(): StudioAstraFlowApiKeyStatus {
+  const record = parseStoredAstraFlowApiKeyRecord()
+
+  if (!record) {
+    return {
+      configured: false,
+      keyPreview: null,
+      createdAt: null,
+      updatedAt: null,
+    }
+  }
+
+  return {
+    configured: true,
+    keyPreview: maskAstraFlowApiKey(record.last4),
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+  }
+}
+
+export function generateStudioAstraFlowApiKey(): StudioAstraFlowApiKeyStatus {
+  const fullKey = `${ASTRAFLOW_API_KEY_PREFIX}-${randomBytes(32).toString(
+    "base64url"
+  )}`
+  const salt = randomBytes(16).toString("hex")
+  const createdAt = nowIso()
+  const record: StoredAstraFlowApiKeyRecord = {
+    version: 1,
+    salt,
+    hash: hashAstraFlowApiKey(fullKey, salt),
+    prefix: ASTRAFLOW_API_KEY_PREFIX,
+    last4: fullKey.slice(-4),
+    createdAt,
+  }
+  const updatedAt = writeStudioSetting(
+    STUDIO_ASTRAFLOW_API_KEY_SETTING,
+    JSON.stringify(record),
+    createdAt
+  )
+
+  saveStudioAstraFlowApiKeySession(record.hash)
+
+  return {
+    configured: true,
+    keyPreview: maskAstraFlowApiKey(record.last4),
+    createdAt,
+    updatedAt,
+    fullKey,
+  }
+}
+
+export function verifyStudioAstraFlowApiKey(apiKey: string) {
+  const normalized = apiKey.trim()
+  const record = parseStoredAstraFlowApiKeyRecord()
+
+  if (!record || !normalized.startsWith(`${ASTRAFLOW_API_KEY_PREFIX}-`)) {
+    return false
+  }
+
+  const submittedHash = hashAstraFlowApiKey(normalized, record.salt)
+  const expected = Buffer.from(record.hash, "hex")
+  const actual = Buffer.from(submittedHash, "hex")
+
+  if (expected.length !== actual.length) {
+    return false
+  }
+
+  return timingSafeEqual(expected, actual)
+}
+
+export function saveStudioAstraFlowApiKeySession(keyHash?: string) {
+  const record = parseStoredAstraFlowApiKeyRecord()
+
+  if (!record) {
+    return null
+  }
+
+  const updatedAt = writeStudioSetting(
+    STUDIO_ASTRAFLOW_API_KEY_SESSION_SETTING,
+    JSON.stringify({
+      keyHash: keyHash ?? record.hash,
+      createdAt: nowIso(),
+    })
+  )
+
+  return {
+    authenticated: true,
+    updatedAt,
+  } satisfies StudioAstraFlowApiKeySessionStatus
+}
+
+export function getStudioAstraFlowApiKeySessionStatus(): StudioAstraFlowApiKeySessionStatus {
+  const record = parseStoredAstraFlowApiKeyRecord()
+  const row = readStudioSetting(STUDIO_ASTRAFLOW_API_KEY_SESSION_SETTING)
+
+  if (!record || !row?.value) {
+    return {
+      authenticated: false,
+      updatedAt: null,
+    }
+  }
+
+  try {
+    const parsed = JSON.parse(row.value) as {
+      keyHash?: string
+    }
+
+    return {
+      authenticated: parsed.keyHash === record.hash,
+      updatedAt: row.updated_at,
+    }
+  } catch {
+    return {
+      authenticated: false,
+      updatedAt: null,
+    }
+  }
+}
+
+export function clearStudioAstraFlowApiKeySession() {
+  deleteStudioSetting(STUDIO_ASTRAFLOW_API_KEY_SESSION_SETTING)
+}
+
 export function getStudioOAuthTokens(): StudioOAuthTokens | null {
   const row = readSecretSetting(STUDIO_OAUTH_SETTING)
 
@@ -5506,8 +5859,7 @@ export function updateStudioImageGeneration(
   input: UpdateImageGenerationInput
 ) {
   const completedAt =
-    input.completedAt ??
-    (isTerminalImageStatus(input.status) ? nowIso() : null)
+    input.completedAt ?? (isTerminalImageStatus(input.status) ? nowIso() : null)
 
   getDb()
     .prepare(

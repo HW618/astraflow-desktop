@@ -3,6 +3,7 @@ import type { BaseMessage } from "@langchain/core/messages"
 import type { AgentRuntimeId } from "@/lib/agent-model-settings-shared"
 import type { ChatReasoningEffort, SupportedChatModel } from "@/lib/chat-models"
 import type { AgentEvent } from "@/lib/agent/events"
+import type { ComposerCapabilities } from "@/lib/agent/composer-types"
 
 export type RuntimeCapabilities = {
   hitl: boolean
@@ -25,6 +26,7 @@ export type AgentRuntimeInfo = {
   label: string
   description: string
   capabilities: RuntimeCapabilities
+  composer?: ComposerCapabilities
 }
 
 export type AgentRunEnvironment = "remote" | "local"

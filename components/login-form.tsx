@@ -4,6 +4,7 @@ import * as React from "react"
 import {
   RiArrowRightLine,
   RiExternalLinkLine,
+  RiKey2Line,
   RiLoader4Line,
 } from "@remixicon/react"
 
@@ -100,6 +101,15 @@ type SaveModelverseApiKeyResponse =
       message?: string
     }
 
+type AstraFlowApiKeyLoginResponse =
+  | {
+      ok: true
+    }
+  | {
+      ok: false
+      message?: string
+    }
+
 function formatExpiry(expiresAt: number | null) {
   if (!expiresAt) {
     return null
@@ -185,6 +195,22 @@ async function saveModelverseApiKey(apiKeyId: string, projectId: string) {
   return payload.data
 }
 
+async function loginWithAstraFlowApiKey(apiKey: string) {
+  const response = await fetch("/api/studio/astraflow-api-key/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ apiKey }),
+  })
+  const payload = (await response.json()) as AstraFlowApiKeyLoginResponse
+
+  if (!response.ok || !payload.ok) {
+    throw new Error(
+      (!payload.ok && payload.message) ||
+        "Failed to log in with AstraFlow API key."
+    )
+  }
+}
+
 function LoginForm() {
   const { t } = useI18n()
   const initialStatusLoadedRef = React.useRef(false)
@@ -203,6 +229,9 @@ function LoginForm() {
   const [error, setError] = React.useState("")
   const [callbackUrl, setCallbackUrl] = React.useState("")
   const [callbackSubmitting, setCallbackSubmitting] = React.useState(false)
+  const [apiKeyLoginOpen, setApiKeyLoginOpen] = React.useState(false)
+  const [apiKeyInput, setApiKeyInput] = React.useState("")
+  const [apiKeySubmitting, setApiKeySubmitting] = React.useState(false)
 
   const finalizeLogin = React.useCallback(async () => {
     if (finalizeStartedRef.current) {
@@ -375,11 +404,44 @@ function LoginForm() {
     }
   }
 
+  async function handleApiKeyLogin(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+
+    const apiKey = apiKeyInput.trim()
+
+    if (!apiKey) {
+      setError(t.loginAstraFlowApiKeyRequired)
+      return
+    }
+
+    try {
+      setApiKeySubmitting(true)
+      setError("")
+      setMessage(t.loginAstraFlowApiKeyCompleting)
+
+      await loginWithAstraFlowApiKey(apiKey)
+
+      setApiKeyInput("")
+      setMessage(t.loginComplete)
+      window.location.replace("/studio")
+    } catch (nextError) {
+      setError(
+        nextError instanceof Error
+          ? nextError.message
+          : t.loginAstraFlowApiKeyFailed
+      )
+      setMessage("")
+    } finally {
+      setApiKeySubmitting(false)
+    }
+  }
+
   const isBusy =
     phase === "starting" ||
     phase === "syncing" ||
     phase === "done" ||
-    callbackSubmitting
+    callbackSubmitting ||
+    apiKeySubmitting
   const expiryText = formatExpiry(auth.expiresAt)
   const canPasteCallback = flow?.status === "pending"
 
@@ -417,6 +479,50 @@ function LoginForm() {
                 : t.loginContinueWithUCloud}
             </span>
           </Button>
+
+          <Separator />
+
+          <div className="flex flex-col gap-3">
+            <Button
+              className="h-10 w-full justify-center rounded-2xl"
+              disabled={isBusy}
+              onClick={() => setApiKeyLoginOpen((current) => !current)}
+              type="button"
+              variant="outline"
+            >
+              <RiKey2Line data-icon="inline-start" />
+              <span>{t.loginUseAstraFlowApiKey}</span>
+            </Button>
+
+            {apiKeyLoginOpen ? (
+              <form className="flex flex-col gap-2" onSubmit={handleApiKeyLogin}>
+                <Input
+                  autoComplete="off"
+                  disabled={apiKeySubmitting}
+                  onChange={(event) => setApiKeyInput(event.target.value)}
+                  placeholder={t.loginAstraFlowApiKeyPlaceholder}
+                  type="password"
+                  value={apiKeyInput}
+                />
+                <Button
+                  className="w-full rounded-2xl"
+                  disabled={apiKeySubmitting || !apiKeyInput.trim()}
+                  type="submit"
+                  variant="secondary"
+                >
+                  {apiKeySubmitting ? (
+                    <RiLoader4Line
+                      data-icon="inline-start"
+                      className="animate-spin"
+                    />
+                  ) : (
+                    <RiArrowRightLine data-icon="inline-start" />
+                  )}
+                  <span>{t.loginAstraFlowApiKeySubmit}</span>
+                </Button>
+              </form>
+            ) : null}
+          </div>
 
           <Separator />
 

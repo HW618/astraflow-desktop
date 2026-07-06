@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 
 import { requireSameOriginRequest } from "@/lib/app-auth"
 import {
+  clearStudioAstraFlowApiKeySession,
   clearStudioExaApiKey,
   clearStudioModelverseApiKey,
   clearStudioOAuthTokens,
@@ -15,6 +16,7 @@ export async function POST(request: Request) {
   clearStudioExaApiKey()
   clearStudioModelverseApiKey()
   clearStudioOAuthTokens()
+  clearStudioAstraFlowApiKeySession()
 
   if (originError) {
     return NextResponse.json({

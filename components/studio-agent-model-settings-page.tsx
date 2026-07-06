@@ -376,10 +376,10 @@ function StudioAgentModelSettingsPage({
       {!embedded ? (
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <h1 className="text-2xl font-semibold tracking-normal">
+            <h1 className="text-4xl font-semibold tracking-normal">
               {copy.title}
             </h1>
-            <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+            <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
               {copy.description}
             </p>
           </div>

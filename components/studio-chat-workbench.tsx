@@ -38,6 +38,7 @@ import {
   PanelBottom,
   PanelRight,
   SquareTerminal,
+  FileText,
   Zap,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -75,10 +76,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import {
-  CodeBlock,
-  CodeBlockCode,
-} from "@/components/prompt-kit/code-block"
+import { CodeBlock, CodeBlockCode } from "@/components/prompt-kit/code-block"
 import { Markdown } from "@/components/prompt-kit/markdown"
 import { Shimmer } from "@/components/ai-elements/shimmer"
 import { Button } from "@/components/ui/button"
@@ -114,16 +112,25 @@ import type {
   AgentModelDefinition,
   AgentModelSettingsPayload,
 } from "@/lib/agent-model-settings-shared"
+import {
+  parseSlashCommandText,
+  type PromptMention,
+  type SlashCommandDescriptor,
+} from "@/lib/agent/composer-types"
 import type { AgentRuntimeInfo } from "@/lib/agent/runtime"
 import {
   consumePendingProjectId,
   setPendingProjectId,
 } from "@/lib/studio-pending-project"
 import {
+  type InstalledMcpServer,
   type InstalledMcpServersApiResponse,
 } from "@/lib/mcp"
 import { UCLOUD_PROJECT_CHANGED_EVENT } from "@/lib/project-selection"
-import type { InstalledSkillsApiResponse } from "@/lib/skill-market"
+import type {
+  InstalledSkill,
+  InstalledSkillsApiResponse,
+} from "@/lib/skill-market"
 import type {
   StudioAttachment,
   StudioMessageActivity,
@@ -156,6 +163,46 @@ type StudioChatWorkbenchProps = {
 }
 
 type PendingAttachment = StudioAttachment & { id: string }
+
+type ComposerPopupPlacement = "top" | "bottom"
+
+type StudioOutputFile = {
+  path: string
+  name: string
+}
+
+type ComposerFileMention = {
+  kind: "file" | "folder"
+  path: string
+  relativePath: string
+  name: string
+}
+
+type ComposerSessionMention = {
+  kind: "session"
+  sessionId: string
+  title: string
+}
+
+type ComposerMention = ComposerFileMention | ComposerSessionMention
+
+function serializeComposerMentions(
+  mentions: ComposerMention[]
+): PromptMention[] {
+  return mentions.map((mention) =>
+    mention.kind === "session"
+      ? {
+          kind: "session",
+          sessionId: mention.sessionId,
+          title: mention.title,
+        }
+      : {
+          kind: mention.kind,
+          path: mention.path,
+          name: mention.name,
+        }
+  )
+}
 
 type StudioTerminalTab = {
   id: string
@@ -403,6 +450,44 @@ function useElementWidth<T extends HTMLElement>() {
   return [ref, width] as const
 }
 
+function useComposerPopupPlacement(
+  anchorRef: React.RefObject<HTMLElement | null>,
+  open: boolean
+) {
+  const [placement, setPlacement] =
+    React.useState<ComposerPopupPlacement>("bottom")
+
+  React.useLayoutEffect(() => {
+    if (!open) {
+      return
+    }
+
+    function updatePlacement() {
+      const anchor = anchorRef.current
+
+      if (!anchor) {
+        setPlacement("bottom")
+        return
+      }
+
+      const rect = anchor.getBoundingClientRect()
+      const spaceBelow = window.innerHeight - rect.bottom
+      const spaceAbove = rect.top
+
+      setPlacement(
+        spaceBelow < 320 && spaceAbove > spaceBelow ? "top" : "bottom"
+      )
+    }
+
+    updatePlacement()
+    window.addEventListener("resize", updatePlacement)
+
+    return () => window.removeEventListener("resize", updatePlacement)
+  }, [anchorRef, open])
+
+  return placement
+}
+
 function getPathTail(path: string | null | undefined) {
   const normalized = path?.replace(/\/+$/, "").trim()
 
@@ -527,7 +612,10 @@ function parseMarkdownFrontmatter(content: string) {
   }
 
   const metadata = parseSimpleYamlMetadata(lines.slice(1, endIndex).join("\n"))
-  const body = lines.slice(endIndex + 1).join("\n").replace(/^\s+/, "")
+  const body = lines
+    .slice(endIndex + 1)
+    .join("\n")
+    .replace(/^\s+/, "")
 
   return { body, metadata }
 }
@@ -637,9 +725,7 @@ function createWorkspaceTerminalTab(
   }
 }
 
-function createWorkspaceSideChatTab(
-  title: string
-): StudioWorkspaceSideChatTab {
+function createWorkspaceSideChatTab(title: string): StudioWorkspaceSideChatTab {
   return {
     id: createClientId(),
     kind: "side-chat",
@@ -736,10 +822,11 @@ function useCloseTabCommand(handler: () => void, active = true) {
       return
     }
 
-    const disposeDesktopListener =
-      window.astraflowDesktop?.onCloseTabCommand?.(() => {
+    const disposeDesktopListener = window.astraflowDesktop?.onCloseTabCommand?.(
+      () => {
         handlerRef.current()
-      })
+      }
+    )
 
     function handleKeyDown(event: KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "w") {
@@ -796,11 +883,30 @@ type ApiResponse<T> =
 const CHAT_MODEL_STORAGE_KEY = "astraflow:chat-model"
 const CHAT_RUNTIME_STORAGE_KEY = "astraflow:chat-runtime"
 const CHAT_REASONING_EFFORT_STORAGE_KEY = "astraflow:chat-reasoning-effort"
+const CHAT_DEFAULTS_STORAGE_KEY = "astraflow-chat-defaults"
 const CHAT_ENVIRONMENT_STORAGE_KEY = "astraflow:chat-environment"
 const DEFAULT_CHAT_RUNTIME_ID = "astraflow"
 const PROJECT_NONE_VALUE = "__none__"
 
 type ChatRunEnvironment = "remote" | "local"
+
+type ChatPreferenceRecord = {
+  chatModel?: SupportedChatModel | null
+  chatRuntimeId?: string | null
+  chatReasoningEffort?: ChatReasoningEffort | null
+}
+
+type StoredChatDefaults = {
+  runtimeId?: string
+  model?: SupportedChatModel
+  reasoningEffort?: ChatReasoningEffort
+}
+
+type ResolvedChatPreferences = {
+  runtimeId: string
+  model: SupportedChatModel
+  reasoningEffort: ChatReasoningEffort
+}
 
 const DEFAULT_CHAT_ENVIRONMENT: ChatRunEnvironment = "local"
 
@@ -1236,6 +1342,156 @@ function resolveChatRuntimeId(
     : DEFAULT_CHAT_RUNTIME_ID
 }
 
+function getChatModelOptionsForRuntime(
+  runtimeId: string,
+  agentModelSettings: AgentModelSettingsPayload | null
+) {
+  const models = agentModelSettings?.models ?? getFallbackAgentModelOptions()
+  const compatibleModels = models.filter(
+    (model) =>
+      model.enabled &&
+      model.supportedRuntimeIds.some((supportedRuntimeId) => {
+        return supportedRuntimeId === runtimeId
+      })
+  )
+
+  return compatibleModels.length > 0 ? compatibleModels : models
+}
+
+function getChatModelReasoningEffort(
+  model: SupportedChatModel,
+  reasoningEffort: ChatReasoningEffort | null | undefined,
+  modelOptions: AgentModelDefinition[]
+) {
+  const modelOption = modelOptions.find((option) => option.id === model)
+  const supportedEfforts =
+    modelOption?.reasoningEfforts ?? getChatReasoningEfforts(model)
+
+  if (reasoningEffort && supportedEfforts.includes(reasoningEffort)) {
+    return reasoningEffort
+  }
+
+  return (
+    modelOption?.defaultReasoningEffort ??
+    resolveChatReasoningEffort(
+      model,
+      reasoningEffort ?? getDefaultChatReasoningEffort(model)
+    )
+  )
+}
+
+function resolveChatPreferences(
+  preferences: ChatPreferenceRecord,
+  runtimeInfos: ChatRuntimeOption[],
+  agentModelSettings: AgentModelSettingsPayload | null
+): ResolvedChatPreferences {
+  const runtimeId = resolveChatRuntimeId(
+    preferences.chatRuntimeId?.trim() || DEFAULT_CHAT_RUNTIME_ID,
+    runtimeInfos
+  )
+  const modelOptions = getChatModelOptionsForRuntime(
+    runtimeId,
+    agentModelSettings
+  )
+  const runtimeDefault =
+    agentModelSettings?.runtimes[
+      runtimeId as keyof AgentModelSettingsPayload["runtimes"]
+    ]?.defaultModel
+  const model =
+    modelOptions.find((option) => option.id === preferences.chatModel)?.id ??
+    modelOptions.find((option) => option.id === runtimeDefault)?.id ??
+    modelOptions.find((option) => option.id === DEFAULT_CHAT_MODEL)?.id ??
+    modelOptions[0]?.id ??
+    DEFAULT_CHAT_MODEL
+  const reasoningEffort = getChatModelReasoningEffort(
+    model,
+    preferences.chatReasoningEffort,
+    modelOptions
+  )
+
+  return {
+    runtimeId,
+    model,
+    reasoningEffort,
+  }
+}
+
+function mergeChatPreferences(
+  sessionPreferences: ChatPreferenceRecord | null | undefined,
+  chatDefaults: StoredChatDefaults | null
+): ChatPreferenceRecord {
+  return {
+    chatRuntimeId:
+      sessionPreferences?.chatRuntimeId ?? chatDefaults?.runtimeId ?? null,
+    chatModel: sessionPreferences?.chatModel ?? chatDefaults?.model ?? null,
+    chatReasoningEffort:
+      sessionPreferences?.chatReasoningEffort ??
+      chatDefaults?.reasoningEffort ??
+      null,
+  }
+}
+
+function hasExplicitChatPreferences(
+  preferences: ChatPreferenceRecord | null | undefined
+) {
+  return Boolean(
+    preferences?.chatRuntimeId ||
+      preferences?.chatModel ||
+      preferences?.chatReasoningEffort
+  )
+}
+
+function readStoredChatDefaults(): StoredChatDefaults | null {
+  if (typeof window === "undefined") {
+    return null
+  }
+
+  const stored = window.localStorage.getItem(CHAT_DEFAULTS_STORAGE_KEY)
+
+  if (!stored) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(stored) as {
+      runtimeId?: unknown
+      model?: unknown
+      reasoningEffort?: unknown
+    }
+    const defaults: StoredChatDefaults = {}
+
+    if (typeof parsed.runtimeId === "string" && parsed.runtimeId.trim()) {
+      defaults.runtimeId = parsed.runtimeId.trim()
+    }
+
+    if (typeof parsed.model === "string" && parsed.model.trim()) {
+      defaults.model = parsed.model.trim()
+    }
+
+    if (
+      typeof parsed.reasoningEffort === "string" &&
+      isChatReasoningEffort(parsed.reasoningEffort)
+    ) {
+      defaults.reasoningEffort = parsed.reasoningEffort
+    }
+
+    return Object.keys(defaults).length > 0 ? defaults : null
+  } catch {
+    return null
+  }
+}
+
+function writeStoredChatDefaults(defaults: ResolvedChatPreferences) {
+  window.localStorage.setItem(
+    CHAT_DEFAULTS_STORAGE_KEY,
+    JSON.stringify({
+      runtimeId: defaults.runtimeId,
+      model: defaults.model,
+      reasoningEffort: defaults.reasoningEffort,
+    })
+  )
+}
+
 function getChatRuntimeLabel(
   runtimeId: string,
   runtimeInfos: ChatRuntimeOption[]
@@ -1276,9 +1532,7 @@ async function readJson<T>(response: Response) {
   const data = (await response.json()) as ApiResponse<T>
 
   if (!response.ok || !data.ok) {
-    const detail = data.ok
-      ? ""
-      : data.message || stringifyApiError(data.error)
+    const detail = data.ok ? "" : data.message || stringifyApiError(data.error)
 
     throw new Error(detail || `Request failed (${response.status})`)
   }
@@ -1314,6 +1568,162 @@ async function listStudioSessionsForComposer() {
   const response = await fetch("/api/studio/sessions", { cache: "no-store" })
 
   return readJson<StudioSession[]>(response)
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
+}
+
+function normalizeRuntimeSlashCommand(
+  value: unknown
+): SlashCommandDescriptor | null {
+  if (!isObjectRecord(value) || typeof value.name !== "string") {
+    return null
+  }
+
+  const name = value.name.trim().replace(/^\/+/, "")
+
+  if (!name) {
+    return null
+  }
+
+  return {
+    name,
+    description: typeof value.description === "string" ? value.description : "",
+    inputHint:
+      typeof value.inputHint === "string" ? value.inputHint : undefined,
+    source: "runtime",
+    runtimeId:
+      typeof value.runtimeId === "string" ? value.runtimeId : undefined,
+  }
+}
+
+function getCommandsFromResponsePayload(payload: unknown): unknown[] {
+  if (!isObjectRecord(payload)) {
+    return []
+  }
+
+  if (Array.isArray(payload.commands)) {
+    return payload.commands
+  }
+
+  if (isObjectRecord(payload.data) && Array.isArray(payload.data.commands)) {
+    return payload.data.commands
+  }
+
+  if (Array.isArray(payload.data)) {
+    return payload.data
+  }
+
+  return []
+}
+
+async function listSessionSlashCommands(sessionId: string) {
+  if (!sessionId) {
+    return []
+  }
+
+  try {
+    const response = await fetch(
+      `/api/studio/sessions/${encodeURIComponent(sessionId)}/commands`,
+      { cache: "no-store" }
+    )
+
+    if (!response.ok) {
+      return []
+    }
+
+    const payload = (await response.json()) as unknown
+
+    return getCommandsFromResponsePayload(payload)
+      .map(normalizeRuntimeSlashCommand)
+      .filter((command): command is SlashCommandDescriptor => Boolean(command))
+  } catch {
+    return []
+  }
+}
+
+type WorkspaceFileCandidate = {
+  path: string
+  relativePath: string
+  name: string
+  kind: "file" | "folder"
+}
+
+function normalizeWorkspaceFileCandidate(
+  value: unknown
+): WorkspaceFileCandidate | null {
+  if (
+    !isObjectRecord(value) ||
+    typeof value.path !== "string" ||
+    typeof value.relativePath !== "string" ||
+    typeof value.name !== "string" ||
+    (value.kind !== "file" && value.kind !== "folder")
+  ) {
+    return null
+  }
+
+  return {
+    path: value.path,
+    relativePath: value.relativePath,
+    name: value.name,
+    kind: value.kind,
+  }
+}
+
+function getWorkspaceFilesFromResponsePayload(payload: unknown): unknown[] {
+  if (!isObjectRecord(payload)) {
+    return []
+  }
+
+  if (Array.isArray(payload.files)) {
+    return payload.files
+  }
+
+  if (isObjectRecord(payload.data) && Array.isArray(payload.data.files)) {
+    return payload.data.files
+  }
+
+  return []
+}
+
+async function listWorkspaceFilesForComposer({
+  projectId,
+  query,
+  limit = 30,
+}: {
+  projectId: string
+  query: string
+  limit?: number
+}) {
+  if (!projectId) {
+    return []
+  }
+
+  const searchParams = new URLSearchParams({
+    projectId,
+    q: query,
+    limit: String(limit),
+  })
+
+  try {
+    const response = await fetch(
+      `/api/studio/workspace/files?${searchParams.toString()}`,
+      { cache: "no-store" }
+    )
+
+    if (!response.ok) {
+      return []
+    }
+
+    const payload = (await response.json()) as unknown
+
+    return getWorkspaceFilesFromResponsePayload(payload)
+      .map(normalizeWorkspaceFileCandidate)
+      .filter((file): file is WorkspaceFileCandidate => Boolean(file))
+  } catch {
+    return []
+  }
 }
 
 async function createSession(
@@ -1428,6 +1838,7 @@ async function createMessage(input: {
   reasoningContent?: string
   reasoningDurationMs?: number | null
   model?: string | null
+  mentions?: PromptMention[]
   versionGroupId?: string | null
   replacesMessageId?: string | null
 }) {
@@ -1448,6 +1859,9 @@ async function createMessage(input: {
         reasoningDurationMs: input.reasoningDurationMs ?? null,
         status: "complete",
         attachments: input.attachments ?? [],
+        ...(input.mentions && input.mentions.length > 0
+          ? { mentions: input.mentions }
+          : {}),
       }),
     }
   )
@@ -1714,6 +2128,109 @@ function hasActiveMediaGenerationPart(messages: StudioMessage[]) {
   )
 }
 
+function parseToolJsonObject(input: string) {
+  try {
+    const parsed = JSON.parse(input) as unknown
+
+    return typeof parsed === "object" && parsed !== null
+      ? (parsed as Record<string, unknown>)
+      : null
+  } catch {
+    return null
+  }
+}
+
+function getToolPathInput(input: string) {
+  const parsed = parseToolJsonObject(input)
+
+  if (!parsed) {
+    return input.trim()
+  }
+
+  const keys = [
+    "path",
+    "file_path",
+    "filePath",
+    "absolute_path",
+    "absolutePath",
+  ]
+
+  for (const key of keys) {
+    const value = parsed[key]
+
+    if (typeof value === "string" && value.trim()) {
+      return value.trim()
+    }
+  }
+
+  return ""
+}
+
+function getOutputFileName(path: string) {
+  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path
+}
+
+function getSessionOutputFiles(messages: StudioMessage[]) {
+  const outputFiles = new Map<string, StudioOutputFile>()
+  const writeToolNames = new Set([
+    "write_file",
+    "edit_file",
+    "Write",
+    "create_file",
+  ])
+
+  for (const message of messages) {
+    if (message.role !== "assistant") {
+      continue
+    }
+
+    for (const part of message.parts) {
+      let path = ""
+
+      if (
+        part.type === "file" &&
+        part.status === "complete" &&
+        part.kind !== "delete"
+      ) {
+        path = part.path
+      } else if (
+        part.type === "tool" &&
+        part.activity.status === "complete" &&
+        writeToolNames.has(part.activity.toolName)
+      ) {
+        path = getToolPathInput(part.activity.input)
+      }
+
+      const normalizedPath = path.trim()
+
+      if (normalizedPath && !outputFiles.has(normalizedPath)) {
+        outputFiles.set(normalizedPath, {
+          path: normalizedPath,
+          name: getOutputFileName(normalizedPath),
+        })
+      }
+    }
+  }
+
+  return Array.from(outputFiles.values())
+}
+
+function getUserMessageHistory(messages: StudioMessage[]) {
+  const history: string[] = []
+
+  for (const message of messages) {
+    if (message.role !== "user" || message.content.trim().length === 0) {
+      continue
+    }
+
+    if (history[history.length - 1] !== message.content) {
+      history.push(message.content)
+    }
+  }
+
+  return history
+}
+
 function StudioChatWorkbench({
   sessionId,
   onSessionChange,
@@ -1724,37 +2241,45 @@ function StudioChatWorkbench({
   const [input, setInput] = React.useState("")
   const [selectedModel, setSelectedModel] = useChatModel()
   const [selectedRuntimeId, setSelectedRuntimeId] = useChatRuntime()
-  const [selectedReasoningEffort, setSelectedReasoningEffort] =
-    useChatReasoningEffort(selectedModel)
+  const [selectedReasoningEffort] = useChatReasoningEffort(selectedModel)
   const [selectedEnvironment, setSelectedEnvironment] = useChatEnvironment()
   const [runtimeInfos, setRuntimeInfos] = React.useState<ChatRuntimeOption[]>(
     () => [FALLBACK_CHAT_RUNTIME_INFO]
   )
   const [agentModelSettings, setAgentModelSettings] =
     React.useState<AgentModelSettingsPayload | null>(null)
+  const [chatDefaultsHydrated, setChatDefaultsHydrated] =
+    React.useState(false)
+  const [chatDefaults, setChatDefaults] =
+    React.useState<StoredChatDefaults | null>(null)
+  const [sessionChatPreferences, setSessionChatPreferences] =
+    React.useState<ChatPreferenceRecord | null | undefined>(undefined)
   const [localProjects, setLocalProjects] = React.useState<
     StudioLocalProjectWithGitInfo[]
   >([])
   const [selectedProjectId, setSelectedProjectId] = React.useState<
     string | null
   >(null)
+  const [currentSessionTitle, setCurrentSessionTitle] = React.useState("")
   const [selectedPermissionMode, setSelectedPermissionMode] =
     React.useState<StudioPermissionMode>("ask")
   const [messages, setMessages] = React.useState<StudioMessage[]>([])
   const [pendingAttachments, setPendingAttachments] = React.useState<
     PendingAttachment[]
   >([])
+  const [promptMentions, setPromptMentions] = React.useState<ComposerMention[]>(
+    []
+  )
   const [startingSessionIds, setStartingSessionIds] = React.useState<
     Set<string>
   >(() => new Set())
   const [loadFailed, setLoadFailed] = React.useState(false)
-  const [chatErrors, setChatErrors] = React.useState<Record<string, string>>(
-    {}
-  )
+  const [chatErrors, setChatErrors] = React.useState<Record<string, string>>({})
   const [liveStreamConnected, setLiveStreamConnected] = React.useState(false)
   const sessionIdRef = React.useRef(sessionId)
   const sessionProjectRequestIdRef = React.useRef(0)
   const preferenceSaveIdRef = React.useRef(0)
+  const normalizedPreferenceSaveKeyRef = React.useRef("")
 
   const saveChatPreferences = React.useCallback(
     (
@@ -1783,6 +2308,14 @@ function StudioChatWorkbench({
     () => (sessionId ? messages : []),
     [messages, sessionId]
   )
+  const outputFiles = React.useMemo(
+    () => getSessionOutputFiles(visibleMessages),
+    [visibleMessages]
+  )
+  const userMessageHistory = React.useMemo(
+    () => getUserMessageHistory(visibleMessages),
+    [visibleMessages]
+  )
   const pendingPermissionPart = React.useMemo(
     () => getPendingPermissionPart(visibleMessages),
     [visibleMessages]
@@ -1800,17 +2333,30 @@ function StudioChatWorkbench({
     runtimeInfos
   )
   const modelOptions = React.useMemo(() => {
-    const models = agentModelSettings?.models ?? getFallbackAgentModelOptions()
-    const compatibleModels = models.filter(
-      (model) =>
-        model.enabled &&
-        model.supportedRuntimeIds.some(
-          (runtimeId) => runtimeId === resolvedRuntimeId
-        )
-    )
-
-    return compatibleModels.length > 0 ? compatibleModels : models
-  }, [agentModelSettings?.models, resolvedRuntimeId])
+    return getChatModelOptionsForRuntime(resolvedRuntimeId, agentModelSettings)
+  }, [agentModelSettings, resolvedRuntimeId])
+  const commitChatDefaults = React.useCallback(
+    (preferences: ResolvedChatPreferences) => {
+      writeStoredChatDefaults(preferences)
+      setChatDefaults({
+        runtimeId: preferences.runtimeId,
+        model: preferences.model,
+        reasoningEffort: preferences.reasoningEffort,
+      })
+    },
+    []
+  )
+  const applyChatSelection = React.useCallback(
+    (preferences: ResolvedChatPreferences) => {
+      setStoredChatReasoningEffort(
+        preferences.model,
+        preferences.reasoningEffort
+      )
+      setSelectedRuntimeId(preferences.runtimeId)
+      setSelectedModel(preferences.model)
+    },
+    [setSelectedModel, setSelectedRuntimeId]
+  )
   const resolvedEnvironment =
     resolvedRuntimeId === DEFAULT_CHAT_RUNTIME_ID
       ? selectedEnvironment
@@ -1842,104 +2388,205 @@ function StudioChatWorkbench({
   const [rightPanelMode, setRightPanelMode] = useRightPanelMode()
   const [rightPanelWidth, setRightPanelWidth] = useRightPanelWidth()
   const [rightPanelFocused, setRightPanelFocused] = React.useState(false)
+  const [modelSelectOpen, setModelSelectOpen] = React.useState(false)
+  const [reasoningSelectOpen, setReasoningSelectOpen] = React.useState(false)
   const effectiveRightPanelFocused = rightPanelOpen && rightPanelFocused
 
   React.useEffect(() => {
-    if (
-      modelOptions.length > 0 &&
-      !modelOptions.some((option) => option.id === selectedModel)
-    ) {
-      const runtimeDefault =
-        agentModelSettings?.runtimes[
-          resolvedRuntimeId as keyof AgentModelSettingsPayload["runtimes"]
-        ]?.defaultModel
-      const nextModel =
-        modelOptions.find((option) => option.id === runtimeDefault)?.id ??
-        modelOptions[0].id
-      const nextReasoningEffort = getStoredChatReasoningEffort(nextModel)
+    function syncChatDefaults() {
+      setChatDefaults(readStoredChatDefaults())
+      setChatDefaultsHydrated(true)
+    }
 
-      setStoredChatReasoningEffort(nextModel, nextReasoningEffort)
-      setSelectedModel(nextModel)
-      if (sessionId) {
-        saveChatPreferences(sessionId, {
-          chatModel: nextModel,
-          chatRuntimeId: resolvedRuntimeId,
-          chatReasoningEffort: nextReasoningEffort,
-        })
+    syncChatDefaults()
+    window.addEventListener("storage", syncChatDefaults)
+
+    return () => {
+      window.removeEventListener("storage", syncChatDefaults)
+    }
+  }, [])
+
+  React.useEffect(() => {
+    if (
+      !chatDefaultsHydrated ||
+      (sessionId && sessionChatPreferences === undefined)
+    ) {
+      return
+    }
+
+    const nextPreferences = resolveChatPreferences(
+      mergeChatPreferences(sessionChatPreferences, chatDefaults),
+      runtimeInfos,
+      agentModelSettings
+    )
+    const preferencesChanged =
+      selectedRuntimeId !== nextPreferences.runtimeId ||
+      selectedModel !== nextPreferences.model ||
+      selectedReasoningEffort !== nextPreferences.reasoningEffort
+
+    if (preferencesChanged) {
+      applyChatSelection(nextPreferences)
+    }
+
+    const explicitSessionPreferences = hasExplicitChatPreferences(
+      sessionChatPreferences
+    )
+      ? sessionChatPreferences
+      : null
+
+    if (
+      sessionId &&
+      explicitSessionPreferences &&
+      (explicitSessionPreferences.chatRuntimeId !== nextPreferences.runtimeId ||
+        explicitSessionPreferences.chatModel !== nextPreferences.model ||
+        explicitSessionPreferences.chatReasoningEffort !==
+          nextPreferences.reasoningEffort)
+    ) {
+      const nextSessionPreferences = {
+        chatModel: nextPreferences.model,
+        chatRuntimeId: nextPreferences.runtimeId,
+        chatReasoningEffort: nextPreferences.reasoningEffort,
       }
+
+      queueMicrotask(() => {
+        setSessionChatPreferences(nextSessionPreferences)
+      })
+      saveChatPreferences(sessionId, nextSessionPreferences)
     }
   }, [
-    agentModelSettings?.runtimes,
-    modelOptions,
-    resolvedRuntimeId,
+    agentModelSettings,
+    applyChatSelection,
+    chatDefaults,
+    chatDefaultsHydrated,
+    runtimeInfos,
     saveChatPreferences,
     selectedModel,
+    selectedReasoningEffort,
+    selectedRuntimeId,
+    sessionChatPreferences,
     sessionId,
-    setSelectedModel,
   ])
 
   const handleRuntimeChange = React.useCallback(
     (nextRuntimeId: string) => {
-      setSelectedRuntimeId(nextRuntimeId)
-
-      if (sessionId) {
-        saveChatPreferences(sessionId, {
+      const nextPreferences = resolveChatPreferences(
+        {
           chatModel: selectedModel,
           chatRuntimeId: nextRuntimeId,
           chatReasoningEffort: selectedReasoningEffort,
-        })
+        },
+        runtimeInfos,
+        agentModelSettings
+      )
+
+      applyChatSelection(nextPreferences)
+      commitChatDefaults(nextPreferences)
+
+      if (sessionId) {
+      const nextSessionPreferences = {
+        chatModel: nextPreferences.model,
+        chatRuntimeId: nextPreferences.runtimeId,
+        chatReasoningEffort: nextPreferences.reasoningEffort,
       }
+      const saveKey = [
+        sessionId,
+        nextSessionPreferences.chatRuntimeId,
+        nextSessionPreferences.chatModel,
+        nextSessionPreferences.chatReasoningEffort,
+      ].join(":")
+
+      if (normalizedPreferenceSaveKeyRef.current === saveKey) {
+        return
+      }
+
+      normalizedPreferenceSaveKeyRef.current = saveKey
+      saveChatPreferences(sessionId, nextSessionPreferences)
+    }
     },
     [
+      agentModelSettings,
+      applyChatSelection,
+      commitChatDefaults,
+      runtimeInfos,
       saveChatPreferences,
       selectedModel,
       selectedReasoningEffort,
       sessionId,
-      setSelectedRuntimeId,
     ]
   )
 
   const handleModelChange = React.useCallback(
     (nextModel: SupportedChatModel) => {
-      const nextReasoningEffort = getStoredChatReasoningEffort(nextModel)
-
-      setStoredChatReasoningEffort(nextModel, nextReasoningEffort)
-      setSelectedModel(nextModel)
-
-      if (sessionId) {
-        saveChatPreferences(sessionId, {
+      const nextPreferences = resolveChatPreferences(
+        {
           chatModel: nextModel,
           chatRuntimeId: resolvedRuntimeId,
-          chatReasoningEffort: nextReasoningEffort,
-        })
+          chatReasoningEffort: getStoredChatReasoningEffort(nextModel),
+        },
+        runtimeInfos,
+        agentModelSettings
+      )
+
+      applyChatSelection(nextPreferences)
+      commitChatDefaults(nextPreferences)
+
+      if (sessionId) {
+        const nextSessionPreferences = {
+          chatModel: nextPreferences.model,
+          chatRuntimeId: nextPreferences.runtimeId,
+          chatReasoningEffort: nextPreferences.reasoningEffort,
+        }
+
+        setSessionChatPreferences(nextSessionPreferences)
+        saveChatPreferences(sessionId, nextSessionPreferences)
       }
     },
-    [resolvedRuntimeId, saveChatPreferences, sessionId, setSelectedModel]
+    [
+      agentModelSettings,
+      applyChatSelection,
+      commitChatDefaults,
+      resolvedRuntimeId,
+      runtimeInfos,
+      saveChatPreferences,
+      sessionId,
+    ]
   )
 
   const handleReasoningEffortChange = React.useCallback(
     (nextEffort: ChatReasoningEffort) => {
-      const nextReasoningEffort = resolveChatReasoningEffort(
-        selectedModel,
-        nextEffort
-      )
-
-      setSelectedReasoningEffort(nextReasoningEffort)
-
-      if (sessionId) {
-        saveChatPreferences(sessionId, {
+      const nextPreferences = resolveChatPreferences(
+        {
           chatModel: selectedModel,
           chatRuntimeId: resolvedRuntimeId,
-          chatReasoningEffort: nextReasoningEffort,
-        })
+          chatReasoningEffort: nextEffort,
+        },
+        runtimeInfos,
+        agentModelSettings
+      )
+
+      applyChatSelection(nextPreferences)
+      commitChatDefaults(nextPreferences)
+
+      if (sessionId) {
+        const nextSessionPreferences = {
+          chatModel: nextPreferences.model,
+          chatRuntimeId: nextPreferences.runtimeId,
+          chatReasoningEffort: nextPreferences.reasoningEffort,
+        }
+
+        setSessionChatPreferences(nextSessionPreferences)
+        saveChatPreferences(sessionId, nextSessionPreferences)
       }
     },
     [
+      agentModelSettings,
+      applyChatSelection,
+      commitChatDefaults,
       resolvedRuntimeId,
+      runtimeInfos,
       saveChatPreferences,
       selectedModel,
       sessionId,
-      setSelectedReasoningEffort,
     ]
   )
 
@@ -1987,9 +2634,12 @@ function StudioChatWorkbench({
     },
     [setRightPanelOpen]
   )
-  const handleRightPanelFocusedChange = React.useCallback((focused: boolean) => {
-    setRightPanelFocused(focused)
-  }, [])
+  const handleRightPanelFocusedChange = React.useCallback(
+    (focused: boolean) => {
+      setRightPanelFocused(focused)
+    },
+    []
+  )
 
   React.useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -2105,10 +2755,14 @@ function StudioChatWorkbench({
   const reloadSessionProject = React.useCallback(async () => {
     const requestId = sessionProjectRequestIdRef.current + 1
     sessionProjectRequestIdRef.current = requestId
+    normalizedPreferenceSaveKeyRef.current = ""
+    setSessionChatPreferences(undefined)
 
     if (!sessionId) {
       setSelectedProjectId(consumePendingProjectId())
+      setCurrentSessionTitle("")
       setSelectedPermissionMode("ask")
+      setSessionChatPreferences(null)
       return
     }
 
@@ -2128,25 +2782,17 @@ function StudioChatWorkbench({
       }
 
       setSelectedProjectId(session?.projectId ?? null)
+      setCurrentSessionTitle(session?.title ?? "")
       setSelectedPermissionMode(session?.permissionMode ?? "ask")
-
-      if (session?.chatRuntimeId) {
-        setStoredChatRuntime(session.chatRuntimeId)
-      }
-
-      if (session?.chatModel) {
-        if (
-          session.chatReasoningEffort &&
+      setSessionChatPreferences({
+        chatModel: session?.chatModel ?? null,
+        chatRuntimeId: session?.chatRuntimeId ?? null,
+        chatReasoningEffort:
+          session?.chatReasoningEffort &&
           isChatReasoningEffort(session.chatReasoningEffort)
-        ) {
-          setStoredChatReasoningEffort(
-            session.chatModel,
-            session.chatReasoningEffort
-          )
-        }
-
-        setStoredChatModel(session.chatModel)
-      }
+            ? session.chatReasoningEffort
+            : null,
+      })
     } catch {
       if (
         sessionProjectRequestIdRef.current !== requestId ||
@@ -2156,7 +2802,9 @@ function StudioChatWorkbench({
       }
 
       setSelectedProjectId(null)
+      setCurrentSessionTitle("")
       setSelectedPermissionMode("ask")
+      setSessionChatPreferences(null)
     }
   }, [sessionId])
 
@@ -2471,6 +3119,54 @@ function StudioChatWorkbench({
     []
   )
 
+  const executeBuiltinSlashCommand = React.useCallback(
+    (name: string) => {
+      const commandName = name.toLowerCase()
+
+      if (!isBuiltinSlashCommandName(commandName)) {
+        return false
+      }
+
+      setInput("")
+      setPromptMentions([])
+
+      if (commandName === "clear") {
+        setPendingAttachments([])
+        setMessages([])
+        setLoadFailed(false)
+        setSelectedProjectId(null)
+        setCurrentSessionTitle("")
+        setSelectedPermissionMode("ask")
+        setPendingProjectId(null)
+        setSelectedEnvironment("local")
+        setModelSelectOpen(false)
+        setReasoningSelectOpen(false)
+        setChatErrors((current) => {
+          if (!sessionId || !current[sessionId]) {
+            return current
+          }
+
+          const next = { ...current }
+          delete next[sessionId]
+          return next
+        })
+        onSessionChange("")
+        return true
+      }
+
+      if (commandName === "model") {
+        setReasoningSelectOpen(false)
+        setModelSelectOpen(true)
+        return true
+      }
+
+      setModelSelectOpen(false)
+      setReasoningSelectOpen(true)
+      return true
+    },
+    [onSessionChange, sessionId, setSelectedEnvironment]
+  )
+
   const handleRetryMessage = React.useCallback(
     (message: StudioMessage) => {
       if (!sessionId || isBusy || message.role !== "assistant") {
@@ -2664,13 +3360,29 @@ function StudioChatWorkbench({
   async function handleSubmit() {
     const prompt = input.trim()
     const attachments = pendingAttachments
+    const mentions = serializeComposerMentions(
+      promptMentions.filter((mention) =>
+        textHasComposerMentionToken(input, mention)
+      )
+    )
 
     if ((!prompt && attachments.length === 0) || isBusy) {
       return
     }
 
+    const slashCommand = parseSlashCommandText(prompt)
+
+    if (
+      slashCommand &&
+      isBuiltinSlashCommandName(slashCommand.name) &&
+      executeBuiltinSlashCommand(slashCommand.name)
+    ) {
+      return
+    }
+
     setInput("")
     setPendingAttachments([])
+    setPromptMentions([])
 
     const isNewSession = !sessionId
 
@@ -2733,6 +3445,7 @@ function StudioChatWorkbench({
         sessionId: activeSessionId,
         role: "user",
         content: prompt,
+        mentions,
         attachments: attachments.map((attachment) => ({
           id: attachment.id,
           type: attachment.type,
@@ -2744,6 +3457,9 @@ function StudioChatWorkbench({
       })
 
       if (!sessionId) {
+        setCurrentSessionTitle(
+          "title" in activeSession ? activeSession.title : ""
+        )
         setMessages([userMessage])
         onSessionChange(activeSessionId)
       } else {
@@ -2786,95 +3502,10 @@ function StudioChatWorkbench({
   }
 
   const rightPanelCopy = getStudioRightPanelCopy(locale)
+  const chatTitle = currentSessionTitle.trim() || t.studioUntitledSession
 
   return (
     <section className="relative flex h-full min-h-0 min-w-0 flex-1 bg-background">
-      <div className="absolute top-2.5 right-3 z-30 flex items-center gap-1">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label={rightPanelCopy.focusWorkspace}
-              title={rightPanelCopy.focusWorkspace}
-              className={cn(
-                "size-7 rounded-lg bg-transparent text-muted-foreground shadow-none hover:bg-muted/70 hover:text-foreground",
-                effectiveRightPanelFocused && "bg-muted text-foreground"
-              )}
-              onClick={handleToggleFullscreen}
-            >
-              {effectiveRightPanelFocused ? (
-                <Minimize2 aria-hidden className="size-3.5" />
-              ) : (
-                <Maximize2 aria-hidden className="size-3.5" />
-              )}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent align="end" side="bottom">
-            <span>{rightPanelCopy.focusWorkspace}</span>
-          </TooltipContent>
-        </Tooltip>
-
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              data-testid="studio-terminal-panel-toggle"
-              aria-label={t.studioTerminalPanelToggle}
-              title={t.studioTerminalPanelToggle}
-              className={cn(
-                "size-7 rounded-lg bg-transparent text-muted-foreground shadow-none hover:bg-muted/70 hover:text-foreground",
-                terminalPanelOpen && "bg-muted text-foreground"
-              )}
-              onClick={toggleTerminalPanel}
-            >
-              <PanelBottom aria-hidden className="size-3.5" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent align="end" side="bottom">
-            <span>{t.studioTerminalPanelToggle}</span>
-            <span
-              data-slot="kbd"
-              className="bg-background/15 px-1.5 py-0.5 text-[11px] font-semibold text-background/80"
-            >
-              Cmd+J
-            </span>
-          </TooltipContent>
-        </Tooltip>
-
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              data-testid="studio-right-panel-toggle"
-              aria-label={rightPanelCopy.toggleRightPanel}
-              title={rightPanelCopy.toggleRightPanel}
-              className={cn(
-                "size-7 rounded-lg bg-transparent text-muted-foreground shadow-none hover:bg-muted/70 hover:text-foreground",
-                rightPanelOpen && "bg-muted text-foreground"
-              )}
-              onClick={toggleRightPanel}
-            >
-              <PanelRight aria-hidden className="size-3.5" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent align="end" side="bottom">
-            <span>{rightPanelCopy.toggleRightPanel}</span>
-            <span
-              data-slot="kbd"
-              className="bg-background/15 px-1.5 py-0.5 text-[11px] font-semibold text-background/80"
-            >
-              ⌥⌘B
-            </span>
-          </TooltipContent>
-        </Tooltip>
-      </div>
-
       <div
         className={cn(
           "relative flex min-h-0 min-w-0 flex-1 flex-col bg-background",
@@ -2882,12 +3513,104 @@ function StudioChatWorkbench({
         )}
       >
         <div
-          aria-hidden
-          data-electron-chat-drag-header
-          className="absolute inset-x-0 top-0 z-20 h-(--titlebar-height)"
-        />
+          data-electron-drag-header
+          className="flex h-(--titlebar-height) shrink-0 items-center gap-3 px-4"
+        >
+          <div
+            className="min-w-0 flex-1 truncate text-sm font-medium text-foreground"
+            title={chatTitle}
+          >
+            {chatTitle}
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={rightPanelCopy.focusWorkspace}
+                  title={rightPanelCopy.focusWorkspace}
+                  className={cn(
+                    "size-7 rounded-lg bg-transparent text-muted-foreground shadow-none hover:bg-muted/70 hover:text-foreground",
+                    effectiveRightPanelFocused && "bg-muted text-foreground"
+                  )}
+                  onClick={handleToggleFullscreen}
+                >
+                  {effectiveRightPanelFocused ? (
+                    <Minimize2 aria-hidden className="size-3.5" />
+                  ) : (
+                    <Maximize2 aria-hidden className="size-3.5" />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent align="end" side="bottom">
+                <span>{rightPanelCopy.focusWorkspace}</span>
+              </TooltipContent>
+            </Tooltip>
 
-        <div className="min-h-0 flex-1">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  data-testid="studio-terminal-panel-toggle"
+                  aria-label={t.studioTerminalPanelToggle}
+                  title={t.studioTerminalPanelToggle}
+                  className={cn(
+                    "size-7 rounded-lg bg-transparent text-muted-foreground shadow-none hover:bg-muted/70 hover:text-foreground",
+                    terminalPanelOpen && "bg-muted text-foreground"
+                  )}
+                  onClick={toggleTerminalPanel}
+                >
+                  <PanelBottom aria-hidden className="size-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent align="end" side="bottom">
+                <span>{t.studioTerminalPanelToggle}</span>
+                <span
+                  data-slot="kbd"
+                  className="bg-background/15 px-1.5 py-0.5 text-[11px] font-semibold text-background/80"
+                >
+                  Cmd+J
+                </span>
+              </TooltipContent>
+            </Tooltip>
+
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  data-testid="studio-right-panel-toggle"
+                  aria-label={rightPanelCopy.toggleRightPanel}
+                  title={rightPanelCopy.toggleRightPanel}
+                  className={cn(
+                    "size-7 rounded-lg bg-transparent text-muted-foreground shadow-none hover:bg-muted/70 hover:text-foreground",
+                    rightPanelOpen && "bg-muted text-foreground"
+                  )}
+                  onClick={toggleRightPanel}
+                >
+                  <PanelRight aria-hidden className="size-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent align="end" side="bottom">
+                <span>{rightPanelCopy.toggleRightPanel}</span>
+                <span
+                  data-slot="kbd"
+                  className="bg-background/15 px-1.5 py-0.5 text-[11px] font-semibold text-background/80"
+                >
+                  ⌥⌘B
+                </span>
+              </TooltipContent>
+            </Tooltip>
+          </div>
+        </div>
+
+        <div className="relative min-h-0 flex-1">
+          <StudioOutputsCard files={outputFiles} />
           {hasMessages ? (
             <ChatContainerRoot className="h-full min-h-0">
               <ChatContainerContent className="mx-auto flex min-h-full w-full max-w-5xl gap-6 px-8 py-10">
@@ -2920,7 +3643,7 @@ function StudioChatWorkbench({
                         : t.studioLoadFailed}
                     </p>
                     {error === "chat-failed" && chatError ? (
-                      <p className="mt-1 whitespace-pre-wrap break-words text-xs text-destructive/80">
+                      <p className="mt-1 text-xs break-words whitespace-pre-wrap text-destructive/80">
                         {chatError}
                       </p>
                     ) : null}
@@ -2937,7 +3660,10 @@ function StudioChatWorkbench({
                   {t.studioChatGreeting(greetingPeriod)}
                 </h1>
                 <ChatComposer
+                  key={`composer:${sessionId || "new"}`}
+                  sessionId={sessionId}
                   value={input}
+                  userMessageHistory={userMessageHistory}
                   model={selectedModel}
                   modelOptions={modelOptions}
                   runtimeId={resolvedRuntimeId}
@@ -2948,6 +3674,7 @@ function StudioChatWorkbench({
                   selectedProjectId={selectedProjectId}
                   environment={selectedEnvironment}
                   attachments={pendingAttachments}
+                  mentions={promptMentions}
                   onModelChange={handleModelChange}
                   onRuntimeChange={handleRuntimeChange}
                   onEnvironmentChange={setSelectedEnvironment}
@@ -2955,8 +3682,13 @@ function StudioChatWorkbench({
                   onPermissionModeChange={handlePermissionModeChange}
                   onProjectChange={handleProjectChange}
                   onValueChange={setInput}
+                  onMentionsChange={setPromptMentions}
                   onAddFiles={addFiles}
                   onRemoveAttachment={removeAttachment}
+                  modelSelectOpen={modelSelectOpen}
+                  onModelSelectOpenChange={setModelSelectOpen}
+                  reasoningSelectOpen={reasoningSelectOpen}
+                  onReasoningSelectOpenChange={setReasoningSelectOpen}
                   onSubmit={handleSubmit}
                   onStop={handleStop}
                   canSubmit={canSubmit}
@@ -2984,7 +3716,10 @@ function StudioChatWorkbench({
               ) : (
                 <>
                   <ChatComposer
+                    key={`composer:${sessionId || "new"}`}
+                    sessionId={sessionId}
                     value={input}
+                    userMessageHistory={userMessageHistory}
                     model={selectedModel}
                     modelOptions={modelOptions}
                     runtimeId={resolvedRuntimeId}
@@ -2995,6 +3730,7 @@ function StudioChatWorkbench({
                     selectedProjectId={selectedProjectId}
                     environment={selectedEnvironment}
                     attachments={pendingAttachments}
+                    mentions={promptMentions}
                     onModelChange={handleModelChange}
                     onRuntimeChange={handleRuntimeChange}
                     onEnvironmentChange={setSelectedEnvironment}
@@ -3002,8 +3738,13 @@ function StudioChatWorkbench({
                     onPermissionModeChange={handlePermissionModeChange}
                     onProjectChange={handleProjectChange}
                     onValueChange={setInput}
+                    onMentionsChange={setPromptMentions}
                     onAddFiles={addFiles}
                     onRemoveAttachment={removeAttachment}
+                    modelSelectOpen={modelSelectOpen}
+                    onModelSelectOpenChange={setModelSelectOpen}
+                    reasoningSelectOpen={reasoningSelectOpen}
+                    onReasoningSelectOpenChange={setReasoningSelectOpen}
                     onSubmit={handleSubmit}
                     onStop={handleStop}
                     canSubmit={canSubmit}
@@ -3040,6 +3781,54 @@ function StudioChatWorkbench({
   )
 }
 
+function StudioOutputsCard({ files }: { files: StudioOutputFile[] }) {
+  const { t } = useI18n()
+  const visibleFiles = files.slice(0, 8)
+  const overflowCount = Math.max(0, files.length - visibleFiles.length)
+
+  if (files.length === 0) {
+    return null
+  }
+
+  function handleOpenPath(path: string) {
+    if (window.astraflowDesktop?.sidePanelShowItem) {
+      void window.astraflowDesktop.sidePanelShowItem(path)
+      return
+    }
+
+    void navigator.clipboard.writeText(path)
+    toast.success(t.studioOutputPathCopied)
+  }
+
+  return (
+    <div className="pointer-events-auto absolute top-4 right-8 z-20 w-64 max-w-[calc(100%-4rem)] rounded-2xl border bg-popover p-3 text-popover-foreground shadow-xl shadow-foreground/10">
+      <div className="mb-2 flex items-center gap-2">
+        <FileText aria-hidden className="size-3.5 text-muted-foreground" />
+        <h2 className="text-xs font-semibold">{t.studioOutputsTitle}</h2>
+      </div>
+      <div className="flex flex-col gap-1">
+        {visibleFiles.map((file) => (
+          <button
+            key={file.path}
+            type="button"
+            title={file.path}
+            className="flex h-7 min-w-0 items-center gap-2 rounded-lg px-2 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+            onClick={() => handleOpenPath(file.path)}
+          >
+            <RiFileTextLine aria-hidden className="size-3.5 shrink-0" />
+            <span className="min-w-0 flex-1 truncate">{file.name}</span>
+          </button>
+        ))}
+      </div>
+      {overflowCount > 0 ? (
+        <div className="mt-1 px-2 text-xs text-muted-foreground">
+          {t.studioOutputsOverflow(overflowCount)}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function getStudioRightPanelCopy(locale: string) {
   if (locale === "zh") {
     return {
@@ -3056,7 +3845,8 @@ function getStudioRightPanelCopy(locale: string) {
       browserStartDescription: "输入 URL 以打开页面",
       browserTitle: "浏览器",
       browsingData: "浏览数据",
-      browsingDataHelp: "清除应用内浏览器中的历史记录、网站数据、缓存和下载历史记录",
+      browsingDataHelp:
+        "清除应用内浏览器中的历史记录、网站数据、缓存和下载历史记录",
       clearAllBrowsingData: "清除所有浏览数据",
       clearBrowsingData: "Clear browsing data",
       desktopUnavailable: "仅桌面应用可用",
@@ -3076,7 +3866,8 @@ function getStudioRightPanelCopy(locale: string) {
       open: "打开",
       permissions: "权限",
       permissionsHelp: "选择是否让 AstraFlow 在打开网站前先请求批准。",
-      screenshotHelp: "截图可帮助 AstraFlow 更好地理解并处理评论，但会增加套餐用量",
+      screenshotHelp:
+        "截图可帮助 AstraFlow 更好地理解并处理评论，但会增加套餐用量",
       screenshotMode: "批注截图",
       settingsDescription:
         "管理 AstraFlow 的浏览器。可在计算机使用设置中设置 Google Chrome",
@@ -3180,7 +3971,9 @@ function StudioRightPanel({
   >([])
   const [activeWorkspaceTabId, setActiveWorkspaceTabId] = React.useState("")
   const [nextTerminalSequence, setNextTerminalSequence] = React.useState(1)
-  const suppressAutoOpenModeRef = React.useRef<StudioRightPanelMode | null>(null)
+  const suppressAutoOpenModeRef = React.useRef<StudioRightPanelMode | null>(
+    null
+  )
   const activeWorkspaceTab =
     workspaceTabs.find((tab) => tab.id === activeWorkspaceTabId) ??
     workspaceTabs[0] ??
@@ -3248,7 +4041,8 @@ function StudioRightPanel({
         const existingFileTab = workspaceTabs.find(
           (tab): tab is StudioWorkspaceFileTab => tab.kind === "files"
         )
-        const nextTab = existingFileTab ?? createWorkspaceFileTab(null, copy.files)
+        const nextTab =
+          existingFileTab ?? createWorkspaceFileTab(null, copy.files)
 
         if (!existingFileTab) {
           setWorkspaceTabs((current) => [...current, nextTab])
@@ -3321,7 +4115,10 @@ function StudioRightPanel({
   )
 
   const handleUpdateWorkspaceTab = React.useCallback(
-    (tabId: string, updater: (tab: StudioWorkspaceTab) => StudioWorkspaceTab) => {
+    (
+      tabId: string,
+      updater: (tab: StudioWorkspaceTab) => StudioWorkspaceTab
+    ) => {
       setWorkspaceTabs((current) =>
         current.map((tab) => (tab.id === tabId ? updater(tab) : tab))
       )
@@ -3344,12 +4141,16 @@ function StudioRightPanel({
           : (nextTabs.find((tab) => tab.id === activeWorkspaceTabId) ?? null)
 
       if (!nextActiveTab) {
-        suppressAutoOpenModeRef.current = getWorkspaceTabMode(workspaceTabs[closingIndex])
+        suppressAutoOpenModeRef.current = getWorkspaceTabMode(
+          workspaceTabs[closingIndex]
+        )
       }
 
       setWorkspaceTabs(nextTabs)
       setActiveWorkspaceTabId(nextActiveTab?.id ?? "")
-      onModeChange(nextActiveTab ? getWorkspaceTabMode(nextActiveTab) : "launcher")
+      onModeChange(
+        nextActiveTab ? getWorkspaceTabMode(nextActiveTab) : "launcher"
+      )
     },
     [activeWorkspaceTabId, onModeChange, workspaceTabs]
   )
@@ -3382,7 +4183,10 @@ function StudioRightPanel({
       return
     }
 
-    if (activeWorkspaceTab && getWorkspaceTabMode(activeWorkspaceTab) === mode) {
+    if (
+      activeWorkspaceTab &&
+      getWorkspaceTabMode(activeWorkspaceTab) === mode
+    ) {
       return
     }
 
@@ -3546,6 +4350,7 @@ function StudioRightPanel({
                       : ""
                   }
                   copy={copy}
+                  defaultDirectory={project?.path ?? null}
                   fileTabs={fileTabs}
                   onOpenFile={handleOpenFileTab}
                 />
@@ -3610,8 +4415,7 @@ function StudioRightPanel({
                         const title =
                           tab.cwd === null
                             ? formatTerminalTabTitle(
-                                getPathTail(resolvedCwd) ||
-                                  t.studioTerminalTab,
+                                getPathTail(resolvedCwd) || t.studioTerminalTab,
                                 tab.sequence
                               )
                             : tab.title
@@ -3696,7 +4500,7 @@ function StudioWorkspaceTabStrip({
   return (
     <div className="flex h-12 shrink-0 items-center gap-1.5 border-b px-3 pr-24">
       <div className="flex min-w-0 flex-1 items-center gap-1">
-        <div className="min-w-0 max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="max-w-full min-w-0 [scrollbar-width:none] overflow-x-auto [&::-webkit-scrollbar]:hidden">
           <div className="flex w-max items-center gap-1">
             {tabs.map((tab) => {
               const isSelected = tab.id === activeTabId
@@ -3705,7 +4509,7 @@ function StudioWorkspaceTabStrip({
                 <div
                   key={tab.id}
                   className={cn(
-                    "group flex h-8 min-w-0 max-w-48 items-center rounded-lg text-xs transition-colors",
+                    "group flex h-8 max-w-48 min-w-0 items-center rounded-lg text-xs transition-colors",
                     isSelected
                       ? "bg-muted text-foreground"
                       : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
@@ -3719,12 +4523,14 @@ function StudioWorkspaceTabStrip({
                     onClick={() => onSelectTab(tab.id)}
                   >
                     <StudioWorkspaceTabIcon tab={tab} />
-                    <span className="truncate">{getWorkspaceTabTitle(tab)}</span>
+                    <span className="truncate">
+                      {getWorkspaceTabTitle(tab)}
+                    </span>
                   </button>
                   <button
                     type="button"
                     className={cn(
-                      "mr-1 grid size-5 shrink-0 place-items-center rounded-md text-muted-foreground transition-opacity hover:bg-background/80 hover:text-foreground group-hover:opacity-75 group-focus-within:opacity-75",
+                      "mr-1 grid size-5 shrink-0 place-items-center rounded-md text-muted-foreground transition-opacity group-focus-within:opacity-75 group-hover:opacity-75 hover:bg-background/80 hover:text-foreground",
                       isSelected ? "opacity-70" : "opacity-0"
                     )}
                     aria-label="Close tab"
@@ -3924,11 +4730,13 @@ function StudioRightPanelModeMenu({
 function StudioRightPanelFiles({
   activeFileTabId,
   copy,
+  defaultDirectory,
   fileTabs,
   onOpenFile,
 }: {
   activeFileTabId: string
   copy: StudioRightPanelCopy
+  defaultDirectory: string | null
   fileTabs: StudioWorkspaceFileTab[]
   onOpenFile: (entry: AstraFlowSidePanelDirectoryEntry) => void
 }) {
@@ -3942,6 +4750,8 @@ function StudioRightPanelFiles({
   const [previewLoading, setPreviewLoading] = React.useState(false)
   const [error, setError] = React.useState("")
   const previewRequestRef = React.useRef(0)
+  const defaultDirectoryRef = React.useRef<string | null>(null)
+  const hasAppliedDefaultDirectoryRef = React.useRef(false)
 
   const activeFileTab =
     fileTabs.find((tab) => tab.id === activeFileTabId) ??
@@ -3950,9 +4760,40 @@ function StudioRightPanelFiles({
   const selectedEntry =
     activeFileTab?.entry ??
     (activeFileTab?.entry?.path
-      ? listing?.entries.find((entry) => entry.path === activeFileTab.entry?.path)
+      ? listing?.entries.find(
+          (entry) => entry.path === activeFileTab.entry?.path
+        )
       : null) ??
     null
+
+  React.useEffect(() => {
+    let cancelled = false
+    const projectChanged = defaultDirectoryRef.current !== defaultDirectory
+
+    if (!projectChanged && hasAppliedDefaultDirectoryRef.current) {
+      return
+    }
+
+    defaultDirectoryRef.current = defaultDirectory
+
+    queueMicrotask(() => {
+      if (cancelled) {
+        return
+      }
+
+      if (defaultDirectory) {
+        setDirectory(defaultDirectory)
+        hasAppliedDefaultDirectoryRef.current = true
+      } else if (projectChanged) {
+        setDirectory(null)
+        hasAppliedDefaultDirectoryRef.current = true
+      }
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [defaultDirectory])
 
   const loadPreviewForEntry = React.useCallback(
     async (entry: AstraFlowSidePanelDirectoryEntry) => {
@@ -4060,7 +4901,9 @@ function StudioRightPanelFiles({
       } catch (loadError) {
         if (!disposed) {
           setError(
-            loadError instanceof Error ? loadError.message : copy.desktopUnavailable
+            loadError instanceof Error
+              ? loadError.message
+              : copy.desktopUnavailable
           )
           setListing(null)
           setPreview(null)
@@ -4179,7 +5022,7 @@ function StudioRightPanelFiles({
             <input
               value={query}
               placeholder={copy.filterFiles}
-              className="h-9 w-full rounded-lg border bg-background pr-2.5 pl-8 text-xs outline-none transition-colors focus:border-ring"
+              className="h-9 w-full rounded-lg border bg-background pr-2.5 pl-8 text-xs transition-colors outline-none focus:border-ring"
               onChange={(event) => setQuery(event.target.value)}
             />
           </label>
@@ -4461,10 +5304,7 @@ function StudioSidePanelFileIcon({
 
   if (["csv", "tsv", "xlsx", "xls"].includes(entry.extension)) {
     return (
-      <FileSpreadsheet
-        aria-hidden
-        className="size-4 shrink-0 text-cyan-600"
-      />
+      <FileSpreadsheet aria-hidden className="size-4 shrink-0 text-cyan-600" />
     )
   }
 
@@ -4475,11 +5315,7 @@ function StudioSidePanelFileIcon({
   return <File aria-hidden className="size-4 shrink-0 text-muted-foreground" />
 }
 
-function StudioRightPanelSideChat({
-  copy,
-}: {
-  copy: StudioRightPanelCopy
-}) {
+function StudioRightPanelSideChat({ copy }: { copy: StudioRightPanelCopy }) {
   const [messages, setMessages] = React.useState<StudioSideChatMessage[]>([
     {
       id: "welcome",
@@ -4529,10 +5365,7 @@ function StudioRightPanelSideChat({
         </div>
       </div>
 
-      <form
-        className="shrink-0 border-t p-3"
-        onSubmit={handleSubmit}
-      >
+      <form className="shrink-0 border-t p-3" onSubmit={handleSubmit}>
         <div className="flex items-center gap-2 rounded-xl border bg-background p-1.5">
           <input
             value={draft}
@@ -4563,7 +5396,9 @@ function fetchStudioBrowserTitle(url: string) {
     return existingRequest
   }
 
-  const request = fetch(`/api/studio/browser-title?url=${encodeURIComponent(url)}`)
+  const request = fetch(
+    `/api/studio/browser-title?url=${encodeURIComponent(url)}`
+  )
     .then((response) => (response.ok ? response.json() : null))
     .then((payload: { ok?: boolean; title?: string } | null) => {
       const title = payload?.ok ? payload.title?.trim() || "" : ""
@@ -4600,7 +5435,9 @@ function StudioRightPanelBrowser({
   const activeTabUrl = tab.url
 
   const updateActiveTab = React.useCallback(
-    (updater: (tab: StudioWorkspaceBrowserTab) => StudioWorkspaceBrowserTab) => {
+    (
+      updater: (tab: StudioWorkspaceBrowserTab) => StudioWorkspaceBrowserTab
+    ) => {
       onTabChange(updater)
     },
     [onTabChange]
@@ -4749,7 +5586,10 @@ function StudioRightPanelBrowser({
                 onClick={() => void handleClearData()}
               >
                 <span>{copy.clearBrowsingData}</span>
-                <RiArrowRightSLine aria-hidden className="size-3.5 text-muted-foreground" />
+                <RiArrowRightSLine
+                  aria-hidden
+                  className="size-3.5 text-muted-foreground"
+                />
               </button>
               <div className="my-1 h-px bg-border" />
               <div className="flex h-7 items-center justify-between px-2">
@@ -4766,7 +5606,9 @@ function StudioRightPanelBrowser({
                   <button
                     type="button"
                     className="grid size-6 place-items-center text-muted-foreground hover:text-foreground"
-                    onClick={() => setZoom((value) => Math.min(200, value + 10))}
+                    onClick={() =>
+                      setZoom((value) => Math.min(200, value + 10))
+                    }
                   >
                     +
                   </button>
@@ -4863,7 +5705,7 @@ function StudioRightPanelBrowserSettings({
         <h2 className="text-base font-semibold tracking-normal">
           {copy.browserTitle}
         </h2>
-        <p className="mt-1 text-[11px] leading-4 text-muted-foreground [overflow-wrap:anywhere]">
+        <p className="mt-1 text-[11px] leading-4 [overflow-wrap:anywhere] text-muted-foreground">
           {copy.settingsDescription}
         </p>
 
@@ -4874,7 +5716,7 @@ function StudioRightPanelBrowserSettings({
             </div>
             <div className="min-w-0 flex-1">
               <h3 className="text-[11px] font-semibold">{copy.browser}</h3>
-              <p className="mt-0.5 text-[10px] leading-3.5 text-muted-foreground [overflow-wrap:anywhere]">
+              <p className="mt-0.5 text-[10px] leading-3.5 [overflow-wrap:anywhere] text-muted-foreground">
                 {copy.allowBrowser}
               </p>
             </div>
@@ -4925,10 +5767,8 @@ function StudioRightPanelBrowserSettings({
 
         <div className="mt-5 flex items-center justify-between gap-2">
           <div className="min-w-0">
-            <h3 className="text-xs font-semibold">
-              {copy.websitePermissions}
-            </h3>
-            <p className="mt-0.5 text-[10px] leading-3.5 text-muted-foreground [overflow-wrap:anywhere]">
+            <h3 className="text-xs font-semibold">{copy.websitePermissions}</h3>
+            <p className="mt-0.5 text-[10px] leading-3.5 [overflow-wrap:anywhere] text-muted-foreground">
               {copy.websitePermissionsHelp}
             </p>
           </div>
@@ -4982,7 +5822,7 @@ function StudioBrowserSettingsRow({
         <h4 className="text-[11px] font-semibold [overflow-wrap:anywhere]">
           {title}
         </h4>
-        <p className="mt-0.5 text-[10px] leading-3.5 text-muted-foreground [overflow-wrap:anywhere]">
+        <p className="mt-0.5 text-[10px] leading-3.5 [overflow-wrap:anywhere] text-muted-foreground">
           {description}
         </p>
       </div>
@@ -5034,7 +5874,9 @@ function StudioSideTerminal({
 }
 
 type ChatComposerProps = {
+  sessionId: string
   value: string
+  userMessageHistory: string[]
   model: SupportedChatModel
   modelOptions: AgentModelDefinition[]
   runtimeId: string
@@ -5045,6 +5887,7 @@ type ChatComposerProps = {
   selectedProjectId: string | null
   environment: ChatRunEnvironment
   attachments: PendingAttachment[]
+  mentions: ComposerMention[]
   onModelChange: (model: SupportedChatModel) => void
   onRuntimeChange: (runtimeId: string) => void
   onEnvironmentChange: (environment: ChatRunEnvironment) => void
@@ -5052,12 +5895,359 @@ type ChatComposerProps = {
   onPermissionModeChange: (permissionMode: StudioPermissionMode) => void
   onProjectChange: (projectId: string | null) => void
   onValueChange: (value: string) => void
+  onMentionsChange: (mentions: ComposerMention[]) => void
   onAddFiles: (files: FileList | null) => void
   onRemoveAttachment: (id: string) => void
+  modelSelectOpen: boolean
+  onModelSelectOpenChange: (open: boolean) => void
+  reasoningSelectOpen: boolean
+  onReasoningSelectOpenChange: (open: boolean) => void
   onSubmit: () => void
   onStop: () => void
   canSubmit: boolean
   isBusy: boolean
+}
+
+type BuiltinSlashCommandName = "clear" | "model" | "reasoning"
+
+type SlashCommandToken = {
+  start: number
+  end: number
+  prefix: string
+}
+
+type MentionToken = {
+  start: number
+  end: number
+  prefix: string
+}
+
+const BUILTIN_SLASH_COMMAND_NAMES = new Set<BuiltinSlashCommandName>([
+  "clear",
+  "model",
+  "reasoning",
+])
+
+function isBuiltinSlashCommandName(
+  name: string
+): name is BuiltinSlashCommandName {
+  return BUILTIN_SLASH_COMMAND_NAMES.has(
+    name.toLowerCase() as BuiltinSlashCommandName
+  )
+}
+
+function getBuiltinSlashCommands(
+  t: ReturnType<typeof useI18n>["t"]
+): SlashCommandDescriptor[] {
+  return [
+    {
+      name: "clear",
+      description: t.studioCommandClearDescription,
+      source: "builtin",
+    },
+    {
+      name: "model",
+      description: t.studioCommandModelDescription,
+      source: "builtin",
+    },
+    {
+      name: "reasoning",
+      description: t.studioCommandReasoningDescription,
+      source: "builtin",
+    },
+  ]
+}
+
+function getSlashCommandTokenAtCursor(
+  text: string,
+  cursorPosition: number | null
+): SlashCommandToken | null {
+  if (cursorPosition === null) {
+    return null
+  }
+
+  const cursor = Math.max(0, Math.min(cursorPosition, text.length))
+  let start = cursor
+
+  while (start > 0 && !/\s/.test(text[start - 1])) {
+    start -= 1
+  }
+
+  const tokenBeforeCursor = text.slice(start, cursor)
+
+  if (!/^\/[A-Za-z0-9_:-]*$/.test(tokenBeforeCursor)) {
+    return null
+  }
+
+  let end = cursor
+
+  while (end < text.length && !/\s/.test(text[end])) {
+    end += 1
+  }
+
+  return {
+    start,
+    end,
+    prefix: tokenBeforeCursor.slice(1),
+  }
+}
+
+function getMentionTokenAtCursor(
+  text: string,
+  cursorPosition: number | null
+): MentionToken | null {
+  if (cursorPosition === null) {
+    return null
+  }
+
+  const cursor = Math.max(0, Math.min(cursorPosition, text.length))
+  let start = cursor
+
+  while (start > 0 && !/\s/.test(text[start - 1])) {
+    start -= 1
+  }
+
+  const tokenBeforeCursor = text.slice(start, cursor)
+
+  if (!/^@[^\s]*$/.test(tokenBeforeCursor)) {
+    return null
+  }
+
+  let end = cursor
+
+  while (end < text.length && !/\s/.test(text[end])) {
+    end += 1
+  }
+
+  return {
+    start,
+    end,
+    prefix: tokenBeforeCursor.slice(1),
+  }
+}
+
+function normalizeMentionQuery(rawPrefix: string) {
+  return rawPrefix.trim().replace(/^"/, "")
+}
+
+function formatQuotedMentionValue(value: string) {
+  return `"${value.replace(/(["\\])/g, "\\$1")}"`
+}
+
+function formatFileMentionReference(relativePath: string) {
+  if (!/\s/.test(relativePath)) {
+    return relativePath
+  }
+
+  return formatQuotedMentionValue(relativePath)
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+function formatSessionMentionReference(title: string) {
+  return `session:${formatQuotedMentionValue(title)}`
+}
+
+function getFileMentionTokenPattern(relativePath: string) {
+  const unquoted = escapeRegExp(relativePath)
+  const quoted = escapeRegExp(formatFileMentionReference(relativePath))
+
+  return `@(?:${quoted}|${unquoted})`
+}
+
+function getSessionMentionTokenPattern(title: string) {
+  return `@${escapeRegExp(formatSessionMentionReference(title))}`
+}
+
+function getComposerMentionTokenPattern(mention: ComposerMention) {
+  return mention.kind === "session"
+    ? getSessionMentionTokenPattern(mention.title)
+    : getFileMentionTokenPattern(mention.relativePath)
+}
+
+function textHasComposerMentionToken(text: string, mention: ComposerMention) {
+  return new RegExp(
+    `(^|\\s)${getComposerMentionTokenPattern(mention)}(?=$|\\s)`
+  ).test(text)
+}
+
+function removeComposerMentionTokenFromText(
+  text: string,
+  mention: ComposerMention
+) {
+  return text.replace(
+    new RegExp(`(^|\\s)${getComposerMentionTokenPattern(mention)}(\\s|$)`, "g"),
+    (_match, leading: string) => leading
+  )
+}
+
+function fileCandidateMatchesFilter(
+  file: WorkspaceFileCandidate,
+  rawFilter: string
+) {
+  const filter = normalizeMentionQuery(rawFilter).toLowerCase()
+
+  if (!filter) {
+    return true
+  }
+
+  return [file.name, file.relativePath]
+    .filter(Boolean)
+    .some((value) => value.toLowerCase().includes(filter))
+}
+
+function mergeComposerMention(
+  mentions: ComposerMention[],
+  file: WorkspaceFileCandidate
+) {
+  const nextMention: ComposerFileMention = {
+    kind: file.kind,
+    path: file.path,
+    relativePath: file.relativePath,
+    name: file.name,
+  }
+  const existingIndex = mentions.findIndex(
+    (mention) => mention.kind === file.kind && mention.path === file.path
+  )
+
+  if (existingIndex === -1) {
+    return [...mentions, nextMention]
+  }
+
+  return mentions.map((mention, index) =>
+    index === existingIndex ? nextMention : mention
+  )
+}
+
+function mergeComposerSessionMention(
+  mentions: ComposerMention[],
+  session: StudioSession
+) {
+  const nextMention: ComposerSessionMention = {
+    kind: "session",
+    sessionId: session.id,
+    title: session.title,
+  }
+  const existingIndex = mentions.findIndex(
+    (mention) => mention.kind === "session" && mention.sessionId === session.id
+  )
+
+  if (existingIndex === -1) {
+    return [...mentions, nextMention]
+  }
+
+  return mentions.map((mention, index) =>
+    index === existingIndex ? nextMention : mention
+  )
+}
+
+function sessionCandidateMatchesFilter(
+  session: StudioSession,
+  rawFilter: string
+) {
+  const filter = normalizeMentionQuery(rawFilter).toLowerCase()
+
+  if (!filter) {
+    return true
+  }
+
+  return session.title.toLowerCase().includes(filter)
+}
+
+function formatComposerSessionUpdatedAt(updatedAt: string) {
+  const date = new Date(updatedAt)
+
+  if (Number.isNaN(date.getTime())) {
+    return updatedAt
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date)
+}
+
+function commandMatchesFilter(
+  command: SlashCommandDescriptor,
+  rawFilter: string
+) {
+  const filter = rawFilter.trim().toLowerCase()
+
+  if (!filter) {
+    return true
+  }
+
+  return [command.name, command.description, command.inputHint]
+    .filter((value): value is string => Boolean(value))
+    .some((value) => value.toLowerCase().includes(filter))
+}
+
+function getComposerSkillLabel(skill: InstalledSkill) {
+  return skill.skill.Name || skill.slug
+}
+
+function getComposerSkillDescription(skill: InstalledSkill, locale: string) {
+  return locale === "zh"
+    ? skill.skill.DescZh || skill.skill.Desc
+    : skill.skill.Desc
+}
+
+function skillMatchesSlashFilter(skill: InstalledSkill, rawFilter: string) {
+  const filter = rawFilter.trim().toLowerCase()
+
+  if (!filter) {
+    return true
+  }
+
+  return [skill.slug, skill.skill.Name, skill.skill.Desc, skill.skill.DescZh]
+    .filter((value): value is string => Boolean(value))
+    .some((value) => value.toLowerCase().includes(filter))
+}
+
+function getComposerMcpLabel(server: InstalledMcpServer) {
+  return server.title || server.name
+}
+
+function mcpMatchesSlashFilter(server: InstalledMcpServer, rawFilter: string) {
+  const filter = rawFilter.trim().toLowerCase()
+
+  if (!filter) {
+    return true
+  }
+
+  return [server.id, server.name, server.title, server.description]
+    .filter((value): value is string => Boolean(value))
+    .some((value) => value.toLowerCase().includes(filter))
+}
+
+type SlashComposerMenuEntry =
+  | { kind: "command"; command: SlashCommandDescriptor }
+  | { kind: "skill"; skill: InstalledSkill }
+  | { kind: "mcp"; server: InstalledMcpServer }
+
+function mergeSlashCommands(
+  builtinCommands: SlashCommandDescriptor[],
+  runtimeCommands: SlashCommandDescriptor[]
+) {
+  const seen = new Set<string>()
+  const merged: SlashCommandDescriptor[] = []
+
+  for (const command of [...builtinCommands, ...runtimeCommands]) {
+    const key = command.name.toLowerCase()
+
+    if (seen.has(key)) {
+      continue
+    }
+
+    seen.add(key)
+    merged.push(command)
+  }
+
+  return merged
 }
 
 function OptionInfoTooltip({ description }: { description: string }) {
@@ -5066,7 +6256,7 @@ function OptionInfoTooltip({ description }: { description: string }) {
       <TooltipTrigger asChild>
         <span
           aria-label={description}
-          className="ml-auto mr-4 inline-flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground/65 transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          className="mr-4 ml-auto inline-flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground/65 transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           onClick={(event) => event.stopPropagation()}
           onPointerDown={(event) => {
             event.preventDefault()
@@ -5081,7 +6271,7 @@ function OptionInfoTooltip({ description }: { description: string }) {
         side="right"
         align="center"
         sideOffset={8}
-        className="max-w-56 whitespace-normal text-left leading-5"
+        className="max-w-56 text-left leading-5 whitespace-normal"
       >
         {description}
       </TooltipContent>
@@ -5263,6 +6453,24 @@ function ChatComposerPluginsButton() {
     }
   }, [refreshInstalledSkills])
 
+  React.useEffect(() => {
+    function handleOpenComposerPlugins() {
+      setOpen(true)
+    }
+
+    window.addEventListener(
+      "astraflow:open-composer-plugins",
+      handleOpenComposerPlugins
+    )
+
+    return () => {
+      window.removeEventListener(
+        "astraflow:open-composer-plugins",
+        handleOpenComposerPlugins
+      )
+    }
+  }, [])
+
   return (
     <Dialog
       open={open}
@@ -5321,7 +6529,9 @@ function ChatComposerPluginsButton() {
 }
 
 function ChatComposer({
+  sessionId,
   value,
+  userMessageHistory,
   model,
   modelOptions,
   runtimeId,
@@ -5332,6 +6542,7 @@ function ChatComposer({
   selectedProjectId,
   environment,
   attachments,
+  mentions,
   onModelChange,
   onRuntimeChange,
   onEnvironmentChange,
@@ -5339,20 +6550,184 @@ function ChatComposer({
   onPermissionModeChange,
   onProjectChange,
   onValueChange,
+  onMentionsChange,
   onAddFiles,
   onRemoveAttachment,
+  modelSelectOpen,
+  onModelSelectOpenChange,
+  reasoningSelectOpen,
+  onReasoningSelectOpenChange,
   onSubmit,
   onStop,
   canSubmit,
   isBusy,
 }: ChatComposerProps) {
-  const { t } = useI18n()
+  const { locale, t } = useI18n()
   const [isTextareaFocused, setIsTextareaFocused] = React.useState(false)
   const [composerRef, composerWidth] = useElementWidth<HTMLDivElement>()
   const fileInputRef = React.useRef<HTMLInputElement>(null)
+  const textareaRef = React.useRef<HTMLTextAreaElement | null>(null)
+  const menuAnchorRef = React.useRef<HTMLDivElement | null>(null)
+  const runtimeCommandRequestIdRef = React.useRef(0)
+  const mentionFileRequestIdRef = React.useRef(0)
+  const mentionSessionRequestIdRef = React.useRef(0)
+  const wasBusyRef = React.useRef(isBusy)
+  const historyDraftRef = React.useRef("")
+  const isApplyingHistoryValueRef = React.useRef(false)
+  const [runtimeCommands, setRuntimeCommands] = React.useState<
+    SlashCommandDescriptor[]
+  >([])
+  const [installedSkillsForSlash, setInstalledSkillsForSlash] = React.useState<
+    InstalledSkill[] | null
+  >(null)
+  const [installedMcpForSlash, setInstalledMcpForSlash] = React.useState<
+    InstalledMcpServer[] | null
+  >(null)
+  const [workspaceFiles, setWorkspaceFiles] = React.useState<
+    WorkspaceFileCandidate[]
+  >([])
+  const [mentionSessions, setMentionSessions] = React.useState<StudioSession[]>(
+    []
+  )
+  const [workspaceFilesLoading, setWorkspaceFilesLoading] =
+    React.useState(false)
+  const [mentionSessionsLoading, setMentionSessionsLoading] =
+    React.useState(false)
+  const [cursorPosition, setCursorPosition] = React.useState<number | null>(
+    null
+  )
+  const [selectedCommandIndex, setSelectedCommandIndex] = React.useState(0)
+  const [selectedMentionIndex, setSelectedMentionIndex] = React.useState(0)
+  const [dismissedSlashTokenKey, setDismissedSlashTokenKey] = React.useState<
+    string | null
+  >(null)
+  const [dismissedMentionTokenKey, setDismissedMentionTokenKey] =
+    React.useState<string | null>(null)
+  const [historyIndex, setHistoryIndex] = React.useState<number | null>(null)
+  const activeHistoryIndex = value.length === 0 ? null : historyIndex
   const showCustomCaret = isTextareaFocused && value.length === 0
   const iconOnlyControls =
     composerWidth > 0 && composerWidth < COMPOSER_ICON_ONLY_WIDTH
+  const builtinCommands = React.useMemo(() => getBuiltinSlashCommands(t), [t])
+  const slashCommandToken = React.useMemo(
+    () => getSlashCommandTokenAtCursor(value, cursorPosition),
+    [cursorPosition, value]
+  )
+  const mentionToken = React.useMemo(
+    () => getMentionTokenAtCursor(value, cursorPosition),
+    [cursorPosition, value]
+  )
+  const slashCommandTokenKey = slashCommandToken
+    ? `${slashCommandToken.start}:${slashCommandToken.end}:${value.slice(
+        slashCommandToken.start,
+        slashCommandToken.end
+      )}:${cursorPosition ?? ""}`
+    : null
+  const mentionTokenKey = mentionToken
+    ? `${mentionToken.start}:${mentionToken.end}:${value.slice(
+        mentionToken.start,
+        mentionToken.end
+      )}:${cursorPosition ?? ""}`
+    : null
+  const mentionQuery = mentionToken
+    ? normalizeMentionQuery(mentionToken.prefix)
+    : ""
+  const allSlashCommands = React.useMemo(
+    () => mergeSlashCommands(builtinCommands, sessionId ? runtimeCommands : []),
+    [builtinCommands, runtimeCommands, sessionId]
+  )
+  const filteredSlashCommands = React.useMemo(
+    () =>
+      slashCommandToken
+        ? allSlashCommands.filter((command) =>
+            commandMatchesFilter(command, slashCommandToken.prefix)
+          )
+        : [],
+    [allSlashCommands, slashCommandToken]
+  )
+  const filteredSlashSkills = React.useMemo(
+    () =>
+      slashCommandToken
+        ? (installedSkillsForSlash ?? [])
+            .filter((skill) => skill.enabled)
+            .filter((skill) =>
+              skillMatchesSlashFilter(skill, slashCommandToken.prefix)
+            )
+        : [],
+    [installedSkillsForSlash, slashCommandToken]
+  )
+  const filteredSlashMcpServers = React.useMemo(
+    () =>
+      slashCommandToken
+        ? (installedMcpForSlash ?? [])
+            .filter((server) => server.enabled)
+            .filter((server) =>
+              mcpMatchesSlashFilter(server, slashCommandToken.prefix)
+            )
+        : [],
+    [installedMcpForSlash, slashCommandToken]
+  )
+  const slashMenuEntries = React.useMemo<SlashComposerMenuEntry[]>(
+    () => [
+      ...filteredSlashCommands.map((command) => ({
+        kind: "command" as const,
+        command,
+      })),
+      ...filteredSlashSkills.map((skill) => ({
+        kind: "skill" as const,
+        skill,
+      })),
+      ...filteredSlashMcpServers.map((server) => ({
+        kind: "mcp" as const,
+        server,
+      })),
+    ],
+    [filteredSlashCommands, filteredSlashMcpServers, filteredSlashSkills]
+  )
+  const activeCommandIndex =
+    slashMenuEntries.length > 0
+      ? Math.min(selectedCommandIndex, slashMenuEntries.length - 1)
+      : 0
+  const filteredWorkspaceFiles = React.useMemo(
+    () =>
+      mentionToken && selectedProjectId
+        ? workspaceFiles.filter((file) =>
+            fileCandidateMatchesFilter(file, mentionToken.prefix)
+          )
+        : [],
+    [mentionToken, selectedProjectId, workspaceFiles]
+  )
+  const filteredMentionSessions = React.useMemo(
+    () =>
+      mentionToken
+        ? mentionSessions
+            .filter(
+              (session) =>
+                session.mode === "chat" &&
+                session.id !== sessionId &&
+                sessionCandidateMatchesFilter(session, mentionToken.prefix)
+            )
+            .slice(0, 8)
+        : [],
+    [mentionSessions, mentionToken, sessionId]
+  )
+  const addLocalMentionIndex =
+    filteredWorkspaceFiles.length + filteredMentionSessions.length
+  const mentionMenuItemCount = addLocalMentionIndex + 1
+  const activeMentionIndex =
+    mentionMenuItemCount > 0
+      ? Math.min(selectedMentionIndex, mentionMenuItemCount - 1)
+      : 0
+  const showSlashCommandMenu = Boolean(
+    slashCommandToken && slashCommandTokenKey !== dismissedSlashTokenKey
+  )
+  const showMentionMenu = Boolean(
+    mentionToken && mentionTokenKey !== dismissedMentionTokenKey
+  )
+  const composerMenuPlacement = useComposerPopupPlacement(
+    menuAnchorRef,
+    showSlashCommandMenu || showMentionMenu
+  )
   const reasoningLabelByValue: Record<ChatReasoningEffort, string> = {
     none: t.studioReasoningNone,
     minimal: t.studioReasoningMinimal,
@@ -5363,6 +6738,615 @@ function ChatComposer({
     max: t.studioReasoningMax,
     enabled: t.studioReasoningEnabled,
   }
+
+  const refreshRuntimeCommands = React.useCallback(() => {
+    const requestId = runtimeCommandRequestIdRef.current + 1
+    runtimeCommandRequestIdRef.current = requestId
+
+    if (!sessionId) {
+      return
+    }
+
+    void listSessionSlashCommands(sessionId).then((commands) => {
+      if (runtimeCommandRequestIdRef.current === requestId) {
+        setRuntimeCommands(commands)
+      }
+    })
+  }, [sessionId])
+
+  const syncCursorPosition = React.useCallback(
+    (textarea: HTMLTextAreaElement | null = textareaRef.current) => {
+      setCursorPosition(textarea ? textarea.selectionStart : null)
+    },
+    []
+  )
+
+  const handleComposerValueChange = React.useCallback(
+    (nextValue: string) => {
+      if (isApplyingHistoryValueRef.current) {
+        isApplyingHistoryValueRef.current = false
+      } else if (activeHistoryIndex !== null) {
+        setHistoryIndex(null)
+        historyDraftRef.current = nextValue
+      } else if (nextValue.length === 0) {
+        setHistoryIndex(null)
+        historyDraftRef.current = ""
+      }
+
+      onValueChange(nextValue)
+    },
+    [activeHistoryIndex, onValueChange]
+  )
+
+  const focusTextareaAt = React.useCallback((cursor: number) => {
+    window.setTimeout(() => {
+      const textarea = textareaRef.current
+
+      if (!textarea) {
+        return
+      }
+
+      textarea.focus()
+      textarea.setSelectionRange(cursor, cursor)
+      setCursorPosition(cursor)
+    }, 0)
+  }, [])
+
+  const applyHistoryValue = React.useCallback(
+    (nextValue: string) => {
+      isApplyingHistoryValueRef.current = true
+      handleComposerValueChange(nextValue)
+      focusTextareaAt(nextValue.length)
+    },
+    [focusTextareaAt, handleComposerValueChange]
+  )
+
+  const acceptMentionFile = React.useCallback(
+    (
+      file: WorkspaceFileCandidate,
+      token: MentionToken | null = mentionToken
+    ) => {
+      if (!token) {
+        return
+      }
+
+      const insertion = `@${formatFileMentionReference(file.relativePath)} `
+      const nextValue =
+        value.slice(0, token.start) + insertion + value.slice(token.end)
+      const nextCursor = token.start + insertion.length
+
+      onValueChange(nextValue)
+      onMentionsChange(mergeComposerMention(mentions, file))
+      setDismissedMentionTokenKey(null)
+      setSelectedMentionIndex(0)
+      focusTextareaAt(nextCursor)
+    },
+    [
+      focusTextareaAt,
+      mentionToken,
+      mentions,
+      onMentionsChange,
+      onValueChange,
+      value,
+    ]
+  )
+
+  const acceptMentionSession = React.useCallback(
+    (session: StudioSession, token: MentionToken | null = mentionToken) => {
+      if (!token) {
+        return
+      }
+
+      const insertion = `@${formatSessionMentionReference(session.title)} `
+      const nextValue =
+        value.slice(0, token.start) + insertion + value.slice(token.end)
+      const nextCursor = token.start + insertion.length
+
+      onValueChange(nextValue)
+      onMentionsChange(mergeComposerSessionMention(mentions, session))
+      setDismissedMentionTokenKey(null)
+      setSelectedMentionIndex(0)
+      focusTextareaAt(nextCursor)
+    },
+    [
+      focusTextareaAt,
+      mentionToken,
+      mentions,
+      onMentionsChange,
+      onValueChange,
+      value,
+    ]
+  )
+
+  const acceptAddLocalFile = React.useCallback(
+    (token: MentionToken | null = mentionToken) => {
+      if (token) {
+        const nextValue = value.slice(0, token.start) + value.slice(token.end)
+
+        onValueChange(nextValue)
+        focusTextareaAt(token.start)
+      }
+
+      setDismissedMentionTokenKey(mentionTokenKey)
+      setSelectedMentionIndex(0)
+
+      window.setTimeout(() => {
+        fileInputRef.current?.click()
+      }, 0)
+    },
+    [focusTextareaAt, mentionToken, mentionTokenKey, onValueChange, value]
+  )
+
+  const removeMention = React.useCallback(
+    (mention: ComposerMention) => {
+      onMentionsChange(mentions.filter((current) => current !== mention))
+
+      const nextValue = removeComposerMentionTokenFromText(value, mention)
+
+      if (nextValue !== value) {
+        onValueChange(nextValue)
+      }
+
+      focusTextareaAt(
+        Math.min(nextValue.length, cursorPosition ?? nextValue.length)
+      )
+    },
+    [
+      cursorPosition,
+      focusTextareaAt,
+      mentions,
+      onMentionsChange,
+      onValueChange,
+      value,
+    ]
+  )
+
+  const acceptSlashCommand = React.useCallback(
+    (
+      command: SlashCommandDescriptor,
+      token: SlashCommandToken | null = slashCommandToken
+    ) => {
+      if (!token) {
+        return
+      }
+
+      const insertion = `/${command.name} `
+      const nextValue =
+        value.slice(0, token.start) + insertion + value.slice(token.end)
+      const nextCursor = token.start + insertion.length
+
+      onValueChange(nextValue)
+      setDismissedSlashTokenKey(null)
+      setSelectedCommandIndex(0)
+      focusTextareaAt(nextCursor)
+    },
+    [focusTextareaAt, onValueChange, slashCommandToken, value]
+  )
+
+  const acceptSlashSkill = React.useCallback(
+    (
+      skill: InstalledSkill,
+      token: SlashCommandToken | null = slashCommandToken
+    ) => {
+      if (!token) {
+        return
+      }
+
+      const slug = skill.slug || skill.skill.Name
+
+      if (!slug) {
+        return
+      }
+
+      const insertion = `/${slug} `
+      const nextValue =
+        value.slice(0, token.start) + insertion + value.slice(token.end)
+      const nextCursor = token.start + insertion.length
+
+      onValueChange(nextValue)
+      setDismissedSlashTokenKey(null)
+      setSelectedCommandIndex(0)
+      focusTextareaAt(nextCursor)
+    },
+    [focusTextareaAt, onValueChange, slashCommandToken, value]
+  )
+
+  const acceptSlashMcp = React.useCallback(() => {
+    setDismissedSlashTokenKey(slashCommandTokenKey)
+    setSelectedCommandIndex(0)
+    window.dispatchEvent(new CustomEvent("astraflow:open-composer-plugins"))
+  }, [slashCommandTokenKey])
+
+  const handleComposerMenuKeyDown = React.useCallback(
+    (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (showMentionMenu) {
+        if (event.key === "ArrowDown") {
+          event.preventDefault()
+          setSelectedMentionIndex((current) =>
+            mentionMenuItemCount > 0 ? (current + 1) % mentionMenuItemCount : 0
+          )
+          return
+        }
+
+        if (event.key === "ArrowUp") {
+          event.preventDefault()
+          setSelectedMentionIndex((current) =>
+            mentionMenuItemCount > 0
+              ? (current - 1 + mentionMenuItemCount) % mentionMenuItemCount
+              : 0
+          )
+          return
+        }
+
+        if (event.key === "Enter" || event.key === "Tab") {
+          event.preventDefault()
+
+          const file =
+            activeMentionIndex < filteredWorkspaceFiles.length
+              ? filteredWorkspaceFiles[activeMentionIndex]
+              : null
+          const session =
+            activeMentionIndex >= filteredWorkspaceFiles.length
+              ? filteredMentionSessions[
+                  activeMentionIndex - filteredWorkspaceFiles.length
+                ]
+              : null
+
+          if (file) {
+            acceptMentionFile(file)
+          } else if (session) {
+            acceptMentionSession(session)
+          } else {
+            acceptAddLocalFile()
+          }
+          return
+        }
+
+        if (event.key === "Escape") {
+          event.preventDefault()
+          setDismissedMentionTokenKey(mentionTokenKey)
+        }
+        return
+      }
+
+      if (showSlashCommandMenu && event.key === "ArrowDown") {
+        event.preventDefault()
+        setSelectedCommandIndex((current) =>
+          slashMenuEntries.length > 0
+            ? (Math.min(current, slashMenuEntries.length - 1) + 1) %
+              slashMenuEntries.length
+            : 0
+        )
+        return
+      }
+
+      if (showSlashCommandMenu && event.key === "ArrowUp") {
+        event.preventDefault()
+        setSelectedCommandIndex((current) =>
+          slashMenuEntries.length > 0
+            ? (Math.min(current, slashMenuEntries.length - 1) -
+                1 +
+                slashMenuEntries.length) %
+              slashMenuEntries.length
+            : 0
+        )
+        return
+      }
+
+      if (
+        showSlashCommandMenu &&
+        (event.key === "Enter" || event.key === "Tab")
+      ) {
+        event.preventDefault()
+
+        const entry = slashMenuEntries[activeCommandIndex]
+
+        if (entry?.kind === "command") {
+          acceptSlashCommand(entry.command)
+        } else if (entry?.kind === "skill") {
+          acceptSlashSkill(entry.skill)
+        } else if (entry?.kind === "mcp") {
+          acceptSlashMcp()
+        }
+        return
+      }
+
+      if (showSlashCommandMenu && event.key === "Escape") {
+        event.preventDefault()
+        setDismissedSlashTokenKey(slashCommandTokenKey)
+        return
+      }
+
+      if (event.key !== "Escape" && event.key.length === 1) {
+        if (dismissedSlashTokenKey) {
+          setDismissedSlashTokenKey(null)
+        }
+
+        if (dismissedMentionTokenKey) {
+          setDismissedMentionTokenKey(null)
+        }
+      }
+    },
+    [
+      acceptAddLocalFile,
+      acceptMentionFile,
+      acceptMentionSession,
+      acceptSlashCommand,
+      acceptSlashMcp,
+      acceptSlashSkill,
+      activeCommandIndex,
+      activeMentionIndex,
+      dismissedMentionTokenKey,
+      dismissedSlashTokenKey,
+      filteredMentionSessions,
+      filteredWorkspaceFiles,
+      mentionMenuItemCount,
+      mentionTokenKey,
+      showMentionMenu,
+      showSlashCommandMenu,
+      slashMenuEntries,
+      slashCommandTokenKey,
+    ]
+  )
+
+  const canNavigateHistoryForArrow = React.useCallback(
+    (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (
+        showSlashCommandMenu ||
+        showMentionMenu ||
+        userMessageHistory.length === 0 ||
+        (value.length > 0 && activeHistoryIndex === null)
+      ) {
+        return false
+      }
+
+      const textarea = event.currentTarget
+
+      if (textarea.selectionStart !== textarea.selectionEnd) {
+        return false
+      }
+
+      if (event.key === "ArrowUp") {
+        return !value.slice(0, textarea.selectionStart).includes("\n")
+      }
+
+      if (event.key === "ArrowDown") {
+        return !value.slice(textarea.selectionEnd).includes("\n")
+      }
+
+      return false
+    },
+    [
+      activeHistoryIndex,
+      showMentionMenu,
+      showSlashCommandMenu,
+      userMessageHistory.length,
+      value,
+    ]
+  )
+
+  const handleHistoryNavigationKeyDown = React.useCallback(
+    (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (
+        (event.key !== "ArrowUp" && event.key !== "ArrowDown") ||
+        !canNavigateHistoryForArrow(event)
+      ) {
+        return false
+      }
+
+      if (event.key === "ArrowDown" && activeHistoryIndex === null) {
+        return false
+      }
+
+      event.preventDefault()
+
+      if (event.key === "ArrowUp") {
+        const nextIndex =
+          activeHistoryIndex === null
+            ? userMessageHistory.length - 1
+            : Math.max(0, activeHistoryIndex - 1)
+
+        if (activeHistoryIndex === null) {
+          historyDraftRef.current = value
+        }
+
+        setHistoryIndex(nextIndex)
+        applyHistoryValue(userMessageHistory[nextIndex])
+        return true
+      }
+
+      const currentHistoryIndex = activeHistoryIndex
+
+      if (currentHistoryIndex === null) {
+        return false
+      }
+
+      const nextIndex = currentHistoryIndex + 1
+
+      if (nextIndex >= userMessageHistory.length) {
+        const draft = historyDraftRef.current
+
+        setHistoryIndex(null)
+        applyHistoryValue(draft)
+        return true
+      }
+
+      setHistoryIndex(nextIndex)
+      applyHistoryValue(userMessageHistory[nextIndex])
+      return true
+    },
+    [
+      applyHistoryValue,
+      canNavigateHistoryForArrow,
+      activeHistoryIndex,
+      userMessageHistory,
+      value,
+    ]
+  )
+
+  const handleComposerKeyDown = React.useCallback(
+    (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      handleComposerMenuKeyDown(event)
+
+      if (event.defaultPrevented) {
+        return
+      }
+
+      handleHistoryNavigationKeyDown(event)
+    },
+    [handleComposerMenuKeyDown, handleHistoryNavigationKeyDown]
+  )
+
+  React.useEffect(() => {
+    const requestId = mentionFileRequestIdRef.current + 1
+    mentionFileRequestIdRef.current = requestId
+
+    if (!mentionToken || !selectedProjectId) {
+      const timer = window.setTimeout(() => {
+        if (mentionFileRequestIdRef.current === requestId) {
+          setWorkspaceFiles([])
+          setWorkspaceFilesLoading(false)
+        }
+      }, 0)
+
+      return () => {
+        window.clearTimeout(timer)
+      }
+    }
+
+    const timer = window.setTimeout(() => {
+      setWorkspaceFilesLoading(true)
+
+      void listWorkspaceFilesForComposer({
+        projectId: selectedProjectId,
+        query: mentionQuery,
+        limit: 30,
+      })
+        .then((files) => {
+          if (mentionFileRequestIdRef.current === requestId) {
+            setWorkspaceFiles(files)
+          }
+        })
+        .finally(() => {
+          if (mentionFileRequestIdRef.current === requestId) {
+            setWorkspaceFilesLoading(false)
+          }
+        })
+    }, 150)
+
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [mentionQuery, mentionToken, selectedProjectId])
+
+  React.useEffect(() => {
+    const requestId = mentionSessionRequestIdRef.current + 1
+    mentionSessionRequestIdRef.current = requestId
+
+    if (!showMentionMenu) {
+      const timer = window.setTimeout(() => {
+        if (mentionSessionRequestIdRef.current === requestId) {
+          setMentionSessions([])
+          setMentionSessionsLoading(false)
+        }
+      }, 0)
+
+      return () => {
+        window.clearTimeout(timer)
+      }
+    }
+
+    const timer = window.setTimeout(() => {
+      setMentionSessionsLoading(true)
+
+      void listStudioSessionsForComposer()
+        .then((sessions) => {
+          if (mentionSessionRequestIdRef.current === requestId) {
+            setMentionSessions(sessions)
+          }
+        })
+        .finally(() => {
+          if (mentionSessionRequestIdRef.current === requestId) {
+            setMentionSessionsLoading(false)
+          }
+        })
+    }, 150)
+
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [sessionId, showMentionMenu])
+
+  React.useEffect(() => {
+    if (mentions.length === 0) {
+      return
+    }
+
+    const nextMentions = mentions.filter((mention) =>
+      textHasComposerMentionToken(value, mention)
+    )
+
+    if (nextMentions.length !== mentions.length) {
+      onMentionsChange(nextMentions)
+    }
+  }, [mentions, onMentionsChange, value])
+
+  React.useEffect(() => {
+    refreshRuntimeCommands()
+  }, [refreshRuntimeCommands])
+
+  React.useEffect(() => {
+    if (
+      !showSlashCommandMenu ||
+      (installedSkillsForSlash !== null && installedMcpForSlash !== null)
+    ) {
+      return
+    }
+
+    let cancelled = false
+
+    void Promise.allSettled([
+      installedSkillsForSlash === null
+        ? listInstalledSkillsForComposer()
+        : Promise.resolve(installedSkillsForSlash),
+      installedMcpForSlash === null
+        ? listInstalledMcpForComposer()
+        : Promise.resolve(installedMcpForSlash),
+    ]).then(([skillsResult, mcpResult]) => {
+      if (cancelled) {
+        return
+      }
+
+      if (installedSkillsForSlash === null) {
+        setInstalledSkillsForSlash(
+          skillsResult.status === "fulfilled" ? skillsResult.value : []
+        )
+      }
+
+      if (installedMcpForSlash === null) {
+        setInstalledMcpForSlash(
+          mcpResult.status === "fulfilled" ? mcpResult.value : []
+        )
+      }
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [installedMcpForSlash, installedSkillsForSlash, showSlashCommandMenu])
+
+  React.useEffect(() => {
+    if (wasBusyRef.current && !isBusy) {
+      refreshRuntimeCommands()
+    }
+
+    wasBusyRef.current = isBusy
+  }, [isBusy, refreshRuntimeCommands])
+
+  React.useLayoutEffect(() => {
+    syncCursorPosition()
+  }, [syncCursorPosition, value])
+
   const permissionLabelByValue: Record<StudioPermissionMode, string> = {
     auto: t.studioPermissionAuto,
     ask: t.studioPermissionAsk,
@@ -5474,323 +7458,734 @@ function ChatComposer({
     <div
       ref={composerRef}
       data-tour-id="studio-composer"
-      className="flex w-full flex-col overflow-hidden rounded-[1.875rem] bg-muted/40 p-0.5 shadow-lg shadow-foreground/5"
+      className="relative flex w-full flex-col overflow-visible rounded-[1.875rem] bg-muted/40 p-0.5 shadow-lg shadow-foreground/5"
     >
-      <PromptInput
-        value={value}
-        onValueChange={onValueChange}
-        onSubmit={onSubmit}
-        isLoading={isBusy}
-        className="w-full rounded-[1.625rem] border bg-background/95 px-3.5 py-3 shadow-sm"
-      >
-        {attachments.length > 0 ? (
+      <div ref={menuAnchorRef} className="relative w-full">
+        {showSlashCommandMenu ? (
           <div
-            className="mb-2 flex flex-wrap gap-2 px-1"
-            onClick={(event) => event.stopPropagation()}
+            role="listbox"
+            aria-label={t.studioCommandMenuTitle}
+            className={cn(
+              "absolute inset-x-0.5 z-50 overflow-hidden rounded-2xl border bg-popover text-popover-foreground shadow-xl ring-1 shadow-foreground/10 ring-foreground/5",
+              composerMenuPlacement === "top"
+                ? "bottom-full mb-1"
+                : "top-full mt-1"
+            )}
+            onMouseDown={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+            }}
           >
-            {attachments.map((attachment) => (
-              <div
-                key={attachment.id}
-                className={cn(
-                  "group relative overflow-hidden rounded-2xl border bg-muted",
-                  attachment.type === "image"
-                    ? "size-16"
-                    : "h-16 w-52 max-w-full"
-                )}
-              >
-                {attachment.type === "image" && attachment.dataUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={attachment.dataUrl}
-                    alt={attachment.name}
-                    className="size-full object-cover"
-                  />
-                ) : (
-                  <FileAttachmentChip attachment={attachment} compact />
-                )}
-                <button
-                  type="button"
-                  aria-label={t.studioRemoveAttachment}
-                  className="absolute top-0.5 right-0.5 flex size-5 items-center justify-center rounded-full bg-foreground/70 text-background opacity-0 transition group-hover:opacity-100 [&_svg]:size-3.5"
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    onRemoveAttachment(attachment.id)
-                  }}
-                >
-                  <RiCloseLine aria-hidden />
-                </button>
-              </div>
-            ))}
+            <div className="max-h-64 overflow-y-auto p-1.5">
+              {slashMenuEntries.length > 0 ? (
+                <>
+                  {filteredSlashCommands.map((command, index) => {
+                    const selected = index === activeCommandIndex
+
+                    return (
+                      <button
+                        key={`${command.source}:${command.runtimeId ?? "local"}:${command.name}`}
+                        type="button"
+                        role="option"
+                        aria-selected={selected}
+                        className={cn(
+                          "flex w-full min-w-0 items-baseline gap-2.5 rounded-lg px-3 py-2 text-left transition-colors outline-none",
+                          selected
+                            ? "bg-accent text-accent-foreground"
+                            : "text-popover-foreground hover:bg-accent/60"
+                        )}
+                        onMouseEnter={() => setSelectedCommandIndex(index)}
+                        onMouseDown={(event) => {
+                          event.preventDefault()
+                          event.stopPropagation()
+                          acceptSlashCommand(command)
+                        }}
+                      >
+                        <span className="shrink-0 text-[13px] font-medium capitalize">
+                          {command.name}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-[13px] text-muted-foreground">
+                          {command.description || t.studioCommandNoDescription}
+                          {command.inputHint ? (
+                            <span className="text-muted-foreground/70">
+                              {" "}
+                              {command.inputHint}
+                            </span>
+                          ) : null}
+                        </span>
+                      </button>
+                    )
+                  })}
+
+                  {filteredSlashSkills.length > 0 ? (
+                    <div
+                      className={
+                        filteredSlashCommands.length > 0 ? "mt-1" : undefined
+                      }
+                    >
+                      <div className="px-3 pt-1.5 pb-1 text-[13px] text-muted-foreground">
+                        {t.studioSlashMenuSkills}
+                      </div>
+                      {filteredSlashSkills.map((skill, index) => {
+                        const menuIndex = filteredSlashCommands.length + index
+                        const selected = menuIndex === activeCommandIndex
+                        const description = getComposerSkillDescription(
+                          skill,
+                          locale
+                        )
+
+                        return (
+                          <button
+                            key={skill.slug}
+                            type="button"
+                            role="option"
+                            aria-selected={selected}
+                            className={cn(
+                              "flex w-full min-w-0 items-baseline gap-2.5 rounded-lg px-3 py-2 text-left transition-colors outline-none",
+                              selected
+                                ? "bg-accent text-accent-foreground"
+                                : "text-popover-foreground hover:bg-accent/60"
+                            )}
+                            onMouseEnter={() =>
+                              setSelectedCommandIndex(menuIndex)
+                            }
+                            onMouseDown={(event) => {
+                              event.preventDefault()
+                              event.stopPropagation()
+                              acceptSlashSkill(skill)
+                            }}
+                          >
+                            <span className="shrink-0 text-[13px] font-medium">
+                              {getComposerSkillLabel(skill)}
+                            </span>
+                            {description ? (
+                              <span className="min-w-0 flex-1 truncate text-[13px] text-muted-foreground">
+                                {description}
+                              </span>
+                            ) : (
+                              <span className="min-w-0 flex-1" />
+                            )}
+                            <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+                              /{skill.slug}
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  ) : null}
+
+                  {filteredSlashMcpServers.length > 0 ? (
+                    <div
+                      className={
+                        filteredSlashCommands.length > 0 ||
+                        filteredSlashSkills.length > 0
+                          ? "mt-1"
+                          : undefined
+                      }
+                    >
+                      <div className="px-3 pt-1.5 pb-1 text-[13px] text-muted-foreground">
+                        {t.studioSlashMenuMcp}
+                      </div>
+                      {filteredSlashMcpServers.map((server, index) => {
+                        const menuIndex =
+                          filteredSlashCommands.length +
+                          filteredSlashSkills.length +
+                          index
+                        const selected = menuIndex === activeCommandIndex
+
+                        return (
+                          <button
+                            key={server.id}
+                            type="button"
+                            role="option"
+                            aria-selected={selected}
+                            className={cn(
+                              "flex w-full min-w-0 items-baseline gap-2.5 rounded-lg px-3 py-2 text-left transition-colors outline-none",
+                              selected
+                                ? "bg-accent text-accent-foreground"
+                                : "text-popover-foreground hover:bg-accent/60"
+                            )}
+                            onMouseEnter={() =>
+                              setSelectedCommandIndex(menuIndex)
+                            }
+                            onMouseDown={(event) => {
+                              event.preventDefault()
+                              event.stopPropagation()
+                              acceptSlashMcp()
+                            }}
+                          >
+                            <span className="shrink-0 text-[13px] font-medium">
+                              {getComposerMcpLabel(server)}
+                            </span>
+                            {server.description ? (
+                              <span className="min-w-0 flex-1 truncate text-[13px] text-muted-foreground">
+                                {server.description}
+                              </span>
+                            ) : (
+                              <span className="min-w-0 flex-1" />
+                            )}
+                            <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+                              MCP
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <div className="px-3 py-3 text-[13px] text-muted-foreground">
+                  {t.studioCommandMenuEmpty}
+                </div>
+              )}
+            </div>
           </div>
         ) : null}
 
-        <div className="relative min-w-0 px-1">
-          {showCustomCaret ? (
-            <span
-              aria-hidden
-              className="pointer-events-none absolute top-2 left-1 z-10 h-5 w-px animate-[studio-caret-blink_1.05s_steps(1,end)_infinite] rounded-full bg-foreground"
-            />
+        {showMentionMenu ? (
+          <div
+            role="listbox"
+            aria-label={t.studioMentionMenuTitle}
+            className={cn(
+              "absolute inset-x-0.5 z-50 overflow-hidden rounded-2xl border bg-popover text-popover-foreground shadow-xl ring-1 shadow-foreground/10 ring-foreground/5",
+              composerMenuPlacement === "top"
+                ? "bottom-full mb-1"
+                : "top-full mt-1"
+            )}
+            onMouseDown={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+            }}
+          >
+            <div className="max-h-72 overflow-y-auto p-1.5">
+              <div className="px-3 pt-1.5 pb-1 text-[13px] text-muted-foreground">
+                {t.studioMentionFilesTitle}
+              </div>
+
+              {!selectedProjectId ? (
+                <div className="px-3 py-2.5 text-[13px] text-muted-foreground">
+                  {t.studioMentionProjectRequired}
+                </div>
+              ) : workspaceFilesLoading &&
+                filteredWorkspaceFiles.length === 0 ? (
+                <div className="px-3 py-2.5 text-[13px] text-muted-foreground">
+                  {t.studioMentionFilesLoading}
+                </div>
+              ) : filteredWorkspaceFiles.length > 0 ? (
+                filteredWorkspaceFiles.map((file, index) => {
+                  const selected = index === activeMentionIndex
+                  const MentionIcon = file.kind === "folder" ? Folder : File
+
+                  return (
+                    <button
+                      key={`${file.kind}:${file.path}`}
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      className={cn(
+                        "flex w-full min-w-0 items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors outline-none",
+                        selected
+                          ? "bg-accent text-accent-foreground"
+                          : "text-popover-foreground hover:bg-accent/60"
+                      )}
+                      onMouseEnter={() => setSelectedMentionIndex(index)}
+                      onMouseDown={(event) => {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        acceptMentionFile(file)
+                      }}
+                    >
+                      <MentionIcon
+                        aria-hidden
+                        className="size-4 shrink-0 text-muted-foreground"
+                      />
+                      <span className="shrink-0 text-[13px] font-medium">
+                        {file.name}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-[13px] text-muted-foreground">
+                        {file.relativePath}
+                      </span>
+                    </button>
+                  )
+                })
+              ) : (
+                <div className="px-3 py-2.5 text-[13px] text-muted-foreground">
+                  {t.studioMentionFilesEmpty}
+                </div>
+              )}
+
+              <div className="mt-1 border-t pt-1">
+                <div className="px-3 pt-1.5 pb-1 text-[13px] text-muted-foreground">
+                  {t.studioMentionSessionsTitle}
+                </div>
+
+                {mentionSessionsLoading &&
+                filteredMentionSessions.length === 0 ? (
+                  <div className="px-3 py-2.5 text-[13px] text-muted-foreground">
+                    {t.studioMentionSessionsLoading}
+                  </div>
+                ) : filteredMentionSessions.length > 0 ? (
+                  filteredMentionSessions.map((session, index) => {
+                    const menuIndex = filteredWorkspaceFiles.length + index
+                    const selected = menuIndex === activeMentionIndex
+
+                    return (
+                      <button
+                        key={session.id}
+                        type="button"
+                        role="option"
+                        aria-selected={selected}
+                        className={cn(
+                          "flex w-full min-w-0 items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors outline-none",
+                          selected
+                            ? "bg-accent text-accent-foreground"
+                            : "text-popover-foreground hover:bg-accent/60"
+                        )}
+                        onMouseEnter={() => setSelectedMentionIndex(menuIndex)}
+                        onMouseDown={(event) => {
+                          event.preventDefault()
+                          event.stopPropagation()
+                          acceptMentionSession(session)
+                        }}
+                      >
+                        <MessageSquare
+                          aria-hidden
+                          className="size-4 shrink-0 text-muted-foreground"
+                        />
+                        <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
+                          {session.title}
+                        </span>
+                        <span className="shrink-0 text-[13px] text-muted-foreground">
+                          {formatComposerSessionUpdatedAt(session.updatedAt)}
+                        </span>
+                      </button>
+                    )
+                  })
+                ) : (
+                  <div className="px-3 py-2.5 text-[13px] text-muted-foreground">
+                    {t.studioMentionSessionsEmpty}
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-1 border-t pt-1">
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={activeMentionIndex === addLocalMentionIndex}
+                  className={cn(
+                    "flex w-full min-w-0 items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors outline-none",
+                    activeMentionIndex === addLocalMentionIndex
+                      ? "bg-accent text-accent-foreground"
+                      : "text-popover-foreground hover:bg-accent/60"
+                  )}
+                  onMouseEnter={() =>
+                    setSelectedMentionIndex(addLocalMentionIndex)
+                  }
+                  onMouseDown={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    acceptAddLocalFile()
+                  }}
+                >
+                  <RiAddLine
+                    aria-hidden
+                    className="size-4 shrink-0 text-muted-foreground"
+                  />
+                  <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
+                    {t.studioMentionAddLocalFile}
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        <PromptInput
+          value={value}
+          onValueChange={handleComposerValueChange}
+          onSubmit={onSubmit}
+          isLoading={isBusy}
+          className="w-full rounded-[1.625rem] border bg-background/95 px-3.5 py-3 shadow-sm"
+        >
+          {mentions.length > 0 ? (
+            <div
+              className="mb-2 flex flex-wrap gap-1.5 px-1"
+              onClick={(event) => event.stopPropagation()}
+            >
+              {mentions.map((mention) => (
+                <span
+                  key={
+                    mention.kind === "session"
+                      ? `session:${mention.sessionId}`
+                      : `${mention.kind}:${mention.path}`
+                  }
+                  title={
+                    mention.kind === "session"
+                      ? mention.title
+                      : mention.relativePath
+                  }
+                  className="inline-flex h-7 max-w-full min-w-0 items-center gap-1.5 rounded-full border bg-muted/60 px-2.5 text-xs font-medium text-foreground"
+                >
+                  {mention.kind === "session" ? (
+                    <MessageSquare
+                      aria-hidden
+                      className="size-3.5 shrink-0 text-muted-foreground"
+                    />
+                  ) : mention.kind === "folder" ? (
+                    <Folder
+                      aria-hidden
+                      className="size-3.5 shrink-0 text-muted-foreground"
+                    />
+                  ) : (
+                    <File
+                      aria-hidden
+                      className="size-3.5 shrink-0 text-muted-foreground"
+                    />
+                  )}
+                  <span className="max-w-44 min-w-0 truncate">
+                    {mention.kind === "session" ? mention.title : mention.name}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={t.studioMentionRemove}
+                    className="-mr-1 inline-flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      removeMention(mention)
+                    }}
+                  >
+                    <RiCloseLine aria-hidden className="size-3.5" />
+                  </button>
+                </span>
+              ))}
+            </div>
           ) : null}
 
-          <PromptInputTextarea
-            placeholder={t.studioPromptPlaceholder}
-            onFocus={() => setIsTextareaFocused(true)}
-            onBlur={() => setIsTextareaFocused(false)}
-            onPaste={handlePaste}
-            className={cn(
-              "max-h-40 min-h-9 w-full px-0 py-1.5 text-base text-foreground placeholder:text-muted-foreground md:text-base",
-              showCustomCaret && "caret-transparent"
-            )}
-          />
-        </div>
+          {attachments.length > 0 ? (
+            <div
+              className="mb-2 flex flex-wrap gap-2 px-1"
+              onClick={(event) => event.stopPropagation()}
+            >
+              {attachments.map((attachment) => (
+                <div
+                  key={attachment.id}
+                  className={cn(
+                    "group relative overflow-hidden rounded-2xl border bg-muted",
+                    attachment.type === "image"
+                      ? "size-16"
+                      : "h-16 w-52 max-w-full"
+                  )}
+                >
+                  {attachment.type === "image" && attachment.dataUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={attachment.dataUrl}
+                      alt={attachment.name}
+                      className="size-full object-cover"
+                    />
+                  ) : (
+                    <FileAttachmentChip attachment={attachment} compact />
+                  )}
+                  <button
+                    type="button"
+                    aria-label={t.studioRemoveAttachment}
+                    className="absolute top-0.5 right-0.5 flex size-5 items-center justify-center rounded-full bg-foreground/70 text-background opacity-0 transition group-hover:opacity-100 [&_svg]:size-3.5"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onRemoveAttachment(attachment.id)
+                    }}
+                  >
+                    <RiCloseLine aria-hidden />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
 
-        <div className="mt-2 flex flex-wrap items-center justify-between gap-1.5">
-          <div
-            className="flex shrink-0 items-center gap-1.5"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              className="hidden"
-              onChange={(event) => {
-                onAddFiles(event.target.files)
-                event.target.value = ""
+          <div className="relative min-w-0 px-1">
+            {showCustomCaret ? (
+              <span
+                aria-hidden
+                className="pointer-events-none absolute top-2 left-1 z-10 h-5 w-px animate-[studio-caret-blink_1.05s_steps(1,end)_infinite] rounded-full bg-foreground"
+              />
+            ) : null}
+
+            <PromptInputTextarea
+              textareaRef={textareaRef}
+              placeholder={t.studioPromptPlaceholder}
+              onFocus={(event) => {
+                setIsTextareaFocused(true)
+                syncCursorPosition(event.currentTarget)
               }}
+              onBlur={() => {
+                setIsTextareaFocused(false)
+                setCursorPosition(null)
+              }}
+              onClick={(event) => syncCursorPosition(event.currentTarget)}
+              onKeyDown={handleComposerKeyDown}
+              onKeyUp={(event) => syncCursorPosition(event.currentTarget)}
+              onPaste={handlePaste}
+              onSelect={(event) => syncCursorPosition(event.currentTarget)}
+              className={cn(
+                "max-h-40 min-h-9 w-full px-0 py-1.5 text-base text-foreground placeholder:text-muted-foreground md:text-base",
+                showCustomCaret && "caret-transparent"
+              )}
             />
-            <PromptInputAction tooltip={t.studioAttach}>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                disabled={isBusy}
-                className="size-7 rounded-full p-0 [&_svg]:size-4"
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <RiAddLine aria-hidden />
-              </Button>
-            </PromptInputAction>
-            {showPermissionMode ? (
+          </div>
+
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-1.5">
+            <div
+              className="flex shrink-0 items-center gap-1.5"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(event) => {
+                  onAddFiles(event.target.files)
+                  event.target.value = ""
+                }}
+              />
+              <PromptInputAction tooltip={t.studioAttach}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  disabled={isBusy}
+                  className="size-7 rounded-full p-0 [&_svg]:size-4"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <RiAddLine aria-hidden />
+                </Button>
+              </PromptInputAction>
+              {showPermissionMode ? (
+                <Select
+                  value={permissionMode}
+                  onValueChange={(nextValue) =>
+                    onPermissionModeChange(nextValue as StudioPermissionMode)
+                  }
+                  disabled={isBusy}
+                >
+                  <SelectTrigger
+                    data-tour-id="studio-composer-permission"
+                    size="sm"
+                    className={cn(
+                      "h-7 max-w-40 rounded-full border-transparent bg-transparent px-2 text-xs shadow-none hover:bg-muted/60 sm:max-w-44",
+                      iconOnlyControls &&
+                        "w-7 max-w-7 justify-center gap-0 px-0 [&>svg:last-child]:hidden"
+                    )}
+                    aria-label={t.studioPermissionMode}
+                    title={permissionModeOption.description}
+                  >
+                    <PermissionModeIcon aria-hidden className="size-3.5" />
+                    <span
+                      className={cn("truncate", iconOnlyControls && "sr-only")}
+                    >
+                      {permissionModeOption.label}
+                    </span>
+                  </SelectTrigger>
+                  <SelectContent position="popper" side="top" align="start">
+                    <SelectGroup>
+                      {permissionOptions.map((option) => {
+                        const Icon = option.icon
+
+                        return (
+                          <SelectItem
+                            key={option.value}
+                            value={option.value}
+                            className="pr-10"
+                          >
+                            <SelectOptionRow
+                              description={option.description}
+                              icon={
+                                <Icon
+                                  aria-hidden
+                                  className="size-4 text-muted-foreground"
+                                />
+                              }
+                              label={option.label}
+                            />
+                          </SelectItem>
+                        )
+                      })}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              ) : null}
+              <ChatComposerPluginsButton />
+            </div>
+
+            <PromptInputActions
+              className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1.5"
+              onClick={(event) => event.stopPropagation()}
+            >
               <Select
-                value={permissionMode}
-                onValueChange={(nextValue) =>
-                  onPermissionModeChange(nextValue as StudioPermissionMode)
-                }
+                value={runtimeId}
+                onValueChange={onRuntimeChange}
                 disabled={isBusy}
               >
                 <SelectTrigger
-                  data-tour-id="studio-composer-permission"
+                  data-tour-id="studio-composer-runtime"
                   size="sm"
                   className={cn(
-                    "h-7 max-w-40 rounded-full border-transparent bg-transparent px-2 text-xs shadow-none hover:bg-muted/60 sm:max-w-44",
+                    "h-7 max-w-40 rounded-full bg-background px-2.5 text-xs sm:max-w-48",
                     iconOnlyControls &&
                       "w-7 max-w-7 justify-center gap-0 px-0 [&>svg:last-child]:hidden"
                   )}
-                  aria-label={t.studioPermissionMode}
-                  title={permissionModeOption.description}
+                  aria-label={t.studioAgentRuntime}
+                  title={runtimeDescription}
                 >
-                  <PermissionModeIcon aria-hidden className="size-3.5" />
+                  <AgentRuntimeIcon
+                    runtimeId={runtimeId}
+                    className="size-3.5"
+                  />
                   <span
-                    className={cn(
-                      "truncate",
-                      iconOnlyControls && "sr-only"
-                    )}
+                    className={cn("truncate", iconOnlyControls && "sr-only")}
                   >
-                    {permissionModeOption.label}
+                    {getChatRuntimeLabel(runtimeId, runtimeInfos)}
                   </span>
                 </SelectTrigger>
-                <SelectContent position="popper" side="top" align="start">
+                <SelectContent position="popper" side="top" align="end">
                   <SelectGroup>
-                    {permissionOptions.map((option) => {
-                      const Icon = option.icon
-
-                      return (
-                        <SelectItem
-                          key={option.value}
-                          value={option.value}
-                          className="pr-10"
-                        >
-                          <SelectOptionRow
-                            description={option.description}
-                            icon={
-                              <Icon
-                                aria-hidden
-                                className="size-4 text-muted-foreground"
-                              />
-                            }
-                            label={option.label}
-                          />
-                        </SelectItem>
-                      )
-                    })}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            ) : null}
-            <ChatComposerPluginsButton />
-          </div>
-
-          <PromptInputActions
-            className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1.5"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <Select
-              value={runtimeId}
-              onValueChange={onRuntimeChange}
-              disabled={isBusy}
-            >
-              <SelectTrigger
-                data-tour-id="studio-composer-runtime"
-                size="sm"
-                className={cn(
-                  "h-7 max-w-40 rounded-full bg-background px-2.5 text-xs sm:max-w-48",
-                  iconOnlyControls &&
-                    "w-7 max-w-7 justify-center gap-0 px-0 [&>svg:last-child]:hidden"
-                )}
-                aria-label={t.studioAgentRuntime}
-                title={runtimeDescription}
-              >
-                <AgentRuntimeIcon runtimeId={runtimeId} className="size-3.5" />
-                <span
-                  className={cn("truncate", iconOnlyControls && "sr-only")}
-                >
-                  {getChatRuntimeLabel(runtimeId, runtimeInfos)}
-                </span>
-              </SelectTrigger>
-              <SelectContent position="popper" side="top" align="end">
-                <SelectGroup>
-                  {runtimeInfos.map((runtime) => (
-                    <SelectItem
-                      key={runtime.id}
-                      value={runtime.id}
-                      textValue={runtime.label}
-                      title={getRuntimeGuideDescription(
-                        runtime.id,
-                        runtime.description,
-                        t
-                      )}
-                      className="pr-10"
-                    >
-                      <SelectOptionRow
-                        description={getRuntimeGuideDescription(
+                    {runtimeInfos.map((runtime) => (
+                      <SelectItem
+                        key={runtime.id}
+                        value={runtime.id}
+                        textValue={runtime.label}
+                        title={getRuntimeGuideDescription(
                           runtime.id,
                           runtime.description,
                           t
                         )}
-                        icon={<AgentRuntimeIcon runtimeId={runtime.id} />}
-                        label={runtime.label}
-                      />
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
+                        className="pr-10"
+                      >
+                        <SelectOptionRow
+                          description={getRuntimeGuideDescription(
+                            runtime.id,
+                            runtime.description,
+                            t
+                          )}
+                          icon={<AgentRuntimeIcon runtimeId={runtime.id} />}
+                          label={runtime.label}
+                        />
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
 
-            <Select
-              value={model}
-              onValueChange={(nextValue) =>
-                onModelChange(nextValue as SupportedChatModel)
-              }
-              disabled={isBusy}
-            >
-              <SelectTrigger
-                data-tour-id="studio-composer-model"
-                size="sm"
-                className="h-7 max-w-36 rounded-full bg-background px-2.5 text-xs sm:max-w-44"
-                aria-label={t.studioChatModel}
-                title={t.studioChatModelDescription}
+              <Select
+                open={modelSelectOpen}
+                onOpenChange={onModelSelectOpenChange}
+                value={model}
+                onValueChange={(nextValue) =>
+                  onModelChange(nextValue as SupportedChatModel)
+                }
+                disabled={isBusy}
               >
-                <span className="truncate">
-                  {getAgentChatModelLabel(model, modelOptions)}
-                </span>
-              </SelectTrigger>
-              <SelectContent position="popper" side="top" align="end">
-                <SelectGroup>
-                  {modelOptions.map((option) => (
-                    <SelectItem
-                      key={option.id}
-                      value={option.id}
-                      className="pr-10"
-                    >
-                      <SelectOptionRow
-                        description={t.studioChatModelDescription}
-                        label={option.label}
-                      />
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
+                <SelectTrigger
+                  data-tour-id="studio-composer-model"
+                  size="sm"
+                  className="h-7 max-w-36 rounded-full bg-background px-2.5 text-xs sm:max-w-44"
+                  aria-label={t.studioChatModel}
+                  title={t.studioChatModelDescription}
+                >
+                  <span className="truncate">
+                    {getAgentChatModelLabel(model, modelOptions)}
+                  </span>
+                </SelectTrigger>
+                <SelectContent position="popper" side="top" align="end">
+                  <SelectGroup>
+                    {modelOptions.map((option) => (
+                      <SelectItem
+                        key={option.id}
+                        value={option.id}
+                        className="pr-10"
+                      >
+                        <SelectOptionRow
+                          description={t.studioChatModelDescription}
+                          label={option.label}
+                        />
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
 
-            <Select
-              value={resolvedReasoningEffort}
-              onValueChange={(nextValue) =>
-                onReasoningEffortChange(nextValue as ChatReasoningEffort)
-              }
-              disabled={isBusy}
-            >
-              <SelectTrigger
-                size="sm"
-                className={cn(
-                  "h-7 rounded-full bg-background px-2.5 text-xs",
-                  iconOnlyControls &&
-                    "w-7 max-w-7 justify-center gap-0 px-0 [&>svg:last-child]:hidden"
+              <Select
+                open={reasoningSelectOpen}
+                onOpenChange={onReasoningSelectOpenChange}
+                value={resolvedReasoningEffort}
+                onValueChange={(nextValue) =>
+                  onReasoningEffortChange(nextValue as ChatReasoningEffort)
+                }
+                disabled={isBusy}
+              >
+                <SelectTrigger
+                  size="sm"
+                  className={cn(
+                    "h-7 rounded-full bg-background px-2.5 text-xs",
+                    iconOnlyControls &&
+                      "w-7 max-w-7 justify-center gap-0 px-0 [&>svg:last-child]:hidden"
+                  )}
+                  aria-label={t.studioReasoningEffort}
+                  title={
+                    reasoningOptions.find(
+                      (option) => option.value === resolvedReasoningEffort
+                    )?.description
+                  }
+                >
+                  <RiBrainLine aria-hidden className="size-3.5" />
+                  <span className={cn(iconOnlyControls && "sr-only")}>
+                    {reasoningEffortLabel}
+                  </span>
+                </SelectTrigger>
+                <SelectContent position="popper" side="top" align="end">
+                  <SelectGroup>
+                    {reasoningOptions.map((option) => (
+                      <SelectItem
+                        key={option.value}
+                        value={option.value}
+                        className="pr-10"
+                      >
+                        <SelectOptionRow
+                          description={option.description}
+                          label={option.label}
+                        />
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+
+              <Button
+                type="button"
+                size="icon-sm"
+                className="size-7 rounded-full bg-foreground p-0 text-background hover:bg-foreground/85 [&_svg]:size-3.5"
+                disabled={!canSubmit && !isBusy}
+                aria-label={isBusy ? t.studioStop : t.studioSend}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  if (isBusy) {
+                    onStop()
+                  } else {
+                    onSubmit()
+                  }
+                }}
+              >
+                {isBusy ? (
+                  <RiStopFill aria-hidden />
+                ) : (
+                  <RiArrowUpLine aria-hidden />
                 )}
-                aria-label={t.studioReasoningEffort}
-                title={
-                  reasoningOptions.find(
-                    (option) => option.value === resolvedReasoningEffort
-                  )?.description
-                }
-              >
-                <RiBrainLine aria-hidden className="size-3.5" />
-                <span className={cn(iconOnlyControls && "sr-only")}>
-                  {reasoningEffortLabel}
-                </span>
-              </SelectTrigger>
-              <SelectContent position="popper" side="top" align="end">
-                <SelectGroup>
-                  {reasoningOptions.map((option) => (
-                    <SelectItem
-                      key={option.value}
-                      value={option.value}
-                      className="pr-10"
-                    >
-                      <SelectOptionRow
-                        description={option.description}
-                        label={option.label}
-                      />
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-
-            <Button
-              type="button"
-              size="icon-sm"
-              className="size-7 rounded-full bg-foreground p-0 text-background hover:bg-foreground/85 [&_svg]:size-3.5"
-              disabled={!canSubmit && !isBusy}
-              aria-label={isBusy ? t.studioStop : t.studioSend}
-              onClick={(event) => {
-                event.stopPropagation()
-                if (isBusy) {
-                  onStop()
-                } else {
-                  onSubmit()
-                }
-              }}
-            >
-              {isBusy ? (
-                <RiStopFill aria-hidden />
-              ) : (
-                <RiArrowUpLine aria-hidden />
-              )}
-            </Button>
-          </PromptInputActions>
-        </div>
-      </PromptInput>
+              </Button>
+            </PromptInputActions>
+          </div>
+        </PromptInput>
+      </div>
 
       <div className="flex w-full min-w-0 items-center gap-1 px-2 py-1.5 text-xs text-muted-foreground">
         <Select
@@ -5956,7 +8351,6 @@ function ChatComposer({
             ) : null}
           </span>
         ) : null}
-
       </div>
     </div>
   )
@@ -6005,12 +8399,7 @@ const ChatMessageBubble = React.memo(function ChatMessageBubble({
     )
   }
 
-  return (
-    <AssistantMessage
-      message={message}
-      onRetry={onRetry}
-    />
-  )
+  return <AssistantMessage message={message} onRetry={onRetry} />
 })
 
 function getStoredChatModelLabel(model: string | null) {

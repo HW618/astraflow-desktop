@@ -67,6 +67,7 @@
   --titlebar-height: 3rem;
   --titlebar-inset-left: 0px;
   --titlebar-toggle-left: calc(var(--titlebar-inset-left) + 0.75rem);
+  --titlebar-buttons-offset: 0px;
   --sidebar-collapsed-resize-left: 6px;
   --sidebar: oklch(0.935 0.003 260);
   --sidebar-foreground: oklch(0.32 0.01 263);
@@ -84,6 +85,9 @@
    lights auto-hide, so the inset collapses and the layout matches the web. */
 html[data-astraflow-platform="darwin"]:not([data-astraflow-fullscreen="true"]) {
   --titlebar-inset-left: 68px;
+  /* Native traffic lights sit at y=18 (see electron/main.cjs
+     trafficLightPosition); nudge the titlebar buttons down to align. */
+  --titlebar-buttons-offset: 4px;
 }
 
 html[data-astraflow-platform="darwin"] [data-electron-drag-header] {
@@ -105,6 +109,10 @@ html[data-astraflow-platform="darwin"]
   -webkit-app-region: no-drag;
 }
 
+html[data-astraflow-platform="darwin"] .no-drag {
+  -webkit-app-region: no-drag;
+}
+
 html[data-astraflow-platform="darwin"] .electron-drag-corner {
   position: fixed;
   top: 0;
@@ -113,6 +121,12 @@ html[data-astraflow-platform="darwin"] .electron-drag-corner {
   height: var(--titlebar-height);
   width: calc(var(--titlebar-inset-left) + 0.75rem + 2rem);
   -webkit-app-region: drag;
+}
+
+html[data-astraflow-desktop="true"][data-astraflow-platform="darwin"] {
+  --sidebar: oklch(0.935 0.003 260 / 0.64);
+  --sidebar-accent: oklch(0.88 0.004 260 / 0.72);
+  --sidebar-border: oklch(0.84 0.005 260 / 0.7);
 }
 
 .electron-collapsed-sidebar-trigger {
@@ -274,6 +288,12 @@ html[data-astraflow-fullscreen="true"] .electron-drag-corner {
   --sidebar-ring: oklch(0.68 0.15 268);
 }
 
+html[data-astraflow-desktop="true"][data-astraflow-platform="darwin"].dark {
+  --sidebar: oklch(0.245 0.006 264 / 0.66);
+  --sidebar-accent: oklch(0.34 0.008 264 / 0.78);
+  --sidebar-border: oklch(1 0 0 / 16%);
+}
+
 @theme inline {
   --font-sans: var(--font-sans);
   --font-heading: var(--font-heading);
@@ -348,4 +368,16 @@ html[data-astraflow-fullscreen="true"] .electron-drag-corner {
     font-size: 90%;
     @apply font-sans;
   } */
+}
+
+html[data-astraflow-desktop="true"][data-astraflow-platform="darwin"],
+html[data-astraflow-desktop="true"][data-astraflow-platform="darwin"] body,
+html[data-astraflow-desktop="true"][data-astraflow-platform="darwin"]
+  [data-slot="sidebar-wrapper"] {
+  background: transparent;
+}
+
+html[data-astraflow-desktop="true"][data-astraflow-platform="darwin"]
+  [data-slot="sidebar-inset"] {
+  background: var(--background);
 }

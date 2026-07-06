@@ -18,6 +18,10 @@ import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises"
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path"
 import { Readable, Writable } from "node:stream"
 
+import type {
+  PromptMention,
+  SlashCommandDescriptor,
+} from "@/lib/agent/composer-types"
 import type { AgentEvent } from "@/lib/agent/events"
 import {
   cancelSessionPermissions,
@@ -285,7 +289,9 @@ export function deriveAcpRuntimeInfoFromInitialize(
           ? capabilities.mcpCapabilities !== null
           : info.capabilities.mcp,
       subagents:
-        typeof subagents === "boolean" ? subagents : info.capabilities.subagents,
+        typeof subagents === "boolean"
+          ? subagents
+          : info.capabilities.subagents,
       skills: typeof skills === "boolean" ? skills : info.capabilities.skills,
     },
   }
@@ -309,9 +315,13 @@ function getSessionKey(
   modelKey: string | null,
   pluginKey: string | null
 ) {
-  return [runtimeId, sessionId, workspace, modelKey ?? "", pluginKey ?? ""].join(
-    ACP_SESSION_KEY_SEPARATOR
-  )
+  return [
+    runtimeId,
+    sessionId,
+    workspace,
+    modelKey ?? "",
+    pluginKey ?? "",
+  ].join(ACP_SESSION_KEY_SEPARATOR)
 }
 
 function isRuntimeSessionKey(
@@ -631,68 +641,39 @@ export function createAcpClientApp({
         })
       }
     })
-    .onRequest(
-      methods.client.session.requestPermission,
-      async ({ params }) => {
-        const permissionRequestId = randomUUID()
-        const options: PermissionOption[] = params.options.map((option) => ({
-          optionId: option.optionId,
-          name: option.name,
-          kind: option.kind,
-          _meta: option._meta ?? null,
-        }))
-        const toolCall = params.toolCall
-        const toolName = toolCall.kind ?? toolCall.title ?? "tool"
-        const input = stringifyPayload(toolCall.rawInput ?? toolCall)
+    .onRequest(methods.client.session.requestPermission, async ({ params }) => {
+      const permissionRequestId = randomUUID()
+      const options: PermissionOption[] = params.options.map((option) => ({
+        optionId: option.optionId,
+        name: option.name,
+        kind: option.kind,
+        _meta: option._meta ?? null,
+      }))
+      const toolCall = params.toolCall
+      const toolName = toolCall.kind ?? toolCall.title ?? "tool"
+      const input = stringifyPayload(toolCall.rawInput ?? toolCall)
 
-        emitEvent?.({
-          type: "permission_request",
-          requestId: permissionRequestId,
-          toolName,
-          input,
-          options,
-          status: "pending",
-          selectedOptionId: null,
-          decisions: [],
-        })
+      emitEvent?.({
+        type: "permission_request",
+        requestId: permissionRequestId,
+        toolName,
+        input,
+        options,
+        status: "pending",
+        selectedOptionId: null,
+        decisions: [],
+      })
 
-        const decision = await requestPermission({
-          sessionId,
-          requestId: permissionRequestId,
-          toolName,
-          inputPreview: input,
-          options,
-          signal: getSignal(),
-        })
+      const decision = await requestPermission({
+        sessionId,
+        requestId: permissionRequestId,
+        toolName,
+        inputPreview: input,
+        options,
+        signal: getSignal(),
+      })
 
-        if ("cancelled" in decision) {
-          emitEvent?.({
-            type: "permission_request",
-            requestId: permissionRequestId,
-            toolName,
-            input,
-            options,
-            status: "resolved",
-            selectedOptionId: null,
-            decisions: ["cancelled"],
-          })
-
-          return {
-            outcome: { outcome: "cancelled" as const },
-          }
-        }
-
-        const option = options.find(
-          (candidate) => candidate.optionId === decision.optionId
-        )
-
-        debugAcp("permission_auto_selected", {
-          debugLabel,
-          optionId: decision.optionId,
-          optionKind: option?.kind,
-          sessionId: params.sessionId,
-        })
-
+      if ("cancelled" in decision) {
         emitEvent?.({
           type: "permission_request",
           requestId: permissionRequestId,
@@ -700,21 +681,47 @@ export function createAcpClientApp({
           input,
           options,
           status: "resolved",
-          selectedOptionId: decision.optionId,
-          decisions: [decision.feedback || option?.name || decision.optionId],
+          selectedOptionId: null,
+          decisions: ["cancelled"],
         })
 
         return {
-          outcome: {
-            outcome: "selected" as const,
-            optionId: decision.optionId,
-            ...(decision.feedback
-              ? { _meta: { astraflowFeedback: decision.feedback } }
-              : {}),
-          },
+          outcome: { outcome: "cancelled" as const },
         }
       }
-    )
+
+      const option = options.find(
+        (candidate) => candidate.optionId === decision.optionId
+      )
+
+      debugAcp("permission_auto_selected", {
+        debugLabel,
+        optionId: decision.optionId,
+        optionKind: option?.kind,
+        sessionId: params.sessionId,
+      })
+
+      emitEvent?.({
+        type: "permission_request",
+        requestId: permissionRequestId,
+        toolName,
+        input,
+        options,
+        status: "resolved",
+        selectedOptionId: decision.optionId,
+        decisions: [decision.feedback || option?.name || decision.optionId],
+      })
+
+      return {
+        outcome: {
+          outcome: "selected" as const,
+          optionId: decision.optionId,
+          ...(decision.feedback
+            ? { _meta: { astraflowFeedback: decision.feedback } }
+            : {}),
+        },
+      }
+    })
 }
 
 export function spawnAcpChild(
@@ -927,6 +934,36 @@ function getLatestUserMessage(messages: BaseMessage[]) {
   return index >= 0 ? { index, message: messages[index] } : null
 }
 
+function getFilePromptMentions(message: BaseMessage) {
+  const mentions = (message as { additional_kwargs?: { mentions?: unknown } })
+    .additional_kwargs?.mentions
+
+  if (!Array.isArray(mentions)) {
+    return []
+  }
+
+  return mentions.filter(
+    (mention): mention is Extract<PromptMention, { kind: "file" | "folder" }> =>
+      typeof mention === "object" &&
+      mention !== null &&
+      (mention.kind === "file" || mention.kind === "folder") &&
+      typeof mention.path === "string" &&
+      mention.path.length > 0 &&
+      typeof mention.name === "string" &&
+      mention.name.length > 0
+  )
+}
+
+function mentionToResourceLinkBlock(
+  mention: Extract<PromptMention, { kind: "file" | "folder" }>
+): ContentBlock {
+  return {
+    type: "resource_link",
+    uri: `file://${mention.path}`,
+    name: mention.name,
+  }
+}
+
 function roleLabelForMessage(message: BaseMessage) {
   const type = getMessageType(message)
 
@@ -988,15 +1025,18 @@ function createPromptBlocks(
   const latestBlocks = blocks.length
     ? blocks
     : [{ type: "text", text: "" } satisfies ContentBlock]
+  const mentionBlocks = getFilePromptMentions(latestUserMessage.message).map(
+    mentionToResourceLinkBlock
+  )
 
   if (!shouldIncludeRecap) {
-    return [...preambleBlocks, ...latestBlocks]
+    return [...preambleBlocks, ...latestBlocks, ...mentionBlocks]
   }
 
   const recap = createConversationRecap(messages, latestUserMessage.index)
 
   if (!recap) {
-    return [...preambleBlocks, ...latestBlocks]
+    return [...preambleBlocks, ...latestBlocks, ...mentionBlocks]
   }
 
   return [
@@ -1006,6 +1046,7 @@ function createPromptBlocks(
       text: `${recap}\n\nLatest user message:`,
     } satisfies ContentBlock,
     ...latestBlocks,
+    ...mentionBlocks,
   ]
 }
 
@@ -1121,27 +1162,57 @@ function planEntriesToEvent(entries: unknown): AgentEvent | null {
 
   return {
     type: "plan_update",
-    todos: entries
-      .flatMap((entry) => {
-        const record = getRecord(entry)
-        const text = typeof record?.content === "string" ? record.content : ""
+    todos: entries.flatMap((entry) => {
+      const record = getRecord(entry)
+      const text = typeof record?.content === "string" ? record.content : ""
 
-        if (!text) {
-          return []
-        }
+      if (!text) {
+        return []
+      }
 
-        const todo: Extract<AgentEvent, { type: "plan_update" }>["todos"][number] =
-          {
-            text,
-            status: normalizePlanStatus(record?.status),
-          }
+      const todo: Extract<
+        AgentEvent,
+        { type: "plan_update" }
+      >["todos"][number] = {
+        text,
+        status: normalizePlanStatus(record?.status),
+      }
 
-        if (typeof record?.priority === "string") {
-          todo.priority = record.priority
-        }
+      if (typeof record?.priority === "string") {
+        todo.priority = record.priority
+      }
 
-        return [todo]
-      }),
+      return [todo]
+    }),
+  }
+}
+
+function availableCommandsToEvent(
+  commands: SessionUpdate & { sessionUpdate: "available_commands_update" }
+): AgentEvent {
+  return {
+    type: "available-commands",
+    commands: commands.availableCommands.flatMap((command) => {
+      const name = command.name.trim().replace(/^\/+/, "")
+
+      if (!name) {
+        return []
+      }
+
+      const descriptor: SlashCommandDescriptor = {
+        name,
+        description: command.description,
+        source: "runtime",
+      }
+
+      const inputHint = command.input?.hint?.trim()
+
+      if (inputHint) {
+        descriptor.inputHint = inputHint
+      }
+
+      return [descriptor]
+    }),
   }
 }
 
@@ -1195,10 +1266,7 @@ function mapAcpSessionUpdate(
 
       state.toolCallIds.add(update.toolCallId)
 
-      return [
-        synthesizeToolCallFromUpdate(update, name),
-        result,
-      ]
+      return [synthesizeToolCallFromUpdate(update, name), result]
     }
 
     if (update.status === "failed") {
@@ -1216,10 +1284,7 @@ function mapAcpSessionUpdate(
 
       state.toolCallIds.add(update.toolCallId)
 
-      return [
-        synthesizeToolCallFromUpdate(update, name),
-        result,
-      ]
+      return [synthesizeToolCallFromUpdate(update, name), result]
     }
 
     if (!hasToolCall && (update.rawInput !== undefined || update.status)) {
@@ -1255,6 +1320,10 @@ function mapAcpSessionUpdate(
     const event = planEntriesToEvent(update.plan.entries)
 
     return event ? [event] : []
+  }
+
+  if (update.sessionUpdate === "available_commands_update") {
+    return [availableCommandsToEvent(update)]
   }
 
   debugAcp("unknown_session_update_ignored", {
