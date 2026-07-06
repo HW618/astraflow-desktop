@@ -18,7 +18,10 @@ const forcedRuntimeDependencies = [
   "node-pty",
   "opencode-ai",
 ]
-const runtimeDependenciesWithRequiredOptionals = new Set(["@openai/codex"])
+const runtimeDependenciesWithRequiredOptionals = new Set([
+  "@anthropic-ai/claude-agent-sdk",
+  "@openai/codex",
+])
 const rootPackageJson = JSON.parse(
   readFileSync(join(root, "package.json"), "utf8")
 )
