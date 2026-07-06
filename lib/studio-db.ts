@@ -83,6 +83,8 @@ type DbSessionRow = {
   chat_reasoning_effort: string | null
   latest_run_usage: string | null
   available_commands?: string | null
+  pinned_at: string | null
+  is_running?: number
   created_at: string
   updated_at: string
 }
@@ -616,6 +618,7 @@ const studioTableColumns = {
     { name: "chat_reasoning_effort", definition: "chat_reasoning_effort TEXT" },
     { name: "latest_run_usage", definition: "latest_run_usage TEXT" },
     { name: "available_commands", definition: "available_commands TEXT" },
+    { name: "pinned_at", definition: "pinned_at TEXT" },
     { name: "created_at", definition: "created_at TEXT NOT NULL DEFAULT ''" },
     { name: "updated_at", definition: "updated_at TEXT NOT NULL DEFAULT ''" },
   ],
@@ -1202,6 +1205,7 @@ function initializeSchema(database: Database.Database) {
       chat_reasoning_effort TEXT,
       latest_run_usage TEXT,
       available_commands TEXT,
+      pinned_at TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -1675,6 +1679,8 @@ function mapSession(row: DbSessionRow): StudioSession {
       row.latest_run_usage,
       null
     ),
+    pinnedAt: row.pinned_at ?? null,
+    isRunning: row.is_running === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -3788,10 +3794,17 @@ export function listStudioSessions() {
           chat_runtime_id,
           chat_reasoning_effort,
           latest_run_usage,
+          pinned_at,
+          EXISTS (
+            SELECT 1
+            FROM studio_messages
+            WHERE studio_messages.session_id = studio_sessions.id
+              AND studio_messages.status = 'streaming'
+          ) AS is_running,
           created_at,
           updated_at
         FROM studio_sessions
-        ORDER BY updated_at DESC
+        ORDER BY pinned_at IS NULL, pinned_at DESC, updated_at DESC
       `
     )
     .all() as DbSessionRow[]
@@ -3813,6 +3826,13 @@ export function getStudioSession(sessionId: string) {
           chat_runtime_id,
           chat_reasoning_effort,
           latest_run_usage,
+          pinned_at,
+          EXISTS (
+            SELECT 1
+            FROM studio_messages
+            WHERE studio_messages.session_id = studio_sessions.id
+              AND studio_messages.status = 'streaming'
+          ) AS is_running,
           created_at,
           updated_at
         FROM studio_sessions
@@ -3874,6 +3894,8 @@ export function createStudioSession({
     chatRuntimeId,
     chatReasoningEffort,
     latestRunUsage: null,
+    pinnedAt: null,
+    isRunning: false,
     createdAt: nowIso(),
     updatedAt: nowIso(),
   }
@@ -3892,6 +3914,7 @@ export function createStudioSession({
             chat_runtime_id,
             chat_reasoning_effort,
             latest_run_usage,
+            pinned_at,
             created_at,
             updated_at
           )
@@ -3906,6 +3929,7 @@ export function createStudioSession({
             @chatRuntimeId,
             @chatReasoningEffort,
             @latestRunUsage,
+            @pinnedAt,
             @createdAt,
             @updatedAt
           )
@@ -3929,6 +3953,25 @@ export function updateStudioSessionTitle(sessionId: string, title: string) {
       `
     )
     .run(normalized, updatedAt, sessionId)
+
+  return getStudioSession(sessionId)
+}
+
+export function updateStudioSessionPinned(
+  sessionId: string,
+  pinned: boolean
+) {
+  const pinnedAt = pinned ? nowIso() : null
+
+  getDb()
+    .prepare(
+      `
+        UPDATE studio_sessions
+        SET pinned_at = ?
+        WHERE id = ?
+      `
+    )
+    .run(pinnedAt, sessionId)
 
   return getStudioSession(sessionId)
 }

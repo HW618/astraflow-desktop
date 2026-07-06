@@ -15,7 +15,10 @@ function SettingsPage({
   ...props
 }: React.ComponentProps<"div">) {
   return (
-    <div className={cn("flex w-full flex-col gap-10", className)} {...props} />
+    <div
+      className={cn("flex w-full max-w-none flex-col gap-10", className)}
+      {...props}
+    />
   )
 }
 

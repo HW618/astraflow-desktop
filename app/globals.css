@@ -85,9 +85,7 @@
    lights auto-hide, so the inset collapses and the layout matches the web. */
 html[data-astraflow-platform="darwin"]:not([data-astraflow-fullscreen="true"]) {
   --titlebar-inset-left: 68px;
-  /* Native traffic lights sit at y=18 (see electron/main.cjs
-     trafficLightPosition); nudge the titlebar buttons down to align. */
-  --titlebar-buttons-offset: 4px;
+  --titlebar-buttons-offset: 0px;
 }
 
 html[data-astraflow-platform="darwin"] [data-electron-drag-header] {
@@ -252,6 +250,19 @@ html[data-astraflow-desktop="true"][data-astraflow-platform="darwin"] {
 
 html[data-astraflow-fullscreen="true"] .electron-drag-corner {
   display: none;
+}
+
+html[data-astraflow-platform="darwin"]:not([data-astraflow-fullscreen="true"])
+  [data-slot="sidebar"][data-state="collapsed"]
+  ~ [data-slot="sidebar-inset"]
+  [data-studio-chat-titlebar] {
+  padding-left: calc(var(--titlebar-inset-left) + 3.5rem);
+}
+
+[data-slot="sidebar"][data-state="collapsed"]
+  ~ [data-slot="sidebar-inset"]
+  [data-studio-chat-titlebar] {
+  padding-left: calc(var(--titlebar-toggle-left) + 3.5rem);
 }
 
 .dark {

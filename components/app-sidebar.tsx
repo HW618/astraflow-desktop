@@ -25,7 +25,7 @@ import {
   RiVideoLine,
 } from "@remixicon/react"
 import type { RemixiconComponentType } from "@remixicon/react"
-import { ChevronRight, Folder, FolderGit2 } from "lucide-react"
+import { ChevronRight, Folder, FolderGit2, Pin } from "lucide-react"
 import { toast } from "sonner"
 
 import { AppInfoButton } from "@/components/app-info-button"
@@ -172,6 +172,28 @@ function getStudioModeHref(mode: StudioMode) {
 
 function getStudioSessionHref(session: StudioSession) {
   return `/studio/${session.mode}/${encodeURIComponent(session.id)}`
+}
+
+function formatSessionRelativeTime(value: string) {
+  const timestamp = new Date(value).getTime()
+
+  if (!Number.isFinite(timestamp)) {
+    return ""
+  }
+
+  const diffMinutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60000))
+
+  if (diffMinutes < 1) return "now"
+  if (diffMinutes < 60) return `${diffMinutes}m`
+
+  const diffHours = Math.floor(diffMinutes / 60)
+  if (diffHours < 24) return `${diffHours}h`
+
+  const diffDays = Math.floor(diffHours / 24)
+  if (diffDays < 7) return `${diffDays}d`
+  if (diffDays < 35) return `${Math.floor(diffDays / 7)}w`
+
+  return `${Math.floor(diffDays / 30)}mo`
 }
 
 function parseActiveStudioRoute(
@@ -360,6 +382,22 @@ async function renameStudioSession(sessionId: string, title: string) {
 
   if (!response.ok) {
     throw new Error("Failed to rename session")
+  }
+}
+
+async function updateStudioSessionPinnedRequest(
+  sessionId: string,
+  pinned: boolean
+) {
+  const response = await fetch(`/api/studio/sessions/${sessionId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pinned }),
+  })
+  throwIfUnauthorized(response)
+
+  if (!response.ok) {
+    throw new Error("Failed to update session pin")
   }
 }
 
@@ -693,6 +731,42 @@ function AppSidebar() {
     }
   }
 
+  async function handleToggleSessionPinned(session: StudioSession) {
+    const pinned = !session.pinnedAt
+
+    setSessions((current) =>
+      current
+        .map((candidate) =>
+          candidate.id === session.id
+            ? {
+                ...candidate,
+                pinnedAt: pinned ? new Date().toISOString() : null,
+              }
+            : candidate
+        )
+        .sort((a, b) => {
+          if (a.pinnedAt && !b.pinnedAt) return -1
+          if (!a.pinnedAt && b.pinnedAt) return 1
+          return (
+            new Date(b.pinnedAt ?? b.updatedAt).getTime() -
+            new Date(a.pinnedAt ?? a.updatedAt).getTime()
+          )
+        })
+    )
+
+    try {
+      await updateStudioSessionPinnedRequest(session.id, pinned)
+      await reloadSessions()
+      dispatchStudioSessionsChanged()
+    } catch (error) {
+      if (isLoginRequiredError(error)) {
+        redirectToLogin()
+      } else {
+        await reloadSessions()
+      }
+    }
+  }
+
   function toggleProject(projectId: string) {
     setExpandedProjectIds((current) => {
       const next = new Set(current)
@@ -740,12 +814,63 @@ function AppSidebar() {
       .slice(0, 5)
   }
 
+  function renderSessionContent(session: StudioSession) {
+    const Icon =
+      studioModeDefinitions.find((mode) => mode.id === session.mode)?.icon ??
+      RiChat3Line
+
+    return (
+      <>
+        {session.isRunning ? (
+          <RiLoader4Line className="animate-spin" aria-hidden />
+        ) : (
+          <Icon aria-hidden />
+        )}
+        <span className="min-w-0 flex-1 truncate">{session.title}</span>
+      </>
+    )
+  }
+
+  function renderSessionTime(session: StudioSession) {
+    return (
+      <span className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-xs font-normal text-sidebar-foreground/50 transition-opacity group-hover/menu-item:opacity-0">
+        {formatSessionRelativeTime(session.updatedAt)}
+      </span>
+    )
+  }
+
+  function renderSessionPinAction(session: StudioSession) {
+    return (
+      <SidebarMenuAction
+        type="button"
+        aria-label={session.pinnedAt ? t.studioSessionUnpin : t.studioSessionPin}
+        title={session.pinnedAt ? t.studioSessionUnpin : t.studioSessionPin}
+        className={cn(
+          "top-1/2! right-8! -translate-y-1/2 rounded-lg",
+          session.pinnedAt && "text-sidebar-accent-foreground"
+        )}
+        showOnHover
+        onClick={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          void handleToggleSessionPinned(session)
+        }}
+      >
+        <Pin
+          aria-hidden
+          className={cn(session.pinnedAt && "fill-current")}
+        />
+      </SidebarMenuAction>
+    )
+  }
+
   function renderSessionActions(session: StudioSession) {
     return (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <SidebarMenuAction
             aria-label={t.studioSessionActions}
+            className="top-1/2! right-2! -translate-y-1/2 rounded-lg"
             showOnHover
             onClick={(event) => event.stopPropagation()}
           >
@@ -1122,13 +1247,14 @@ function AppSidebar() {
                                     isActive={
                                       activeStudio.sessionId === session.id
                                     }
-                                    className="pr-8"
+                                    className="pr-14"
                                   >
                                     <Link href={getStudioSessionHref(session)}>
-                                      <RiChat3Line aria-hidden />
-                                      <span>{session.title}</span>
+                                      {renderSessionContent(session)}
                                     </Link>
                                   </SidebarMenuSubButton>
+                                  {renderSessionTime(session)}
+                                  {renderSessionPinAction(session)}
                                   {renderSessionActions(session)}
                                 </SidebarMenuSubItem>
                               ))
@@ -1166,25 +1292,22 @@ function AppSidebar() {
                 <SidebarMenu>
                   {unboundSessions.map((session) => {
                     const isActive = activeStudio.sessionId === session.id
-                    const Icon =
-                      studioModeDefinitions.find(
-                        (mode) => mode.id === session.mode
-                      )?.icon ?? RiChat3Line
 
                     return (
                       <SidebarMenuItem key={session.id}>
                         <SidebarMenuButton
                           asChild
                           isActive={isActive}
-                          className="h-8"
+                          className="h-8 pr-14"
                           tooltip={session.title}
                         >
                           <Link href={getStudioSessionHref(session)}>
-                            <Icon aria-hidden />
-                            <span>{session.title}</span>
+                            {renderSessionContent(session)}
                           </Link>
                         </SidebarMenuButton>
 
+                        {renderSessionTime(session)}
+                        {renderSessionPinAction(session)}
                         {renderSessionActions(session)}
                       </SidebarMenuItem>
                     )

@@ -207,6 +207,8 @@ export type StudioSession = {
   chatRuntimeId: string | null
   chatReasoningEffort: string | null
   latestRunUsage: StudioTokenUsage | null
+  pinnedAt: string | null
+  isRunning: boolean
   createdAt: string
   updatedAt: string
 }

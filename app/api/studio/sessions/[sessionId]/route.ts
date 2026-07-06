@@ -9,6 +9,7 @@ import {
   getStudioSession,
   updateStudioSessionChatPreferences,
   updateStudioSessionPermissionMode,
+  updateStudioSessionPinned,
   updateStudioSessionProject,
   updateStudioSessionTitle,
 } from "@/lib/studio-db"
@@ -27,6 +28,7 @@ const updateSessionSchema = z
       .enum(SUPPORTED_CHAT_REASONING_EFFORTS)
       .nullable()
       .optional(),
+    pinned: z.boolean().optional(),
   })
   .refine(
     (value) =>
@@ -35,7 +37,8 @@ const updateSessionSchema = z
       value.permissionMode !== undefined ||
       value.chatModel !== undefined ||
       value.chatRuntimeId !== undefined ||
-      value.chatReasoningEffort !== undefined
+      value.chatReasoningEffort !== undefined ||
+      value.pinned !== undefined
   )
 
 type RouteContext = {
@@ -78,6 +81,10 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   if (parsed.data.title !== undefined) {
     session = updateStudioSessionTitle(sessionId, parsed.data.title)
+  }
+
+  if (parsed.data.pinned !== undefined) {
+    session = updateStudioSessionPinned(sessionId, parsed.data.pinned)
   }
 
   if (parsed.data.projectId !== undefined) {

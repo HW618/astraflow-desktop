@@ -27,16 +27,13 @@ function Titlebar({
         className
       )}
     >
-      {showSidebarToggle ? (
-        <div
-          data-tour-id="studio-sidebar-toggle"
-          className="absolute top-[calc(50%+var(--titlebar-buttons-offset))] left-(--titlebar-toggle-left) shrink-0 -translate-y-1/2"
-        >
-          <SidebarToggleButton />
-        </div>
-      ) : null}
-      {children ? (
-        <div className="absolute top-[calc(50%+var(--titlebar-buttons-offset))] right-3 flex -translate-y-1/2 items-center gap-2">
+      {showSidebarToggle || children ? (
+        <div className="absolute top-[calc(50%+var(--titlebar-buttons-offset))] left-(--titlebar-toggle-left) flex -translate-y-1/2 items-center gap-2">
+          {showSidebarToggle ? (
+            <div data-tour-id="studio-sidebar-toggle" className="shrink-0">
+              <SidebarToggleButton />
+            </div>
+          ) : null}
           {children}
         </div>
       ) : null}

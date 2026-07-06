@@ -14,6 +14,7 @@ import {
   RiFileCopyLine,
   RiFileTextLine,
   RiInformationLine,
+  RiLoader4Line,
   RiRefreshLine,
   RiSearchLine,
   RiStopFill,
@@ -28,6 +29,7 @@ import {
   FileSpreadsheet,
   Folder,
   FolderGit2,
+  FolderPlus,
   GitBranch,
   Globe,
   Hand,
@@ -80,6 +82,7 @@ import { CodeBlock, CodeBlockCode } from "@/components/prompt-kit/code-block"
 import { Markdown } from "@/components/prompt-kit/markdown"
 import { Shimmer } from "@/components/ai-elements/shimmer"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import {
   Tooltip,
   TooltipContent,
@@ -147,6 +150,7 @@ import type {
   StudioUserInputAnswer,
 } from "@/lib/studio-types"
 import {
+  dispatchStudioLocalProjectsChanged,
   dispatchStudioSessionsChanged,
   STUDIO_LOCAL_PROJECTS_CHANGED_EVENT,
   STUDIO_SESSIONS_CHANGED_EVENT,
@@ -1567,6 +1571,16 @@ async function listLocalProjectsForComposer() {
   return readJson<StudioLocalProjectWithGitInfo[]>(response)
 }
 
+async function createLocalProjectForComposer(path: string) {
+  const response = await fetch("/api/studio/local-projects", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  })
+
+  return readJson<StudioLocalProjectWithGitInfo>(response)
+}
+
 async function listStudioSessionsForComposer() {
   const response = await fetch("/api/studio/sessions", { cache: "no-store" })
 
@@ -2271,6 +2285,8 @@ function StudioChatWorkbench({
   const [localProjects, setLocalProjects] = React.useState<
     StudioLocalProjectWithGitInfo[]
   >([])
+  const [isAddingLocalProject, setIsAddingLocalProject] =
+    React.useState(false)
   const [selectedProjectId, setSelectedProjectId] = React.useState<
     string | null
   >(null)
@@ -2496,9 +2512,12 @@ function StudioChatWorkbench({
       )
 
       applyChatSelection(nextPreferences)
-      commitChatDefaults(nextPreferences)
 
-      if (sessionId) {
+      if (!sessionId) {
+        commitChatDefaults(nextPreferences)
+        return
+      }
+
       const nextSessionPreferences = {
         chatModel: nextPreferences.model,
         chatRuntimeId: nextPreferences.runtimeId,
@@ -2511,13 +2530,12 @@ function StudioChatWorkbench({
         nextSessionPreferences.chatReasoningEffort,
       ].join(":")
 
-      if (normalizedPreferenceSaveKeyRef.current === saveKey) {
-        return
-      }
+      setSessionChatPreferences(nextSessionPreferences)
 
-      normalizedPreferenceSaveKeyRef.current = saveKey
-      saveChatPreferences(sessionId, nextSessionPreferences)
-    }
+      if (normalizedPreferenceSaveKeyRef.current !== saveKey) {
+        normalizedPreferenceSaveKeyRef.current = saveKey
+        saveChatPreferences(sessionId, nextSessionPreferences)
+      }
     },
     [
       agentModelSettings,
@@ -2544,18 +2562,20 @@ function StudioChatWorkbench({
       )
 
       applyChatSelection(nextPreferences)
-      commitChatDefaults(nextPreferences)
 
-      if (sessionId) {
-        const nextSessionPreferences = {
-          chatModel: nextPreferences.model,
-          chatRuntimeId: nextPreferences.runtimeId,
-          chatReasoningEffort: nextPreferences.reasoningEffort,
-        }
-
-        setSessionChatPreferences(nextSessionPreferences)
-        saveChatPreferences(sessionId, nextSessionPreferences)
+      if (!sessionId) {
+        commitChatDefaults(nextPreferences)
+        return
       }
+
+      const nextSessionPreferences = {
+        chatModel: nextPreferences.model,
+        chatRuntimeId: nextPreferences.runtimeId,
+        chatReasoningEffort: nextPreferences.reasoningEffort,
+      }
+
+      setSessionChatPreferences(nextSessionPreferences)
+      saveChatPreferences(sessionId, nextSessionPreferences)
     },
     [
       agentModelSettings,
@@ -2581,18 +2601,20 @@ function StudioChatWorkbench({
       )
 
       applyChatSelection(nextPreferences)
-      commitChatDefaults(nextPreferences)
 
-      if (sessionId) {
-        const nextSessionPreferences = {
-          chatModel: nextPreferences.model,
-          chatRuntimeId: nextPreferences.runtimeId,
-          chatReasoningEffort: nextPreferences.reasoningEffort,
-        }
-
-        setSessionChatPreferences(nextSessionPreferences)
-        saveChatPreferences(sessionId, nextSessionPreferences)
+      if (!sessionId) {
+        commitChatDefaults(nextPreferences)
+        return
       }
+
+      const nextSessionPreferences = {
+        chatModel: nextPreferences.model,
+        chatRuntimeId: nextPreferences.runtimeId,
+        chatReasoningEffort: nextPreferences.reasoningEffort,
+      }
+
+      setSessionChatPreferences(nextSessionPreferences)
+      saveChatPreferences(sessionId, nextSessionPreferences)
     },
     [
       agentModelSettings,
@@ -2767,6 +2789,37 @@ function StudioChatWorkbench({
       setLocalProjects([])
     }
   }, [])
+
+  const handleAddLocalProject = React.useCallback(async () => {
+    if (!window.astraflowDesktop?.pickFolder || isAddingLocalProject) {
+      return
+    }
+
+    try {
+      setIsAddingLocalProject(true)
+      const path = await window.astraflowDesktop.pickFolder()
+
+      if (!path) {
+        return
+      }
+
+      const project = await createLocalProjectForComposer(path)
+      await reloadLocalProjects()
+      dispatchStudioLocalProjectsChanged()
+      setSelectedProjectId(project.id)
+      setPendingProjectId(project.id)
+      toast.success(t.studioLocalProjectCreated)
+    } catch {
+      toast.error(t.studioLocalProjectCreateFailed)
+    } finally {
+      setIsAddingLocalProject(false)
+    }
+  }, [
+    isAddingLocalProject,
+    reloadLocalProjects,
+    t.studioLocalProjectCreateFailed,
+    t.studioLocalProjectCreated,
+  ])
 
   const reloadSessionProject = React.useCallback(async () => {
     const requestId = sessionProjectRequestIdRef.current + 1
@@ -3591,6 +3644,7 @@ function StudioChatWorkbench({
       >
         <div
           data-electron-drag-header
+          data-studio-chat-titlebar
           className="flex h-(--titlebar-height) shrink-0 items-center gap-3 px-4"
         >
           <div
@@ -3690,7 +3744,14 @@ function StudioChatWorkbench({
           <StudioOutputsCard files={outputFiles} />
           {hasMessages ? (
             <ChatContainerRoot className="h-full min-h-0">
-              <ChatContainerContent className="mx-auto flex min-h-full w-full max-w-5xl gap-6 px-8 py-10">
+              <ChatContainerContent
+                className={cn(
+                  "flex min-h-full w-full gap-6 px-8 py-10",
+                  outputFiles.length > 0
+                    ? "mr-auto ml-0 max-w-[calc(100%-22rem)]"
+                    : "mx-auto max-w-5xl"
+                )}
+              >
                 {visibleMessages.map((message) => (
                   <ChatMessageBubble
                     key={message.id}
@@ -3751,6 +3812,7 @@ function StudioChatWorkbench({
                   selectedProjectId={selectedProjectId}
                   environment={selectedEnvironment}
                   contextUsage={latestRunUsage}
+                  isAddingProject={isAddingLocalProject}
                   attachments={pendingAttachments}
                   mentions={promptMentions}
                   onModelChange={handleModelChange}
@@ -3758,6 +3820,7 @@ function StudioChatWorkbench({
                   onEnvironmentChange={setSelectedEnvironment}
                   onReasoningEffortChange={handleReasoningEffortChange}
                   onPermissionModeChange={handlePermissionModeChange}
+                  onAddProject={handleAddLocalProject}
                   onProjectChange={handleProjectChange}
                   onValueChange={setInput}
                   onMentionsChange={setPromptMentions}
@@ -3779,7 +3842,14 @@ function StudioChatWorkbench({
 
         {hasMessages ? (
           <div className="shrink-0 px-8 pb-5">
-            <div className="mx-auto flex w-full max-w-5xl flex-col gap-2">
+            <div
+              className={cn(
+                "flex w-full flex-col gap-2",
+                outputFiles.length > 0
+                  ? "mr-auto ml-0 max-w-[calc(100%-22rem)]"
+                  : "mx-auto max-w-5xl"
+              )}
+            >
               {pendingUserInputPart ? (
                 <PendingUserInputPanel
                   key={pendingUserInputPart.id}
@@ -3808,6 +3878,7 @@ function StudioChatWorkbench({
                     selectedProjectId={selectedProjectId}
                     environment={selectedEnvironment}
                     contextUsage={latestRunUsage}
+                    isAddingProject={isAddingLocalProject}
                     attachments={pendingAttachments}
                     mentions={promptMentions}
                     onModelChange={handleModelChange}
@@ -3815,6 +3886,7 @@ function StudioChatWorkbench({
                     onEnvironmentChange={setSelectedEnvironment}
                     onReasoningEffortChange={handleReasoningEffortChange}
                     onPermissionModeChange={handlePermissionModeChange}
+                    onAddProject={handleAddLocalProject}
                     onProjectChange={handleProjectChange}
                     onValueChange={setInput}
                     onMentionsChange={setPromptMentions}
@@ -3875,8 +3947,13 @@ function StudioOutputsCard({ files }: { files: StudioOutputFile[] }) {
       return
     }
 
-    void navigator.clipboard.writeText(path)
-    toast.success(t.studioOutputPathCopied)
+    if (navigator.clipboard?.writeText) {
+      void navigator.clipboard.writeText(path)
+      toast.success(t.studioOutputPathCopied)
+      return
+    }
+
+    toast.error(path)
   }
 
   return (
@@ -5966,6 +6043,7 @@ type ChatComposerProps = {
   selectedProjectId: string | null
   environment: ChatRunEnvironment
   contextUsage: StudioTokenUsage | null
+  isAddingProject: boolean
   attachments: PendingAttachment[]
   mentions: ComposerMention[]
   onModelChange: (model: SupportedChatModel) => void
@@ -5973,6 +6051,7 @@ type ChatComposerProps = {
   onEnvironmentChange: (environment: ChatRunEnvironment) => void
   onReasoningEffortChange: (effort: ChatReasoningEffort) => void
   onPermissionModeChange: (permissionMode: StudioPermissionMode) => void
+  onAddProject: () => void
   onProjectChange: (projectId: string | null) => void
   onValueChange: (value: string) => void
   onMentionsChange: (mentions: ComposerMention[]) => void
@@ -6548,11 +6627,11 @@ type SkillsMarketPageProps = {
 
 function SkillsMarketPageLoading() {
   return (
-    <div className="flex h-full min-h-0 items-center justify-center">
-      <div
-        aria-hidden
-        className="size-6 animate-spin rounded-full border-2 border-muted-foreground/20 border-t-muted-foreground/70"
-      />
+    <div className="flex h-full min-h-0 items-end justify-center p-6">
+      <div className="flex items-center gap-2 rounded-full border bg-background px-3 py-2 text-sm text-muted-foreground shadow-lg">
+        <RiLoader4Line className="animate-spin" aria-hidden />
+        <span>Loading</span>
+      </div>
     </div>
   )
 }
@@ -6704,6 +6783,7 @@ function ChatComposer({
   selectedProjectId,
   environment,
   contextUsage,
+  isAddingProject,
   attachments,
   mentions,
   onModelChange,
@@ -6711,6 +6791,7 @@ function ChatComposer({
   onEnvironmentChange,
   onReasoningEffortChange,
   onPermissionModeChange,
+  onAddProject,
   onProjectChange,
   onValueChange,
   onMentionsChange,
@@ -6761,6 +6842,7 @@ function ChatComposer({
   )
   const [selectedCommandIndex, setSelectedCommandIndex] = React.useState(0)
   const [selectedMentionIndex, setSelectedMentionIndex] = React.useState(0)
+  const [projectSearch, setProjectSearch] = React.useState("")
   const [dismissedSlashTokenKey, setDismissedSlashTokenKey] = React.useState<
     string | null
   >(null)
@@ -7575,6 +7657,14 @@ function ChatComposer({
   const selectedProject =
     localProjects.find((project) => project.id === selectedProjectId) ?? null
   const selectedProjectValue = selectedProject?.id ?? PROJECT_NONE_VALUE
+  const normalizedProjectSearch = projectSearch.trim().toLowerCase()
+  const filteredLocalProjects = normalizedProjectSearch
+    ? localProjects.filter((project) => {
+        const haystack = `${project.name} ${project.path}`.toLowerCase()
+        return haystack.includes(normalizedProjectSearch)
+      })
+    : localProjects
+  const showSessionScopeControls = !sessionId
   const isAstraflowRuntime = runtimeId === DEFAULT_CHAT_RUNTIME_ID
   const hasAstraflowRuntime = runtimeInfos.some(
     (runtime) => runtime.id === DEFAULT_CHAT_RUNTIME_ID
@@ -8298,7 +8388,7 @@ function ChatComposer({
                 onValueChange={(nextValue) =>
                   onReasoningEffortChange(nextValue as ChatReasoningEffort)
                 }
-                disabled={isBusy}
+                disabled={isBusy || reasoningOptions.length <= 1}
               >
                 <SelectTrigger
                   size="sm"
@@ -8363,6 +8453,7 @@ function ChatComposer({
         </PromptInput>
       </div>
 
+      {showSessionScopeControls ? (
       <div className="flex w-full min-w-0 items-center gap-1 px-2 py-1.5 text-xs text-muted-foreground">
         <Select
           value={selectedProjectValue}
@@ -8393,6 +8484,39 @@ function ChatComposer({
             </span>
           </SelectTrigger>
           <SelectContent position="popper" side="top" align="start">
+            <div className="sticky top-0 z-10 space-y-1 border-b bg-popover p-2">
+              <div className="relative">
+                <RiSearchLine
+                  aria-hidden
+                  className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground"
+                />
+                <Input
+                  value={projectSearch}
+                  onChange={(event) => setProjectSearch(event.target.value)}
+                  onKeyDown={(event) => event.stopPropagation()}
+                  placeholder={t.search}
+                  className="h-7 rounded-lg pl-7 text-xs"
+                />
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 w-full justify-start rounded-lg px-2 text-xs"
+                disabled={isAddingProject}
+                onClick={(event) => {
+                  event.preventDefault()
+                  onAddProject()
+                }}
+              >
+                {isAddingProject ? (
+                  <RiLoader4Line className="animate-spin" aria-hidden />
+                ) : (
+                  <FolderPlus aria-hidden className="size-3.5" />
+                )}
+                <span>{t.studioLocalProjectAdd}</span>
+              </Button>
+            </div>
             <SelectGroup>
               <SelectItem value={PROJECT_NONE_VALUE} className="pr-10">
                 <SelectOptionRow
@@ -8406,8 +8530,8 @@ function ChatComposer({
                   label={t.studioLocalProjectNone}
                 />
               </SelectItem>
-              {localProjects.length > 0 ? (
-                localProjects.map((project) => (
+              {filteredLocalProjects.length > 0 ? (
+                filteredLocalProjects.map((project) => (
                   <SelectItem
                     key={project.id}
                     value={project.id}
@@ -8438,10 +8562,18 @@ function ChatComposer({
                 ))
               ) : (
                 <SelectItem value="__empty__" disabled>
-                  {t.studioLocalProjectEmpty}
+                  {localProjects.length > 0
+                    ? t.studioNoResults
+                    : t.studioLocalProjectEmpty}
                 </SelectItem>
               )}
             </SelectGroup>
+            {isAddingProject ? (
+              <div className="sticky bottom-0 flex items-center gap-2 border-t bg-popover px-3 py-2 text-xs text-muted-foreground">
+                <RiLoader4Line className="animate-spin" aria-hidden />
+                <span>{t.studioLocalProjectAdding}</span>
+              </div>
+            ) : null}
           </SelectContent>
         </Select>
 
@@ -8528,6 +8660,7 @@ function ChatComposer({
           </span>
         ) : null}
       </div>
+      ) : null}
     </div>
   )
 }

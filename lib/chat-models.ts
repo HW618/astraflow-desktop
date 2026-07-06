@@ -94,6 +94,8 @@ const CLAUDE_STANDARD_REASONING_EFFORTS = [
   "max",
 ] as const
 
+const NO_REASONING_EFFORTS = ["none"] as const
+
 const CLAUDE_XHIGH_REASONING_EFFORTS = [
   "none",
   "low",
@@ -152,8 +154,8 @@ export const CHAT_MODEL_OPTIONS: ReadonlyArray<ChatModelConfig> = [
     protocol: "anthropic-messages",
     supportedRuntimeIds: ANTHROPIC_MODEL_RUNTIME_IDS,
     reasoningMode: "anthropic_output_effort",
-    reasoningEfforts: CLAUDE_STANDARD_REASONING_EFFORTS,
-    defaultReasoningEffort: "high",
+    reasoningEfforts: NO_REASONING_EFFORTS,
+    defaultReasoningEffort: "none",
     contextWindow: 200_000,
   },
   {

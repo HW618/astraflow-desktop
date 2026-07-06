@@ -169,7 +169,7 @@ function SettingsShell({ children }: { children: React.ReactNode }) {
       </aside>
 
       <main className="min-h-0 min-w-0 flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-3xl px-8 pt-14 pb-20 lg:px-10">
+        <div className="mx-auto w-full max-w-[1120px] px-8 pt-14 pb-20 lg:px-10">
           {children}
         </div>
       </main>
