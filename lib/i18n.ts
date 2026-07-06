@@ -12,7 +12,7 @@ export const localeLabels: Record<Locale, string> = {
 const en = {
   // Navigation
   explore: "Models",
-  skills: "SKILLS",
+  skills: "Plugins",
   studio: "Playground",
   codebox: "CodeBox",
   files: "Files",
@@ -1432,7 +1432,7 @@ const zh: Dictionary = {
   studioLocalProjectLocal: "本地",
   studioLocalProjectLocalDescription:
     "在这台机器上运行。AstraFlow Agent 使用所选项目或默认本地工作区；外部智能体使用自己的 CLI 配置。",
-  studioLocalProjectRemote: "远程",
+  studioLocalProjectRemote: "远程沙箱",
   studioLocalProjectRemoteDescription:
     "在远程沙箱中运行 AstraFlow Agent。需要时会自动切换到 AstraFlow Agent。",
   studioProjectEnvironment: "环境",

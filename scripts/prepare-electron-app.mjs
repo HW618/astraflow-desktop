@@ -6,7 +6,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 
 const root = process.cwd()
 const appDir = join(root, "dist", "electron-app")
@@ -22,6 +22,12 @@ const runtimeDependenciesWithRequiredOptionals = new Set(["@openai/codex"])
 const rootPackageJson = JSON.parse(
   readFileSync(join(root, "package.json"), "utf8")
 )
+const removeOptions = {
+  recursive: true,
+  force: true,
+  maxRetries: process.platform === "win32" ? 5 : 0,
+  retryDelay: 100,
+}
 const semverPattern =
   /^(?:v)?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/
 
@@ -52,9 +58,16 @@ function readTagVersion() {
 
 const appVersion = readTagVersion() ?? rootPackageJson.version ?? "0.0.1"
 
+function remove(path) {
+  rmSync(path, removeOptions)
+}
+
 function copy(from, to) {
+  remove(to)
+  mkdirSync(dirname(to), { recursive: true })
   cpSync(from, to, {
     recursive: true,
+    force: true,
     filter: (source) => !source.endsWith(".map"),
   })
 }
@@ -100,7 +113,6 @@ function copyRuntimeDependency(packageName, seen = new Set(), optional = false) 
 
   const packageJson = readPackageJson(sourcePackage)
 
-  rmSync(targetPackage, { recursive: true, force: true })
   copy(sourcePackage, targetPackage)
 
   for (const dependencyName of Object.keys(packageJson.dependencies ?? {})) {
@@ -116,8 +128,7 @@ function copyRuntimeDependency(packageName, seen = new Set(), optional = false) 
   }
 }
 
-rmSync(appDir, { recursive: true, force: true })
-mkdirSync(appDir, { recursive: true })
+remove(appDir)
 
 copy(standaloneDir, appDir)
 copy(join(root, ".next", "static"), join(appDir, ".next", "static"))
