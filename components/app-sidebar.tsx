@@ -4,7 +4,6 @@ import Link from "next/link"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import * as React from "react"
 import {
-  RiAddLine,
   RiApps2Line,
   RiChat3Line,
   RiCheckLine,
@@ -25,7 +24,16 @@ import {
   RiVideoLine,
 } from "@remixicon/react"
 import type { RemixiconComponentType } from "@remixicon/react"
-import { ChevronRight, Folder, FolderGit2, Pin } from "lucide-react"
+import {
+  Archive,
+  ArchiveRestore,
+  Folder,
+  FolderGit2,
+  FolderOpen,
+  FolderPlus,
+  MessageCirclePlus,
+  Pin,
+} from "lucide-react"
 import { toast } from "sonner"
 
 import { AppInfoButton } from "@/components/app-info-button"
@@ -33,6 +41,12 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { useI18n } from "@/components/i18n-provider"
 import { requestStudioOnboardingTour } from "@/components/onboarding-tour"
 import { Button } from "@/components/ui/button"
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu"
 import { logout } from "@/components/logout-button"
 import { Titlebar } from "@/components/titlebar"
 import {
@@ -422,6 +436,22 @@ async function updateStudioSessionPinnedRequest(
   }
 }
 
+async function updateStudioSessionArchivedRequest(
+  sessionId: string,
+  archived: boolean
+) {
+  const response = await fetch(`/api/studio/sessions/${sessionId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ archived }),
+  })
+  throwIfUnauthorized(response)
+
+  if (!response.ok) {
+    throw new Error("Failed to update session archive state")
+  }
+}
+
 async function deleteStudioSessionRequest(sessionId: string) {
   const response = await fetch(`/api/studio/sessions/${sessionId}`, {
     method: "DELETE",
@@ -524,6 +554,7 @@ function AppSidebar() {
   const [expandedProjectIds, setExpandedProjectIds] = React.useState<
     Set<string>
   >(() => new Set())
+  const [showArchived, setShowArchived] = React.useState(false)
   const [renameTarget, setRenameTarget] = React.useState<StudioSession | null>(
     null
   )
@@ -788,6 +819,33 @@ function AppSidebar() {
     }
   }
 
+  async function handleToggleSessionArchived(session: StudioSession) {
+    const archived = !session.archivedAt
+
+    setSessions((current) =>
+      current.map((candidate) =>
+        candidate.id === session.id
+          ? {
+              ...candidate,
+              archivedAt: archived ? new Date().toISOString() : null,
+            }
+          : candidate
+      )
+    )
+
+    try {
+      await updateStudioSessionArchivedRequest(session.id, archived)
+      await reloadSessions()
+      dispatchStudioSessionsChanged()
+    } catch (error) {
+      if (isLoginRequiredError(error)) {
+        redirectToLogin()
+      } else {
+        await reloadSessions()
+      }
+    }
+  }
+
   function toggleProject(projectId: string) {
     setExpandedProjectIds((current) => {
       const next = new Set(current)
@@ -818,6 +876,47 @@ function AppSidebar() {
     prepareNewSession(lastSelectedProjectId)
   }
 
+  const isMac = React.useMemo(() => {
+    if (typeof document !== "undefined") {
+      const platform = document.documentElement.dataset.astraflowPlatform
+
+      if (platform) {
+        return platform === "darwin"
+      }
+    }
+
+    return (
+      typeof navigator !== "undefined" &&
+      /Mac|iP(hone|ad|od)/i.test(navigator.platform || navigator.userAgent)
+    )
+  }, [])
+  const newTaskShortcutRef = React.useRef(() => {})
+
+  React.useEffect(() => {
+    newTaskShortcutRef.current = () => {
+      handleNewSessionClick()
+      router.push("/studio")
+    }
+  })
+
+  React.useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        !event.shiftKey &&
+        !event.altKey &&
+        event.key.toLowerCase() === "n"
+      ) {
+        event.preventDefault()
+        newTaskShortcutRef.current()
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown)
+
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [])
+
   function handleNewProjectSession(projectId: string) {
     setLastSelectedProjectId(projectId)
     setExpandedProjectIds((current) => {
@@ -831,23 +930,30 @@ function AppSidebar() {
 
   function getProjectSessions(projectId: string) {
     return sessions
-      .filter((session) => session.projectId === projectId)
+      .filter(
+        (session) =>
+          session.projectId === projectId &&
+          (showArchived || !session.archivedAt)
+      )
       .slice(0, 5)
   }
 
   function renderSessionContent(session: StudioSession) {
-    const Icon =
-      studioModeDefinitions.find((mode) => mode.id === session.mode)?.icon ??
-      RiChat3Line
-
     return (
       <>
         {session.isRunning ? (
-          <RiLoader4Line className="animate-spin" aria-hidden />
-        ) : (
-          <Icon aria-hidden />
-        )}
-        <span className="min-w-0 flex-1 truncate">{session.title}</span>
+          <RiLoader4Line className="animate-spin text-primary" aria-hidden />
+        ) : session.archivedAt ? (
+          <Archive aria-hidden className="size-3.5 opacity-60" />
+        ) : null}
+        <span
+          className={cn(
+            "min-w-0 flex-1 truncate",
+            session.archivedAt && "opacity-60"
+          )}
+        >
+          {session.title}
+        </span>
       </>
     )
   }
@@ -913,6 +1019,16 @@ function AppSidebar() {
               {t.studioRename}
             </DropdownMenuItem>
             <DropdownMenuItem
+              onSelect={() => void handleToggleSessionArchived(session)}
+            >
+              {session.archivedAt ? (
+                <ArchiveRestore aria-hidden />
+              ) : (
+                <Archive aria-hidden />
+              )}
+              {session.archivedAt ? t.studioUnarchive : t.studioArchive}
+            </DropdownMenuItem>
+            <DropdownMenuItem
               variant="destructive"
               onSelect={() => setDeleteTarget(session)}
             >
@@ -922,6 +1038,45 @@ function AppSidebar() {
           </DropdownMenuGroup>
         </DropdownMenuContent>
       </DropdownMenu>
+    )
+  }
+
+  function renderSessionContextMenuContent(session: StudioSession) {
+    return (
+      <ContextMenuContent className="w-44">
+        <ContextMenuItem
+          onSelect={() => {
+            setRenameValue(session.title)
+            setRenameTarget(session)
+          }}
+        >
+          <RiPencilLine aria-hidden />
+          {t.studioRename}
+        </ContextMenuItem>
+        <ContextMenuItem
+          onSelect={() => void handleToggleSessionPinned(session)}
+        >
+          <Pin aria-hidden className={cn(session.pinnedAt && "fill-current")} />
+          {session.pinnedAt ? t.studioSessionUnpin : t.studioSessionPin}
+        </ContextMenuItem>
+        <ContextMenuItem
+          onSelect={() => void handleToggleSessionArchived(session)}
+        >
+          {session.archivedAt ? (
+            <ArchiveRestore aria-hidden />
+          ) : (
+            <Archive aria-hidden />
+          )}
+          {session.archivedAt ? t.studioUnarchive : t.studioArchive}
+        </ContextMenuItem>
+        <ContextMenuItem
+          variant="destructive"
+          onSelect={() => setDeleteTarget(session)}
+        >
+          <RiDeleteBinLine aria-hidden />
+          {t.studioDelete}
+        </ContextMenuItem>
+      </ContextMenuContent>
     )
   }
 
@@ -1038,9 +1193,36 @@ function AppSidebar() {
   const activeProjectId =
     sessions.find((session) => session.id === activeStudio.sessionId)
       ?.projectId ?? null
-  const unboundSessions = sessions.filter(
+  const visibleSessions = showArchived
+    ? sessions
+    : sessions.filter((session) => !session.archivedAt)
+  const unboundSessions = visibleSessions.filter(
     (session) => session.projectId === null
   )
+  const sortedProjects = React.useMemo(() => {
+    const latestBySessionProject = new Map<string, number>()
+
+    for (const session of visibleSessions) {
+      if (!session.projectId) {
+        continue
+      }
+
+      const timestamp = new Date(session.updatedAt).getTime()
+
+      if (
+        Number.isFinite(timestamp) &&
+        timestamp > (latestBySessionProject.get(session.projectId) ?? 0)
+      ) {
+        latestBySessionProject.set(session.projectId, timestamp)
+      }
+    }
+
+    return [...localProjects].sort(
+      (a, b) =>
+        (latestBySessionProject.get(b.id) ?? 0) -
+        (latestBySessionProject.get(a.id) ?? 0)
+    )
+  }, [localProjects, visibleSessions])
 
   function handleStartOnboarding() {
     requestStudioOnboardingTour()
@@ -1080,16 +1262,32 @@ function AppSidebar() {
                   <SidebarMenuButton
                     asChild
                     className="h-8"
-                    tooltip={t.studioNewSession}
+                    tooltip={t.studioNewTask}
                   >
                     <Link
                       href="/studio"
                       data-tour-id="studio-new-session"
                       onClick={handleNewSessionClick}
                     >
-                      <RiAddLine aria-hidden />
-                      <span>{t.studioNewSession}</span>
+                      <MessageCirclePlus aria-hidden />
+                      <span className="min-w-0 flex-1 truncate">
+                        {t.studioNewTask}
+                      </span>
+                      <span className="ml-auto shrink-0 text-[11px] font-normal text-sidebar-foreground/50 group-data-[collapsible=icon]:hidden">
+                        {isMac ? "⌘N" : "Ctrl+N"}
+                      </span>
                     </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    type="button"
+                    className="h-8"
+                    tooltip={t.studioOpenWorkspace}
+                    onClick={() => void handleAddProject()}
+                  >
+                    <FolderPlus aria-hidden />
+                    <span>{t.studioOpenWorkspace}</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 {navItems.map((item) => {
@@ -1151,26 +1349,35 @@ function AppSidebar() {
             className="gap-0.5 py-0.5"
           >
             <SidebarGroupLabel className="h-6">
-              {t.studioLocalProjects}
+              {t.studioTasks}
             </SidebarGroupLabel>
             <SidebarGroupAction
               type="button"
-              aria-label={t.studioLocalProjectAdd}
-              title={t.studioLocalProjectAdd}
-              className="top-0.5 right-2 size-6 rounded-lg"
-              onClick={() => void handleAddProject()}
+              aria-label={t.studioToggleArchived}
+              title={t.studioToggleArchived}
+              aria-pressed={showArchived}
+              className={cn(
+                "top-0.5 right-2 size-6 rounded-md border border-sidebar-border text-sidebar-foreground/70",
+                showArchived &&
+                  "bg-sidebar-accent text-sidebar-accent-foreground"
+              )}
+              onClick={() => setShowArchived((current) => !current)}
             >
-              <RiAddLine aria-hidden />
+              <Archive aria-hidden className="size-3.5" />
             </SidebarGroupAction>
             <SidebarGroupContent>
-              {localProjects.length > 0 ? (
+              {sortedProjects.length > 0 ? (
                 <SidebarMenu>
-                  {localProjects.map((project) => {
+                  {sortedProjects.map((project) => {
                     const isExpanded =
                       expandedProjectIds.has(project.id) ||
                       activeProjectId === project.id
                     const projectSessions = getProjectSessions(project.id)
-                    const Icon = project.git.branch ? FolderGit2 : Folder
+                    const Icon = isExpanded
+                      ? FolderOpen
+                      : project.git.branch
+                        ? FolderGit2
+                        : Folder
                     const gitSummary = formatProjectGitSummary(project)
 
                     return (
@@ -1190,20 +1397,13 @@ function AppSidebar() {
                           }
                           onClick={() => toggleProject(project.id)}
                         >
-                          <ChevronRight
+                          <Icon
                             aria-hidden
-                            className={cn(
-                              "size-3.5 transition-transform",
-                              isExpanded && "rotate-90"
-                            )}
+                            className="text-sidebar-foreground/70"
                           />
-                          <Icon aria-hidden />
-                          <span>{project.name}</span>
-                          {gitSummary ? (
-                            <span className="ml-auto max-w-20 truncate font-mono text-[10px] text-muted-foreground tabular-nums">
-                              {gitSummary}
-                            </span>
-                          ) : null}
+                          <span className="min-w-0 flex-1 truncate text-[13px] text-sidebar-foreground/80">
+                            {project.name}
+                          </span>
                         </SidebarMenuButton>
 
                         <SidebarMenuAction
@@ -1218,7 +1418,7 @@ function AppSidebar() {
                             handleNewProjectSession(project.id)
                           }}
                         >
-                          <RiPencilLine aria-hidden />
+                          <MessageCirclePlus aria-hidden />
                         </SidebarMenuAction>
 
                         <DropdownMenu>
@@ -1269,28 +1469,32 @@ function AppSidebar() {
                         </DropdownMenu>
 
                         {isExpanded ? (
-                          <SidebarMenuSub className="mx-4 mt-0.5 border-sidebar-border/70 px-2 py-0.5">
+                          <SidebarMenuSub className="mx-3.5 mt-0.5 border-none px-1.5 py-0.5">
                             {projectSessions.length > 0 ? (
                               projectSessions.map((session) => (
-                                <SidebarMenuSubItem
-                                  key={session.id}
-                                  className="group/menu-item relative"
-                                >
-                                  <SidebarMenuSubButton
-                                    asChild
-                                    isActive={
-                                      activeStudio.sessionId === session.id
-                                    }
-                                    className="pr-14"
-                                  >
-                                    <Link href={getStudioSessionHref(session)}>
-                                      {renderSessionContent(session)}
-                                    </Link>
-                                  </SidebarMenuSubButton>
-                                  {renderSessionTime(session)}
-                                  {renderSessionPinAction(session)}
-                                  {renderSessionActions(session)}
-                                </SidebarMenuSubItem>
+                                <ContextMenu key={session.id}>
+                                  <ContextMenuTrigger asChild>
+                                    <SidebarMenuSubItem className="group/menu-item relative">
+                                      <SidebarMenuSubButton
+                                        asChild
+                                        isActive={
+                                          activeStudio.sessionId === session.id
+                                        }
+                                        className="pr-14"
+                                      >
+                                        <Link
+                                          href={getStudioSessionHref(session)}
+                                        >
+                                          {renderSessionContent(session)}
+                                        </Link>
+                                      </SidebarMenuSubButton>
+                                      {renderSessionTime(session)}
+                                      {renderSessionPinAction(session)}
+                                      {renderSessionActions(session)}
+                                    </SidebarMenuSubItem>
+                                  </ContextMenuTrigger>
+                                  {renderSessionContextMenuContent(session)}
+                                </ContextMenu>
                               ))
                             ) : (
                               <SidebarMenuSubItem>
@@ -1328,22 +1532,27 @@ function AppSidebar() {
                     const isActive = activeStudio.sessionId === session.id
 
                     return (
-                      <SidebarMenuItem key={session.id}>
-                        <SidebarMenuButton
-                          asChild
-                          isActive={isActive}
-                          className="h-8 pr-14"
-                          tooltip={session.title}
-                        >
-                          <Link href={getStudioSessionHref(session)}>
-                            {renderSessionContent(session)}
-                          </Link>
-                        </SidebarMenuButton>
+                      <ContextMenu key={session.id}>
+                        <ContextMenuTrigger asChild>
+                          <SidebarMenuItem>
+                            <SidebarMenuButton
+                              asChild
+                              isActive={isActive}
+                              className="h-8 pr-14"
+                              tooltip={session.title}
+                            >
+                              <Link href={getStudioSessionHref(session)}>
+                                {renderSessionContent(session)}
+                              </Link>
+                            </SidebarMenuButton>
 
-                        {renderSessionTime(session)}
-                        {renderSessionPinAction(session)}
-                        {renderSessionActions(session)}
-                      </SidebarMenuItem>
+                            {renderSessionTime(session)}
+                            {renderSessionPinAction(session)}
+                            {renderSessionActions(session)}
+                          </SidebarMenuItem>
+                        </ContextMenuTrigger>
+                        {renderSessionContextMenuContent(session)}
+                      </ContextMenu>
                     )
                   })}
                 </SidebarMenu>
@@ -1361,7 +1570,7 @@ function AppSidebar() {
         </SidebarContent>
 
         <SidebarFooter className="gap-1.5 p-2">
-          <div className="flex min-w-0 items-center gap-2">
+          <div className="flex min-w-0 items-center gap-1">
             <div className="min-w-0 flex-1">
               <SidebarAccountMenu
                 user={accountUser}
@@ -1369,6 +1578,17 @@ function AppSidebar() {
                 onOpenSettings={openSettingsPage}
               />
             </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={t.settings}
+              title={t.settings}
+              className="size-8 shrink-0 rounded-xl text-sidebar-foreground/75 group-data-[collapsible=icon]:hidden hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+              onClick={() => openSettingsPage("/settings")}
+            >
+              <RiSettings3Line aria-hidden />
+            </Button>
           </div>
         </SidebarFooter>
       </Sidebar>

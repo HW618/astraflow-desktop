@@ -8,7 +8,6 @@ import {
   RiCheckLine,
   RiCloseLine,
   RiCodeLine,
-  RiDeleteBinLine,
   RiDownloadLine,
   RiExternalLinkLine,
   RiEyeLine,
@@ -32,7 +31,6 @@ import { Shimmer } from "@/components/ai-elements/shimmer"
 import {
   countContentLines,
   synthesizeAdditionsDiff,
-  UnifiedDiffView,
 } from "@/components/studio-file-diff"
 import {
   CodeBlock,
@@ -57,14 +55,12 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
-import { Input } from "@/components/ui/input"
 import { MessageContent } from "@/components/ui/message"
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useI18n } from "@/components/i18n-provider"
 import { getMcpToolDisplayName, isMcpToolName } from "@/lib/mcp"
 import {
@@ -1342,10 +1338,158 @@ function getActivityLabel(
   })
 }
 
+const fileTypeBadgeStyles: Record<string, { label: string; className: string }> =
+  {
+    html: { label: "5", className: "bg-orange-600 text-white" },
+    htm: { label: "5", className: "bg-orange-600 text-white" },
+    css: { label: "#", className: "bg-purple-600 text-white" },
+    scss: { label: "#", className: "bg-pink-600 text-white" },
+    js: { label: "JS", className: "bg-yellow-400 text-black" },
+    mjs: { label: "JS", className: "bg-yellow-400 text-black" },
+    jsx: { label: "JS", className: "bg-yellow-400 text-black" },
+    ts: { label: "TS", className: "bg-blue-600 text-white" },
+    tsx: { label: "TS", className: "bg-blue-600 text-white" },
+    json: { label: "{}", className: "bg-amber-700 text-white" },
+    md: { label: "M", className: "bg-slate-500 text-white" },
+    py: { label: "PY", className: "bg-sky-600 text-white" },
+    go: { label: "GO", className: "bg-cyan-600 text-white" },
+    rs: { label: "RS", className: "bg-orange-700 text-white" },
+    sh: { label: "$", className: "bg-emerald-700 text-white" },
+    sql: { label: "DB", className: "bg-indigo-600 text-white" },
+    yml: { label: "Y", className: "bg-rose-600 text-white" },
+    yaml: { label: "Y", className: "bg-rose-600 text-white" },
+  }
+
+function FileTypeBadge({ path }: { path: string }) {
+  const extension = getFilePathExtension(path)
+  const style = fileTypeBadgeStyles[extension]
+
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "flex h-4 min-w-4 shrink-0 items-center justify-center rounded-[4px] px-0.5 font-mono text-[8px] font-bold",
+        style?.className ?? "bg-muted-foreground/70 text-background"
+      )}
+    >
+      {style?.label ?? extension.slice(0, 2).toUpperCase() ?? "?"}
+    </span>
+  )
+}
+
+function FileChangeStats({
+  additions,
+  deletions,
+}: {
+  additions: number
+  deletions: number
+}) {
+  if (additions <= 0 && deletions <= 0) {
+    return null
+  }
+
+  return (
+    <span className="flex shrink-0 items-center gap-1 font-mono text-xs tabular-nums">
+      {additions > 0 ? (
+        <span className="text-emerald-600">+{additions}</span>
+      ) : null}
+      {deletions > 0 ? (
+        <span className="text-destructive">-{deletions}</span>
+      ) : null}
+    </span>
+  )
+}
+
+type StructuredActivityLabel = {
+  prefix: string
+  detail?: string
+  filePath?: string
+}
+
+// ZCode-style split labels for completed activities: a short verb followed by
+// the command in dim mono, or the file with a colored type badge.
+function getStructuredActivityLabel(
+  activity: StudioMessageActivity,
+  t: ReturnType<typeof useI18n>["t"]
+): StructuredActivityLabel | null {
+  if (activity.status !== "complete") {
+    return null
+  }
+
+  const isZh = t.studioThinking === "正在思考"
+
+  if (commandToolNames.has(activity.toolName)) {
+    const { command } = getRunCommandPayload(activity.input)
+
+    if (command) {
+      return { prefix: isZh ? "已运行" : "Ran", detail: command }
+    }
+  }
+
+  if (activity.toolName === "run_code") {
+    const { code, language } = getRunCodePayload(activity.input)
+
+    if (code) {
+      return {
+        prefix: isZh ? `已运行 ${language}` : `Ran ${language}`,
+        detail: code.split(/\r?\n/)[0] ?? "",
+      }
+    }
+  }
+
+  if (
+    activity.toolName === "write_file" ||
+    activity.toolName === "edit_file"
+  ) {
+    const info = getWrittenFileInfo(activity)
+
+    if (info) {
+      return {
+        prefix:
+          info.kind === "create"
+            ? isZh
+              ? "已写入"
+              : "Wrote"
+            : isZh
+              ? "已更新"
+              : "Updated",
+        filePath: info.path,
+      }
+    }
+  }
+
+  return null
+}
+
 function renderActivityInlineLabel(
   activity: StudioMessageActivity,
   t: ReturnType<typeof useI18n>["t"]
 ) {
+  const structured = getStructuredActivityLabel(activity, t)
+
+  if (structured) {
+    return (
+      <span className="flex max-w-full min-w-0 items-center gap-1.5 leading-6">
+        <span className="shrink-0 font-medium text-foreground">
+          {structured.prefix}
+        </span>
+        {structured.filePath ? (
+          <>
+            <FileTypeBadge path={structured.filePath} />
+            <span className="min-w-0 truncate font-medium text-foreground">
+              {getFilePathName(structured.filePath)}
+            </span>
+          </>
+        ) : null}
+        {structured.detail ? (
+          <span className="min-w-0 truncate font-mono text-[13px] text-muted-foreground">
+            {structured.detail}
+          </span>
+        ) : null}
+      </span>
+    )
+  }
+
   const label =
     activity.status === "error"
       ? t.studioToolError
@@ -2852,46 +2996,7 @@ function AssistantSubagent({ part }: { part: StudioSubagentPart }) {
   )
 }
 
-function getFilePartIcon(part: StudioFilePart) {
-  if (part.status === "error") {
-    return <RiCloseLine aria-hidden className="size-4" />
-  }
 
-  if (part.kind === "create") {
-    return <RiFileAddLine aria-hidden className="size-4" />
-  }
-
-  if (part.kind === "delete") {
-    return <RiDeleteBinLine aria-hidden className="size-4" />
-  }
-
-  return <RiFileEditLine aria-hidden className="size-4" />
-}
-
-function getFilePartLabel(
-  part: StudioFilePart,
-  t: ReturnType<typeof useI18n>["t"]
-) {
-  const isZh = isZhLocale(t)
-
-  if (part.status === "error") {
-    return isZh
-      ? `文件变更失败 ${part.path}`
-      : `File change failed ${part.path}`
-  }
-
-  if (part.kind === "create") {
-    return isZh ? `已创建 ${part.path}` : `Created ${part.path}`
-  }
-
-  if (part.kind === "delete") {
-    return isZh ? `已删除 ${part.path}` : `Deleted ${part.path}`
-  }
-
-  return isZh ? `已编辑 ${part.path}` : `Edited ${part.path}`
-}
-
-type DiffViewMode = "summary" | "diff"
 
 function getFilePartStats(part: StudioFilePart) {
   if (part.stats) {
@@ -2929,30 +3034,7 @@ function getFilePartStats(part: StudioFilePart) {
   return { additions, deletions }
 }
 
-function getFileGroupStats(files: StudioFilePart[]) {
-  return files.reduce(
-    (stats, file) => {
-      const fileStats = getFilePartStats(file)
 
-      return {
-        additions: stats.additions + fileStats.additions,
-        deletions: stats.deletions + fileStats.deletions,
-      }
-    },
-    { additions: 0, deletions: 0 }
-  )
-}
-
-function FileDiffStats({ part }: { part: StudioFilePart }) {
-  const stats = getFilePartStats(part)
-
-  return (
-    <span className="flex shrink-0 items-center gap-1 font-mono text-xs tabular-nums">
-      <span className="text-emerald-600">+{stats.additions}</span>
-      <span className="text-destructive">-{stats.deletions}</span>
-    </span>
-  )
-}
 
 function getFilePartDiff(part: StudioFilePart) {
   if (part.diff?.trim()) {
@@ -2966,242 +3048,133 @@ function getFilePartDiff(part: StudioFilePart) {
   return null
 }
 
-function FileDiffCode({ part }: { part: StudioFilePart }) {
-  const { t } = useI18n()
-  const isZh = isZhLocale(t)
-  const diff = getFilePartDiff(part)
 
-  if (!diff) {
-    return (
-      <div className="rounded-lg border border-border/70 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-        {isZh ? "没有可展示的 diff。" : "No diff available."}
-      </div>
-    )
+
+
+function getFileChangeVerb({
+  kind,
+  isZh,
+}: {
+  kind: StudioFilePart["kind"]
+  isZh: boolean
+}) {
+  if (kind === "create") {
+    return isZh ? "\u5df2\u521b\u5efa" : "Created"
   }
 
-  return (
-    <div className="overflow-hidden rounded-lg border border-border/70 bg-background">
-      <div className="flex items-center justify-between gap-3 border-b border-border/70 bg-muted/40 px-3 py-2">
-        <div className="min-w-0 truncate font-mono text-xs text-foreground">
-          {part.path}
-        </div>
-        <FileDiffStats part={part} />
-      </div>
-      <div className="max-h-[440px] overflow-auto">
-        <UnifiedDiffView
-          diff={diff}
-          unmodifiedLabel={(count) =>
-            isZh ? `${count} 行未修改` : `${count} unmodified lines`
-          }
-        />
-      </div>
-    </div>
-  )
+  if (kind === "delete") {
+    return isZh ? "\u5df2\u5220\u9664" : "Deleted"
+  }
+
+  return isZh ? "\u5df2\u66f4\u65b0" : "Updated"
 }
 
-function AssistantFileChangeSummaryRow({
-  active,
-  part,
-  onSelect,
-}: {
-  active: boolean
-  part: StudioFilePart
-  onSelect: () => void
-}) {
+function AssistantFileChangeRow({ part }: { part: StudioFilePart }) {
   const { t } = useI18n()
-  const label = getFilePartLabel(part, t)
+  const isZh = isZhLocale(t)
+  const stats = getFilePartStats(part)
+  const hasError = part.status === "error"
+
+  function handleOpenDiff() {
+    const changes = aggregateTurnFileChanges([part])
+
+    if (changes.length > 0) {
+      openStudioReviewPanel({ scopeLabel: null, files: changes })
+    }
+  }
 
   return (
     <button
       type="button"
+      title={part.error ?? part.path}
+      onClick={handleOpenDiff}
       className={cn(
-        "flex min-h-9 w-full min-w-0 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors hover:bg-muted/60",
-        active && "bg-muted text-foreground",
-        part.status === "error" && "text-destructive"
+        "flex min-h-6 w-full min-w-0 items-center gap-1.5 text-left text-sm leading-6 text-muted-foreground transition-colors hover:text-foreground",
+        hasError && "text-destructive hover:text-destructive"
       )}
-      title={part.error ?? label}
-      onClick={onSelect}
     >
+      <span className="shrink-0">
+        {getFileChangeVerb({ kind: part.kind, isZh })}
+      </span>
+      <FileTypeBadge path={part.path} />
       <span
         className={cn(
-          "flex size-5 shrink-0 items-center justify-center text-muted-foreground",
-          part.status === "error" && "text-destructive"
+          "min-w-0 truncate font-medium text-foreground",
+          part.kind === "delete" && "line-through opacity-70",
+          hasError && "text-destructive"
         )}
       >
-        {getFilePartIcon(part)}
+        {getFilePathName(part.path)}
       </span>
-      <span className="min-w-0 truncate">{label}</span>
-      <FileDiffStats part={part} />
+      <FileChangeStats additions={stats.additions} deletions={stats.deletions} />
     </button>
   )
-}
-
-function getFileGroupLabel({
-  count,
-  isZh,
-}: {
-  count: number
-  isZh: boolean
-}) {
-  if (isZh) {
-    return count > 1 ? `${count} 个文件变更` : "1 个文件变更"
-  }
-
-  return count > 1 ? `${count} file changes` : "1 file change"
 }
 
 function AssistantFileChangeGroup({ files }: { files: StudioFilePart[] }) {
   const { t } = useI18n()
   const isZh = isZhLocale(t)
   const [open, setOpen] = React.useState(true)
-  const [query, setQuery] = React.useState("")
-  const [view, setView] = React.useState<DiffViewMode>("summary")
-  const [activeFileId, setActiveFileId] = React.useState(files[0]?.id ?? "")
-  const stats = React.useMemo(() => getFileGroupStats(files), [files])
-  const normalizedQuery = query.trim().toLowerCase()
-  const visibleFiles = React.useMemo(() => {
-    if (!normalizedQuery) {
-      return files
-    }
-
-    return files.filter((file) => {
-      const haystack = `${file.path}\n${file.content}\n${file.diff ?? ""}`
-        .toLowerCase()
-
-      return haystack.includes(normalizedQuery)
-    })
-  }, [files, normalizedQuery])
-  const selectedActiveFileId = visibleFiles.some(
-    (file) => file.id === activeFileId
-  )
-    ? activeFileId
-    : (visibleFiles[0]?.id ?? "")
-  const activeFile =
-    visibleFiles.find((file) => file.id === selectedActiveFileId) ?? null
 
   if (files.length === 0) {
     return null
   }
 
+  if (files.length === 1) {
+    return (
+      <div
+        className={cn(
+          assistantTraceContainerClassName,
+          "flex min-w-0 items-center gap-2 text-sm"
+        )}
+      >
+        <span className="flex size-5 shrink-0 items-center justify-center">
+          <RiFileEditLine aria-hidden className="size-4" />
+        </span>
+        <AssistantFileChangeRow part={files[0]} />
+      </div>
+    )
+  }
+
+  const verb = getFileChangeVerb({
+    kind: files.every((file) => file.kind === "create") ? "create" : "edit",
+    isZh,
+  })
+
   return (
     <Collapsible
       open={open}
       onOpenChange={setOpen}
-      className={cn(
-        assistantTraceContainerClassName,
-        "overflow-hidden rounded-xl border border-border/70 bg-muted/30 text-sm text-foreground",
-        files.some((file) => file.status === "error") &&
-          "border-destructive/30 bg-destructive/5"
-      )}
+      className={cn(assistantTraceContainerClassName, "flex flex-col")}
     >
-      <div className="flex min-w-0 items-center gap-2 px-3 py-2">
-        <CollapsibleTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            className="size-7 shrink-0 rounded-lg"
-            aria-label={open ? (isZh ? "收起" : "Collapse") : isZh ? "展开" : "Expand"}
-            title={open ? (isZh ? "收起" : "Collapse") : isZh ? "展开" : "Expand"}
-          >
-            <RiArrowDownSLine
-              aria-hidden
-              className={cn("size-4 transition-transform", !open && "-rotate-90")}
-            />
-          </Button>
-        </CollapsibleTrigger>
-        <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-background text-muted-foreground">
-          <RiFileEditLine aria-hidden className="size-4" />
-        </span>
-        <span className="min-w-0 flex-1 truncate font-medium">
-          {getFileGroupLabel({ count: files.length, isZh })}
-        </span>
-        <span className="flex shrink-0 items-center gap-1 font-mono text-xs tabular-nums">
-          <span className="text-emerald-600">+{stats.additions}</span>
-          <span className="text-destructive">-{stats.deletions}</span>
-        </span>
-      </div>
-
+      <CollapsibleTrigger asChild>
+        <button
+          type="button"
+          className="flex min-h-7 w-fit max-w-full items-center gap-2 text-sm leading-6 text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <span className="flex size-5 shrink-0 items-center justify-center">
+            <RiFileEditLine aria-hidden className="size-4" />
+          </span>
+          <span className="shrink-0 font-medium text-foreground">{verb}</span>
+          <span className="min-w-0 truncate">
+            {isZh
+              ? `${files.length} \u4e2a\u6587\u4ef6`
+              : `${files.length} file${files.length === 1 ? "" : "s"}`}
+          </span>
+          <RiArrowDownSLine
+            aria-hidden
+            className={cn(
+              "size-4 shrink-0 transition-transform",
+              !open && "-rotate-90"
+            )}
+          />
+        </button>
+      </CollapsibleTrigger>
       <CollapsibleContent>
-        <div className="flex flex-col gap-3 border-t border-border/70 p-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="relative min-w-40 flex-1">
-              <RiSearchLine
-                aria-hidden
-                className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground"
-              />
-              <Input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder={isZh ? "搜索文件或 diff" : "Search files or diff"}
-                className="h-8 rounded-lg pl-8 text-xs"
-              />
-            </div>
-            <ToggleGroup
-              type="single"
-              value={view}
-              onValueChange={(value) => {
-                if (value === "summary" || value === "diff") {
-                  setView(value)
-                }
-              }}
-              size="sm"
-              variant="outline"
-              spacing={0}
-              className="shrink-0"
-            >
-              <ToggleGroupItem value="summary">
-                {isZh ? "摘要" : "Summary"}
-              </ToggleGroupItem>
-              <ToggleGroupItem value="diff">
-                {isZh ? "Diff" : "Diff"}
-              </ToggleGroupItem>
-            </ToggleGroup>
-            <Badge variant="secondary" className="shrink-0">
-              {visibleFiles.length}/{files.length}
-            </Badge>
-          </div>
-
-          {visibleFiles.length === 0 ? (
-            <div className="rounded-lg border border-border/70 bg-background px-3 py-4 text-sm text-muted-foreground">
-              {isZh ? "没有匹配的文件。" : "No matching files."}
-            </div>
-          ) : view === "summary" ? (
-            <div className="flex flex-col gap-1 rounded-lg border border-border/70 bg-background p-1">
-              {visibleFiles.map((file) => (
-                <AssistantFileChangeSummaryRow
-                  key={file.id}
-                  active={file.id === activeFile?.id}
-                  part={file}
-                  onSelect={() => {
-                    setActiveFileId(file.id)
-                    setView("diff")
-                  }}
-                />
-              ))}
-            </div>
-          ) : activeFile ? (
-            <div className="flex flex-col gap-2">
-              {visibleFiles.length > 1 ? (
-                <div className="flex gap-1 overflow-x-auto pb-1">
-                  {visibleFiles.map((file) => (
-                    <Button
-                      key={file.id}
-                      type="button"
-                      variant={file.id === activeFile.id ? "secondary" : "ghost"}
-                      size="sm"
-                      className="h-7 max-w-56 shrink-0 rounded-lg px-2 text-xs"
-                      title={file.path}
-                      onClick={() => setActiveFileId(file.id)}
-                    >
-                      <span className="truncate">{file.path}</span>
-                    </Button>
-                  ))}
-                </div>
-              ) : null}
-              <FileDiffCode part={activeFile} />
-            </div>
-          ) : null}
+        <div className="mt-1 ml-2.5 flex flex-col gap-0.5 border-l border-border/70 pl-4">
+          {files.map((file) => (
+            <AssistantFileChangeRow key={file.id} part={file} />
+          ))}
         </div>
       </CollapsibleContent>
     </Collapsible>

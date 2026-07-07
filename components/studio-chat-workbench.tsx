@@ -25,6 +25,7 @@ import {
 import {
   Archive,
   Diff,
+  Ellipsis,
   Eye,
   File,
   FileImage,
@@ -86,6 +87,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Textarea } from "@/components/ui/textarea"
@@ -155,6 +157,7 @@ import type {
   StudioChatRunLiveSnapshot,
   StudioChatRunSnapshot,
   StudioLocalProjectWithGitInfo,
+  StudioMessageTodo,
   StudioPermissionMode,
   StudioPermissionOption,
   StudioSession,
@@ -2431,6 +2434,25 @@ function StudioChatWorkbench({
     () => hasActiveMediaGenerationPart(visibleMessages),
     [visibleMessages]
   )
+  const latestPlanTodos = React.useMemo<StudioMessageTodo[]>(() => {
+    for (let i = visibleMessages.length - 1; i >= 0; i -= 1) {
+      const message = visibleMessages[i]
+
+      if (message.role !== "assistant") {
+        continue
+      }
+
+      for (let j = message.parts.length - 1; j >= 0; j -= 1) {
+        const part = message.parts[j]
+
+        if (part.type === "plan" && part.todos.length > 0) {
+          return part.todos
+        }
+      }
+    }
+
+    return []
+  }, [visibleMessages])
   const resolvedRuntimeId = resolveChatRuntimeId(
     selectedRuntimeId,
     runtimeInfos
@@ -3711,11 +3733,62 @@ function StudioChatWorkbench({
           data-studio-chat-titlebar
           className="flex h-(--titlebar-height) shrink-0 items-center gap-3 px-4"
         >
-          <div
-            className="min-w-0 flex-1 truncate text-sm font-medium text-foreground"
-            title={chatTitle}
-          >
-            {chatTitle}
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <div
+              className="min-w-0 truncate text-sm font-medium text-foreground"
+              title={chatTitle}
+            >
+              {chatTitle}
+            </div>
+            {selectedProject ? (
+              <span
+                className="flex h-6 max-w-40 shrink-0 items-center gap-1.5 rounded-md bg-muted/60 px-2 text-xs text-muted-foreground"
+                title={selectedProject.path}
+              >
+                <Folder aria-hidden className="size-3 shrink-0" />
+                <span className="min-w-0 truncate">{selectedProject.name}</span>
+              </span>
+            ) : null}
+            {selectedProject?.git.branch ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className="flex h-6 max-w-48 shrink-0 items-center gap-1.5 rounded-md bg-muted/60 px-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  >
+                    <GitBranch aria-hidden className="size-3 shrink-0" />
+                    <span className="min-w-0 truncate font-mono">
+                      {selectedProject.git.branch}
+                    </span>
+                    <RiArrowDownSLine
+                      aria-hidden
+                      className="size-3 shrink-0"
+                    />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="max-w-72">
+                  <DropdownMenuLabel>
+                    {rightPanelCopy.envBranches}
+                  </DropdownMenuLabel>
+                  {(selectedProject.git.branches ?? []).map((branch) => (
+                    <DropdownMenuItem key={branch} disabled>
+                      <span
+                        className={cn(
+                          "truncate font-mono text-xs",
+                          branch === selectedProject.git.branch &&
+                            "font-semibold"
+                        )}
+                      >
+                        {branch}
+                      </span>
+                      {branch === selectedProject.git.branch ? (
+                        <RiCheckLine aria-hidden className="ml-auto size-3.5" />
+                      ) : null}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-1">
             <Tooltip>
@@ -3783,6 +3856,10 @@ function StudioChatWorkbench({
             project={selectedProject}
             files={outputFiles}
             copy={rightPanelCopy}
+            goalTitle={hasMessages ? chatTitle : null}
+            todos={latestPlanTodos}
+            usage={latestRunUsage}
+            running={isBusy}
             onRefresh={reloadLocalProjects}
           />
           {hasMessages ? (
@@ -3975,15 +4052,36 @@ function StudioChatWorkbench({
   )
 }
 
+function formatStudioTokenCount(count: number) {
+  if (count >= 1_000_000) {
+    const value = count / 1_000_000
+    return `${value >= 10 ? Math.round(value) : value.toFixed(1)}M`
+  }
+
+  if (count >= 1_000) {
+    return `${Math.round(count / 1_000)}K`
+  }
+
+  return `${count}`
+}
+
 function StudioEnvironmentCard({
   project,
   files,
   copy,
+  goalTitle,
+  todos,
+  usage,
+  running,
   onRefresh,
 }: {
   project: StudioLocalProjectWithGitInfo | null
   files: StudioOutputFile[]
   copy: StudioRightPanelCopy
+  goalTitle: string | null
+  todos: StudioMessageTodo[]
+  usage: StudioTokenUsage | null
+  running: boolean
   onRefresh: () => Promise<void> | void
 }) {
   const { t } = useI18n()
@@ -3995,8 +4093,17 @@ function StudioEnvironmentCard({
   const overflowCount = Math.max(0, files.length - visibleFiles.length)
   const git = project?.git ?? null
   const hasGit = Boolean(git?.branch || git?.remote || git?.branches?.length)
+  const completedTodoCount = todos.filter(
+    (todo) => todo.status === "completed"
+  ).length
+  const goalMeta = [
+    todos.length > 0 ? `${completedTodoCount}/${todos.length}` : null,
+    usage && usage.totalTokens > 0
+      ? `${formatStudioTokenCount(usage.totalTokens)} tokens`
+      : null,
+  ].filter(Boolean)
 
-  if (!project && files.length === 0) {
+  if (!project && files.length === 0 && !goalTitle) {
     return null
   }
 
@@ -4104,7 +4211,9 @@ function StudioEnvironmentCard({
       {project ? (
         <>
           <div className="mb-1 flex items-center justify-between gap-2 px-2">
-            <h2 className="text-sm text-muted-foreground">{copy.envTitle}</h2>
+            <h2 className="text-xs font-medium text-muted-foreground">
+              {copy.envGitTools}
+            </h2>
             <button
               type="button"
               className="text-muted-foreground transition-colors hover:text-foreground"
@@ -4148,41 +4257,6 @@ function StudioEnvironmentCard({
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <button type="button" className={environmentRowClassName}>
-                      <Globe aria-hidden className="size-3.5 shrink-0" />
-                      <span className="min-w-0 flex-1 truncate">
-                        {git?.remote ?? copy.envRemote}
-                      </span>
-                      <RiArrowDownSLine
-                        aria-hidden
-                        className="size-3.5 shrink-0 text-muted-foreground"
-                      />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="max-w-72">
-                    <DropdownMenuLabel>{copy.envRemote}</DropdownMenuLabel>
-                    {git?.remoteUrl ? (
-                      <DropdownMenuItem
-                        onSelect={() => {
-                          if (git?.remoteUrl) {
-                            void navigator.clipboard?.writeText(git.remoteUrl)
-                          }
-                        }}
-                      >
-                        <span className="truncate font-mono text-xs">
-                          {git.remoteUrl}
-                        </span>
-                      </DropdownMenuItem>
-                    ) : (
-                      <DropdownMenuItem disabled>
-                        {copy.envNoRemote}
-                      </DropdownMenuItem>
-                    )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button type="button" className={environmentRowClassName}>
                       <GitBranch aria-hidden className="size-3.5 shrink-0" />
                       <span className="min-w-0 flex-1 truncate">
                         {git?.branch ?? copy.envBranches}
@@ -4210,6 +4284,23 @@ function StudioEnvironmentCard({
                         ) : null}
                       </DropdownMenuItem>
                     ))}
+                    {git?.remoteUrl ? (
+                      <>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuLabel>{copy.envRemote}</DropdownMenuLabel>
+                        <DropdownMenuItem
+                          onSelect={() => {
+                            if (git?.remoteUrl) {
+                              void navigator.clipboard?.writeText(git.remoteUrl)
+                            }
+                          }}
+                        >
+                          <span className="truncate font-mono text-xs">
+                            {git.remoteUrl}
+                          </span>
+                        </DropdownMenuItem>
+                      </>
+                    ) : null}
                   </DropdownMenuContent>
                 </DropdownMenu>
 
@@ -4225,43 +4316,132 @@ function StudioEnvironmentCard({
                   <span className="min-w-0 flex-1 truncate">
                     {copy.envCommitOrPush}
                   </span>
+                  <Ellipsis
+                    aria-hidden
+                    className="size-3.5 shrink-0 text-muted-foreground"
+                  />
                 </button>
               </>
             ) : null}
           </div>
-
-          <div className="my-2 border-t" />
         </>
       ) : null}
 
-      <div className="mb-1 px-2">
-        <h2 className="text-sm text-muted-foreground">{copy.envSources}</h2>
-      </div>
-      {files.length === 0 ? (
-        <p className="px-2 pb-1 text-sm text-muted-foreground/80">
-          {copy.envNoSources}
-        </p>
-      ) : (
-        <div className="flex flex-col gap-1">
-          {visibleFiles.map((file) => (
-            <button
-              key={file.path}
-              type="button"
-              title={file.path}
-              className="flex h-7 min-w-0 items-center gap-2 rounded-lg px-2 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-              onClick={() => handleOpenPath(file.path)}
+      {goalTitle ? (
+        <>
+          {project ? <div className="my-2 border-t" /> : null}
+          <div className="mb-1 px-2">
+            <h2 className="text-xs font-medium text-muted-foreground">
+              {copy.envGoal}
+            </h2>
+          </div>
+          <div className="px-2 pb-1">
+            <p
+              className="truncate text-sm font-medium text-foreground"
+              title={goalTitle}
             >
-              <RiFileTextLine aria-hidden className="size-3.5 shrink-0" />
-              <span className="min-w-0 flex-1 truncate">{file.name}</span>
-            </button>
-          ))}
-          {overflowCount > 0 ? (
-            <div className="mt-1 px-2 text-xs text-muted-foreground">
-              {t.studioOutputsOverflow(overflowCount)}
+              {goalTitle}
+            </p>
+            <div className="mt-1 flex items-center gap-2 text-xs">
+              <span
+                className={cn(
+                  "flex items-center gap-1",
+                  running ? "text-muted-foreground" : "text-emerald-600"
+                )}
+              >
+                {running ? (
+                  <RiLoader4Line aria-hidden className="size-3 animate-spin" />
+                ) : (
+                  <RiCheckLine aria-hidden className="size-3" />
+                )}
+                {running ? copy.envStatusRunning : copy.envStatusComplete}
+              </span>
+              {goalMeta.length > 0 ? (
+                <span className="text-muted-foreground tabular-nums">
+                  {goalMeta.join(" · ")}
+                </span>
+              ) : null}
             </div>
+          </div>
+        </>
+      ) : null}
+
+      {todos.length > 0 ? (
+        <>
+          <div className="my-2 border-t" />
+          <div className="mb-1 px-2">
+            <h2 className="text-xs font-medium text-muted-foreground">
+              {copy.envProgress}
+            </h2>
+          </div>
+          <ul className="flex flex-col gap-1 px-2 pb-1">
+            {todos.map((todo, index) => (
+              <li
+                key={`${index}-${todo.text}`}
+                className="flex items-start gap-2 text-sm"
+              >
+                {todo.status === "completed" ? (
+                  <RiCheckLine
+                    aria-hidden
+                    className="mt-0.5 size-3.5 shrink-0 text-emerald-600"
+                  />
+                ) : todo.status === "in_progress" ? (
+                  <RiLoader4Line
+                    aria-hidden
+                    className="mt-0.5 size-3.5 shrink-0 animate-spin text-muted-foreground"
+                  />
+                ) : (
+                  <span
+                    aria-hidden
+                    className="mt-1 ml-0.5 size-2.5 shrink-0 rounded-full border border-muted-foreground/50"
+                  />
+                )}
+                <span
+                  className={cn(
+                    "min-w-0 flex-1 break-words",
+                    todo.status === "completed" &&
+                      "text-muted-foreground line-through"
+                  )}
+                >
+                  {todo.text}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+
+      {files.length > 0 ? (
+        <>
+          {project || goalTitle || todos.length > 0 ? (
+            <div className="my-2 border-t" />
           ) : null}
-        </div>
-      )}
+          <div className="mb-1 px-2">
+            <h2 className="text-xs font-medium text-muted-foreground">
+              {copy.envSources}
+            </h2>
+          </div>
+          <div className="flex flex-col gap-1">
+            {visibleFiles.map((file) => (
+              <button
+                key={file.path}
+                type="button"
+                title={file.path}
+                className="flex h-7 min-w-0 items-center gap-2 rounded-lg px-2 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+                onClick={() => handleOpenPath(file.path)}
+              >
+                <RiFileTextLine aria-hidden className="size-3.5 shrink-0" />
+                <span className="min-w-0 flex-1 truncate">{file.name}</span>
+              </button>
+            ))}
+            {overflowCount > 0 ? (
+              <div className="mt-1 px-2 text-xs text-muted-foreground">
+                {t.studioOutputsOverflow(overflowCount)}
+              </div>
+            ) : null}
+          </div>
+        </>
+      ) : null}
 
       <Dialog open={commitDialogOpen} onOpenChange={setCommitDialogOpen}>
         <DialogContent className="sm:max-w-md">
@@ -4350,7 +4530,11 @@ function getStudioRightPanelCopy(locale: string) {
       open: "打开",
       permissions: "权限",
       permissionsHelp: "选择是否让 AstraFlow 在打开网站前先请求批准。",
-      envTitle: "环境",
+      envGitTools: "Git 工具",
+      envGoal: "目标",
+      envProgress: "进度",
+      envStatusRunning: "进行中",
+      envStatusComplete: "已完成",
       envChanges: "变更",
       envRemote: "远程",
       envNoRemote: "暂无远程仓库",
@@ -4427,7 +4611,11 @@ function getStudioRightPanelCopy(locale: string) {
     permissions: "Permissions",
     permissionsHelp:
       "Choose whether AstraFlow should ask before opening websites.",
-    envTitle: "Environment",
+    envGitTools: "Git tools",
+    envGoal: "Goal",
+    envProgress: "Progress",
+    envStatusRunning: "Running",
+    envStatusComplete: "Complete",
     envChanges: "Changes",
     envRemote: "Remote",
     envNoRemote: "No remote",

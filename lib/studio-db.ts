@@ -84,6 +84,7 @@ type DbSessionRow = {
   latest_run_usage: string | null
   available_commands?: string | null
   pinned_at: string | null
+  archived_at: string | null
   is_running?: number
   created_at: string
   updated_at: string
@@ -619,6 +620,7 @@ const studioTableColumns = {
     { name: "latest_run_usage", definition: "latest_run_usage TEXT" },
     { name: "available_commands", definition: "available_commands TEXT" },
     { name: "pinned_at", definition: "pinned_at TEXT" },
+    { name: "archived_at", definition: "archived_at TEXT" },
     { name: "created_at", definition: "created_at TEXT NOT NULL DEFAULT ''" },
     { name: "updated_at", definition: "updated_at TEXT NOT NULL DEFAULT ''" },
   ],
@@ -1206,6 +1208,7 @@ function initializeSchema(database: Database.Database) {
       latest_run_usage TEXT,
       available_commands TEXT,
       pinned_at TEXT,
+      archived_at TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -1680,6 +1683,7 @@ function mapSession(row: DbSessionRow): StudioSession {
       null
     ),
     pinnedAt: row.pinned_at ?? null,
+    archivedAt: row.archived_at ?? null,
     isRunning: row.is_running === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -3814,6 +3818,7 @@ export function listStudioSessions() {
           chat_reasoning_effort,
           latest_run_usage,
           pinned_at,
+          archived_at,
           EXISTS (
             SELECT 1
             FROM studio_messages
@@ -3846,6 +3851,7 @@ export function getStudioSession(sessionId: string) {
           chat_reasoning_effort,
           latest_run_usage,
           pinned_at,
+          archived_at,
           EXISTS (
             SELECT 1
             FROM studio_messages
@@ -3914,6 +3920,7 @@ export function createStudioSession({
     chatReasoningEffort,
     latestRunUsage: null,
     pinnedAt: null,
+    archivedAt: null,
     isRunning: false,
     createdAt: nowIso(),
     updatedAt: nowIso(),
@@ -3934,6 +3941,7 @@ export function createStudioSession({
             chat_reasoning_effort,
             latest_run_usage,
             pinned_at,
+            archived_at,
             created_at,
             updated_at
           )
@@ -3949,6 +3957,7 @@ export function createStudioSession({
             @chatReasoningEffort,
             @latestRunUsage,
             @pinnedAt,
+            @archivedAt,
             @createdAt,
             @updatedAt
           )
@@ -3991,6 +4000,25 @@ export function updateStudioSessionPinned(
       `
     )
     .run(pinnedAt, sessionId)
+
+  return getStudioSession(sessionId)
+}
+
+export function updateStudioSessionArchived(
+  sessionId: string,
+  archived: boolean
+) {
+  const archivedAt = archived ? nowIso() : null
+
+  getDb()
+    .prepare(
+      `
+        UPDATE studio_sessions
+        SET archived_at = ?
+        WHERE id = ?
+      `
+    )
+    .run(archivedAt, sessionId)
 
   return getStudioSession(sessionId)
 }

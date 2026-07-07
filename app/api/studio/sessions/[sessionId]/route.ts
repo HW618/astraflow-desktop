@@ -7,6 +7,7 @@ import {
   deleteStudioSession,
   getStudioLocalProject,
   getStudioSession,
+  updateStudioSessionArchived,
   updateStudioSessionChatPreferences,
   updateStudioSessionPermissionMode,
   updateStudioSessionPinned,
@@ -29,6 +30,7 @@ const updateSessionSchema = z
       .nullable()
       .optional(),
     pinned: z.boolean().optional(),
+    archived: z.boolean().optional(),
   })
   .refine(
     (value) =>
@@ -38,7 +40,8 @@ const updateSessionSchema = z
       value.chatModel !== undefined ||
       value.chatRuntimeId !== undefined ||
       value.chatReasoningEffort !== undefined ||
-      value.pinned !== undefined
+      value.pinned !== undefined ||
+      value.archived !== undefined
   )
 
 type RouteContext = {
@@ -85,6 +88,10 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   if (parsed.data.pinned !== undefined) {
     session = updateStudioSessionPinned(sessionId, parsed.data.pinned)
+  }
+
+  if (parsed.data.archived !== undefined) {
+    session = updateStudioSessionArchived(sessionId, parsed.data.archived)
   }
 
   if (parsed.data.projectId !== undefined) {
