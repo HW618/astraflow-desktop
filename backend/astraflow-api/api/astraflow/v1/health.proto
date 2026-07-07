@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package astraflow.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "astraflow-api/api/astraflow/v1;v1";
+option java_multiple_files = true;
+option java_package = "com.ucloud.astraflow.v1";
+option objc_class_prefix = "AFA";
+
+service HealthService {
+  rpc CheckHealth(CheckHealthRequest) returns (CheckHealthReply) {
+    option (google.api.http) = {
+      get: "/v1/health"
+    };
+  }
+}
+
+message CheckHealthRequest {}
+
+message CheckHealthReply {
+  string status = 1;
+  string service = 2;
+  string version = 3;
+  google.protobuf.Timestamp server_time = 4;
+}

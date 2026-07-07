@@ -1,0 +1,36 @@
+# Generated with protoc-gen-openapi
+# https://github.com/google/gnostic/tree/master/cmd/protoc-gen-openapi
+
+openapi: 3.0.3
+info:
+    title: HealthService API
+    version: 0.0.1
+paths:
+    /v1/health:
+        get:
+            tags:
+                - HealthService
+            operationId: HealthService_CheckHealth
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/astraflow.v1.CheckHealthReply'
+components:
+    schemas:
+        astraflow.v1.CheckHealthReply:
+            type: object
+            properties:
+                status:
+                    type: string
+                service:
+                    type: string
+                version:
+                    type: string
+                serverTime:
+                    type: string
+                    format: date-time
+tags:
+    - name: HealthService
