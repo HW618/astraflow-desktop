@@ -201,13 +201,17 @@ function PromptInputTextarea({
     e.keyCode === 229
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (isImeComposing(e)) {
+      return
+    }
+
     onKeyDown?.(e)
 
     if (e.defaultPrevented) {
       return
     }
 
-    if (e.key === "Enter" && !e.shiftKey && !isImeComposing(e)) {
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
       onSubmit?.()
     }

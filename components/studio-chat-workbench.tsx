@@ -7367,6 +7367,32 @@ type SlashComposerMenuEntry =
   | { kind: "skill"; skill: InstalledSkill }
   | { kind: "mcp"; server: InstalledMcpServer }
 
+function slashMenuEntryMatchesExactToken(
+  entry: SlashComposerMenuEntry | undefined,
+  token: SlashCommandToken | null,
+  value: string
+) {
+  if (!entry || !token) {
+    return false
+  }
+
+  const prefix = token.prefix.trim().toLowerCase()
+
+  if (!prefix || value.trim().toLowerCase() !== `/${prefix}`) {
+    return false
+  }
+
+  if (entry.kind === "command") {
+    return entry.command.name.toLowerCase() === prefix
+  }
+
+  if (entry.kind === "skill") {
+    return entry.skill.slug.toLowerCase() === prefix
+  }
+
+  return false
+}
+
 function mergeSlashCommands(
   builtinCommands: SlashCommandDescriptor[],
   runtimeCommands: SlashCommandDescriptor[]
@@ -7746,6 +7772,8 @@ function ChatComposer({
   const fileInputRef = React.useRef<HTMLInputElement>(null)
   const textareaRef = React.useRef<HTMLTextAreaElement | null>(null)
   const menuAnchorRef = React.useRef<HTMLDivElement | null>(null)
+  const slashMenuScrollRef = React.useRef<HTMLDivElement | null>(null)
+  const mentionMenuScrollRef = React.useRef<HTMLDivElement | null>(null)
   const runtimeCommandRequestIdRef = React.useRef(0)
   const mentionFileRequestIdRef = React.useRef(0)
   const mentionSessionRequestIdRef = React.useRef(0)
@@ -8222,9 +8250,17 @@ function ChatComposer({
         showSlashCommandMenu &&
         (event.key === "Enter" || event.key === "Tab")
       ) {
-        event.preventDefault()
-
         const entry = slashMenuEntries[activeCommandIndex]
+
+        if (
+          event.key === "Enter" &&
+          slashMenuEntryMatchesExactToken(entry, slashCommandToken, value)
+        ) {
+          setDismissedSlashTokenKey(slashCommandTokenKey)
+          return
+        }
+
+        event.preventDefault()
 
         if (entry?.kind === "command") {
           acceptSlashCommand(entry.command)
@@ -8270,7 +8306,9 @@ function ChatComposer({
       showMentionMenu,
       showSlashCommandMenu,
       slashMenuEntries,
+      slashCommandToken,
       slashCommandTokenKey,
+      value,
     ]
   )
 
@@ -8381,6 +8419,26 @@ function ChatComposer({
     },
     [handleComposerMenuKeyDown, handleHistoryNavigationKeyDown]
   )
+
+  React.useEffect(() => {
+    if (!showSlashCommandMenu) {
+      return
+    }
+
+    slashMenuScrollRef.current
+      ?.querySelector<HTMLElement>("[data-active='true']")
+      ?.scrollIntoView({ block: "nearest" })
+  }, [activeCommandIndex, showSlashCommandMenu, slashMenuEntries.length])
+
+  React.useEffect(() => {
+    if (!showMentionMenu) {
+      return
+    }
+
+    mentionMenuScrollRef.current
+      ?.querySelector<HTMLElement>("[data-active='true']")
+      ?.scrollIntoView({ block: "nearest" })
+  }, [activeMentionIndex, mentionMenuItemCount, showMentionMenu])
 
   React.useEffect(() => {
     const requestId = mentionFileRequestIdRef.current + 1
@@ -8671,7 +8729,10 @@ function ChatComposer({
               event.stopPropagation()
             }}
           >
-            <div className="max-h-64 overflow-y-auto p-1.5">
+            <div
+              ref={slashMenuScrollRef}
+              className="max-h-64 overflow-y-auto p-1.5"
+            >
               {slashMenuEntries.length > 0 ? (
                 <>
                   {filteredSlashCommands.map((command, index) => {
@@ -8683,6 +8744,7 @@ function ChatComposer({
                         type="button"
                         role="option"
                         aria-selected={selected}
+                        data-active={selected ? "true" : undefined}
                         className={cn(
                           "flex w-full min-w-0 items-baseline gap-2.5 rounded-lg px-3 py-2 text-left transition-colors outline-none",
                           selected
@@ -8735,6 +8797,7 @@ function ChatComposer({
                             type="button"
                             role="option"
                             aria-selected={selected}
+                            data-active={selected ? "true" : undefined}
                             className={cn(
                               "flex w-full min-w-0 items-baseline gap-2.5 rounded-lg px-3 py-2 text-left transition-colors outline-none",
                               selected
@@ -8794,6 +8857,7 @@ function ChatComposer({
                             type="button"
                             role="option"
                             aria-selected={selected}
+                            data-active={selected ? "true" : undefined}
                             className={cn(
                               "flex w-full min-w-0 items-baseline gap-2.5 rounded-lg px-3 py-2 text-left transition-colors outline-none",
                               selected
@@ -8852,7 +8916,10 @@ function ChatComposer({
               event.stopPropagation()
             }}
           >
-            <div className="max-h-72 overflow-y-auto p-1.5">
+            <div
+              ref={mentionMenuScrollRef}
+              className="max-h-72 overflow-y-auto p-1.5"
+            >
               <div className="px-3 pt-1.5 pb-1 text-[13px] text-muted-foreground">
                 {t.studioMentionFilesTitle}
               </div>
@@ -8877,6 +8944,7 @@ function ChatComposer({
                       type="button"
                       role="option"
                       aria-selected={selected}
+                      data-active={selected ? "true" : undefined}
                       className={cn(
                         "flex w-full min-w-0 items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors outline-none",
                         selected
@@ -8930,6 +8998,7 @@ function ChatComposer({
                         type="button"
                         role="option"
                         aria-selected={selected}
+                        data-active={selected ? "true" : undefined}
                         className={cn(
                           "flex w-full min-w-0 items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors outline-none",
                           selected
@@ -8968,6 +9037,11 @@ function ChatComposer({
                   type="button"
                   role="option"
                   aria-selected={activeMentionIndex === addLocalMentionIndex}
+                  data-active={
+                    activeMentionIndex === addLocalMentionIndex
+                      ? "true"
+                      : undefined
+                  }
                   className={cn(
                     "flex w-full min-w-0 items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors outline-none",
                     activeMentionIndex === addLocalMentionIndex

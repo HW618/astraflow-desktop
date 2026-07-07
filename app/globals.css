@@ -145,11 +145,13 @@ html[data-astraflow-desktop="true"][data-astraflow-platform="darwin"] {
   box-shadow:
     0 22px 70px oklch(0 0 0 / 18%),
     0 0 0 1px oklch(1 0 0 / 40%) inset;
+  -webkit-app-region: no-drag;
 }
 
 .driver-popover.astraflow-driver-popover * {
   font-family: var(--font-sans);
   letter-spacing: 0;
+  -webkit-app-region: no-drag;
 }
 
 .driver-popover.astraflow-driver-popover .driver-popover-title {
@@ -172,6 +174,8 @@ html[data-astraflow-desktop="true"][data-astraflow-platform="darwin"] {
   right: 10px;
   border-radius: 999px;
   color: var(--muted-foreground);
+  pointer-events: auto;
+  z-index: 1;
 }
 
 .driver-popover.astraflow-driver-popover .driver-popover-close-btn:hover,

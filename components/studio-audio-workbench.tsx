@@ -3,6 +3,7 @@
 import * as React from "react"
 import {
   RiAddLine,
+  RiArrowDownSLine,
   RiCloseLine,
   RiDownloadLine,
   RiLoader4Line,
@@ -846,8 +847,6 @@ function ParameterControl({
   onChange,
   disabled,
 }: ParameterControlProps) {
-  const suggestionListId = React.useId()
-
   if (field.kind === "boolean") {
     const next = Boolean(value)
     return (
@@ -968,24 +967,86 @@ function ParameterControl({
   return (
     <div className="flex flex-col gap-1.5">
       <ParameterLabel field={field} />
-      <Input
-        list={field.suggestedValues?.length ? suggestionListId : undefined}
+      <SuggestedTextInput
         value={typeof value === "string" ? value : ""}
+        onChange={onChange}
+        suggestions={field.suggestedValues}
+        disabled={disabled}
+      />
+    </div>
+  )
+}
+
+function SuggestedTextInput({
+  disabled,
+  onChange,
+  suggestions,
+  value,
+}: {
+  disabled?: boolean
+  onChange: (value: string) => void
+  suggestions?: StudioAudioParameterField["suggestedValues"]
+  value: string
+}) {
+  const [open, setOpen] = React.useState(false)
+  const options = suggestions ?? []
+
+  if (options.length === 0) {
+    return (
+      <Input
+        value={value}
         onChange={(event) => onChange(event.target.value)}
         className="h-9 rounded-2xl"
         disabled={disabled}
       />
-      {field.suggestedValues?.length ? (
-        <datalist id={suggestionListId}>
-          {field.suggestedValues.map((option) => (
-            <option
-              key={option.value}
-              value={option.value}
-              label={option.label}
-            />
-          ))}
-        </datalist>
-      ) : null}
+    )
+  }
+
+  return (
+    <div className="relative">
+      <Input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-9 rounded-2xl pr-10"
+        disabled={disabled}
+      />
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className="absolute top-1 right-1 inline-flex size-7 items-center justify-center rounded-xl text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/30 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
+            aria-label="Show suggested values"
+            disabled={disabled}
+          >
+            <RiArrowDownSLine aria-hidden className="size-4" />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent
+          side="bottom"
+          align="end"
+          sideOffset={6}
+          className="w-48 overflow-hidden rounded-2xl p-1"
+        >
+          <div className="max-h-56 overflow-y-auto">
+            {options.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={cn(
+                  "flex h-8 w-full items-center rounded-xl px-2 text-left text-sm transition hover:bg-muted focus-visible:bg-muted focus-visible:outline-none",
+                  value === option.value && "bg-muted font-medium"
+                )}
+                onClick={() => {
+                  onChange(option.value)
+                  setOpen(false)
+                }}
+              >
+                <span className="truncate">{option.label}</span>
+              </button>
+            ))}
+          </div>
+        </PopoverContent>
+      </Popover>
     </div>
   )
 }

@@ -1005,6 +1005,16 @@ function createConversationRecap(
   ].join("\n")
 }
 
+function isSlashCommandText(text: string) {
+  return /^\/[A-Za-z0-9][\w:-]*(?:\s|$)/.test(text.trim())
+}
+
+function startsWithSlashCommand(blocks: ContentBlock[]) {
+  const firstBlock = blocks[0]
+
+  return firstBlock?.type === "text" && isSlashCommandText(firstBlock.text)
+}
+
 function createPromptBlocks(
   messages: BaseMessage[],
   shouldIncludeRecap: boolean,
@@ -1028,6 +1038,10 @@ function createPromptBlocks(
   const mentionBlocks = getFilePromptMentions(latestUserMessage.message).map(
     mentionToResourceLinkBlock
   )
+
+  if (startsWithSlashCommand(latestBlocks)) {
+    return [...latestBlocks, ...mentionBlocks]
+  }
 
   if (!shouldIncludeRecap) {
     return [...preambleBlocks, ...latestBlocks, ...mentionBlocks]
