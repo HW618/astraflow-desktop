@@ -196,6 +196,27 @@ function formatSessionRelativeTime(value: string) {
   return `${Math.floor(diffDays / 30)}mo`
 }
 
+function formatProjectGitSummary(project: StudioLocalProjectWithGitInfo) {
+  const changedFiles = project.git.changedFiles
+  const additions = project.git.additions
+  const deletions = project.git.deletions
+
+  if (!changedFiles && !additions && !deletions) {
+    return ""
+  }
+
+  const fileSummary =
+    typeof changedFiles === "number" && changedFiles > 0
+      ? `${changedFiles}`
+      : ""
+  const diffSummary =
+    typeof additions === "number" && typeof deletions === "number"
+      ? `+${additions} -${deletions}`
+      : ""
+
+  return [fileSummary, diffSummary].filter(Boolean).join(" · ")
+}
+
 function parseActiveStudioRoute(
   pathname: string,
   modeQuery: string | null
@@ -1147,6 +1168,7 @@ function AppSidebar() {
                       activeProjectId === project.id
                     const projectSessions = getProjectSessions(project.id)
                     const Icon = project.git.branch ? FolderGit2 : Folder
+                    const gitSummary = formatProjectGitSummary(project)
 
                     return (
                       <SidebarMenuItem key={project.id}>
@@ -1158,7 +1180,11 @@ function AppSidebar() {
                           }
                           className="h-8 rounded-lg px-2.5 pr-14"
                           tooltip={project.name}
-                          title={project.path}
+                          title={
+                            gitSummary
+                              ? `${project.path} · ${gitSummary}`
+                              : project.path
+                          }
                           onClick={() => toggleProject(project.id)}
                         >
                           <ChevronRight
@@ -1170,6 +1196,11 @@ function AppSidebar() {
                           />
                           <Icon aria-hidden />
                           <span>{project.name}</span>
+                          {gitSummary ? (
+                            <span className="ml-auto max-w-20 truncate font-mono text-[10px] text-muted-foreground tabular-nums">
+                              {gitSummary}
+                            </span>
+                          ) : null}
                         </SidebarMenuButton>
 
                         <SidebarMenuAction

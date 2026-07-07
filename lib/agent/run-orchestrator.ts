@@ -44,6 +44,32 @@ type StudioMediaGenerationPart = Extract<
 >
 type StudioSubagentPart = Extract<StudioMessagePart, { type: "subagent" }>
 
+function getDiffStats(diff: string | null | undefined) {
+  if (!diff) {
+    return null
+  }
+
+  let additions = 0
+  let deletions = 0
+
+  for (const line of diff.split(/\r?\n/)) {
+    if (line.startsWith("+++") || line.startsWith("---")) {
+      continue
+    }
+
+    if (line.startsWith("+")) {
+      additions += 1
+      continue
+    }
+
+    if (line.startsWith("-")) {
+      deletions += 1
+    }
+  }
+
+  return { additions, deletions }
+}
+
 type StudioChatRunRecord = StudioChatRunSnapshot & {
   abortWatchdogTimer: ReturnType<typeof setTimeout> | null
   abortController: AbortController
@@ -934,6 +960,8 @@ function createSnapshotAccumulator() {
           status,
           error: event.error ?? null,
           content,
+          diff: event.diff?.trim() || null,
+          stats: getDiffStats(event.diff),
           parentTaskId: event.parentTaskId ?? null,
         },
       ],

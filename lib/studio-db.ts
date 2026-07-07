@@ -2261,6 +2261,14 @@ function parseParts(raw: string | null): StudioMessagePart[] {
             (part.status === "complete" || part.status === "error") &&
             (typeof part.error === "string" || part.error === null) &&
             typeof part.content === "string" &&
+            (typeof part.diff === "string" ||
+              part.diff === null ||
+              typeof part.diff === "undefined") &&
+            (part.stats === null ||
+              typeof part.stats === "undefined" ||
+              (typeof part.stats === "object" &&
+                typeof part.stats.additions === "number" &&
+                typeof part.stats.deletions === "number")) &&
             (typeof part.parentTaskId === "string" ||
               part.parentTaskId === null ||
               typeof part.parentTaskId === "undefined")
@@ -2353,6 +2361,17 @@ function parseParts(raw: string | null): StudioMessagePart[] {
                   ? part.durationMs
                   : null,
             }
+          : part.type === "file"
+            ? {
+                ...part,
+                diff: typeof part.diff === "string" ? part.diff : null,
+                stats:
+                  part.stats &&
+                  typeof part.stats.additions === "number" &&
+                  typeof part.stats.deletions === "number"
+                    ? part.stats
+                    : null,
+              }
           : part
       )
   } catch {

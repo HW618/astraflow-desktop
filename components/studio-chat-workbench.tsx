@@ -6545,6 +6545,43 @@ function SelectOptionRow({
   )
 }
 
+function formatProjectGitMeta(
+  project: StudioLocalProjectWithGitInfo,
+  t: ReturnType<typeof useI18n>["t"]
+) {
+  const meta = [t.studioLocalProjectLocal]
+  const isZh = t.studioThinking === "正在思考"
+
+  if (project.git.branch) {
+    meta.push(project.git.branch)
+  }
+
+  if (project.git.isDirty) {
+    meta.push(t.studioLocalProjectDirty)
+  }
+
+  if (
+    typeof project.git.changedFiles === "number" &&
+    project.git.changedFiles > 0
+  ) {
+    meta.push(
+      isZh
+        ? `${project.git.changedFiles} 个文件`
+        : `${project.git.changedFiles} files`
+    )
+  }
+
+  if (
+    typeof project.git.additions === "number" &&
+    typeof project.git.deletions === "number" &&
+    (project.git.additions > 0 || project.git.deletions > 0)
+  ) {
+    meta.push(`+${project.git.additions} -${project.git.deletions}`)
+  }
+
+  return meta.join(" · ")
+}
+
 function getRuntimeGuideDescription(
   runtimeId: string,
   fallback: string,
@@ -8550,13 +8587,7 @@ function ChatComposer({
                         />
                       }
                       label={project.name}
-                      meta={[
-                        t.studioLocalProjectLocal,
-                        project.git.branch,
-                        project.git.isDirty ? t.studioLocalProjectDirty : null,
-                      ]
-                        .filter(Boolean)
-                        .join(" · ")}
+                      meta={formatProjectGitMeta(project, t)}
                     />
                   </SelectItem>
                 ))
@@ -8643,7 +8674,7 @@ function ChatComposer({
             className="flex min-w-0 items-center gap-1.5 px-2"
             title={
               selectedProject.git.isDirty
-                ? `${selectedProject.git.branch} · ${t.studioLocalProjectDirty}`
+                ? formatProjectGitMeta(selectedProject, t)
                 : selectedProject.git.branch
             }
           >

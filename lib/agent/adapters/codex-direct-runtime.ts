@@ -742,6 +742,12 @@ function mapPatchKind(kind: unknown): "create" | "delete" | "edit" {
   return "edit"
 }
 
+function getFileChangeDiff(change: Record<string, unknown> | null) {
+  const diff = getString(change?.diff)
+
+  return diff.trim() ? diff : null
+}
+
 function toolCallEvent(
   id: string,
   name: string,
@@ -839,12 +845,15 @@ function createFileChangeEvents(
         return null
       }
 
-      return {
+      const event: Extract<AgentEvent, { type: "file_change" }> = {
         type: "file_change" as const,
         path,
         kind: mapPatchKind(record?.kind),
         ...(status ? { status } : {}),
       }
+      const diff = getFileChangeDiff(record)
+
+      return diff ? { ...event, diff } : event
     })
     .filter((event): event is Extract<AgentEvent, { type: "file_change" }> =>
       Boolean(event)

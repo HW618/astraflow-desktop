@@ -20,6 +20,7 @@ import { runSafeGit } from "./safe-git"
 export const runtime = "nodejs"
 
 const GIT_TIMEOUT_MS = 750
+const GIT_DIFF_TIMEOUT_MS = 1_500
 
 const createLocalProjectSchema = z.object({
   path: z.string().trim().min(1),
@@ -37,29 +38,78 @@ const execGit = (path: string, args: string[]) =>
     maxBuffer: 1024 * 1024,
   })
 
+const execGitDiff = (path: string, args: string[]) =>
+  runSafeGit(path, args, {
+    timeout: GIT_DIFF_TIMEOUT_MS,
+    maxBuffer: 8 * 1024 * 1024,
+  })
+
+function parseGitStatusChangedFiles(output: string) {
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter(Boolean).length
+}
+
+function parseNumstat(output: string) {
+  let additions = 0
+  let deletions = 0
+
+  for (const line of output.split(/\r?\n/)) {
+    if (!line.trim()) {
+      continue
+    }
+
+    const [rawAdditions, rawDeletions] = line.split(/\s+/, 2)
+    const nextAdditions = Number.parseInt(rawAdditions, 10)
+    const nextDeletions = Number.parseInt(rawDeletions, 10)
+
+    if (Number.isFinite(nextAdditions)) {
+      additions += nextAdditions
+    }
+
+    if (Number.isFinite(nextDeletions)) {
+      deletions += nextDeletions
+    }
+  }
+
+  return { additions, deletions }
+}
+
 async function readGitInfo(path: string): Promise<StudioLocalProjectGitInfo> {
   try {
     await execGit(path, ["rev-parse", "--is-inside-work-tree"])
 
-    const [branchResult, statusResult] = await Promise.allSettled([
+    const [branchResult, statusResult, numstatResult] = await Promise.allSettled([
       execGit(path, ["branch", "--show-current"]),
       execGit(path, ["status", "--porcelain"]),
+      execGitDiff(path, ["diff", "--numstat", "HEAD", "--"]),
     ])
+    const statusOutput =
+      statusResult.status === "fulfilled" ? statusResult.value : null
+    const diffStats =
+      numstatResult.status === "fulfilled"
+        ? parseNumstat(numstatResult.value)
+        : null
 
     return {
       branch:
         branchResult.status === "fulfilled"
           ? branchResult.value.trim() || null
           : null,
-      isDirty:
-        statusResult.status === "fulfilled"
-          ? statusResult.value.trim().length > 0
-          : null,
+      isDirty: statusOutput === null ? null : statusOutput.trim().length > 0,
+      changedFiles:
+        statusOutput === null ? null : parseGitStatusChangedFiles(statusOutput),
+      additions: diffStats?.additions ?? null,
+      deletions: diffStats?.deletions ?? null,
     }
   } catch {
     return {
       branch: null,
       isDirty: null,
+      changedFiles: null,
+      additions: null,
+      deletions: null,
     }
   }
 }

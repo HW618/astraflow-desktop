@@ -138,6 +138,7 @@ export type AgentEvent =
       kind: "create" | "edit" | "delete"
       status?: "complete" | "error"
       error?: string
+      diff?: string | null
       parentTaskId?: string
     }>
   | WithTrace<{

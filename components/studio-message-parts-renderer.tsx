@@ -47,13 +47,19 @@ import {
   ChainOfThoughtStep,
   ChainOfThoughtTrigger,
 } from "@/components/ui/chain-of-thought"
-import { CollapsibleContent } from "@/components/ui/collapsible"
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
+import { Input } from "@/components/ui/input"
 import { MessageContent } from "@/components/ui/message"
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useI18n } from "@/components/i18n-provider"
 import { getMcpToolDisplayName, isMcpToolName } from "@/lib/mcp"
 import {
@@ -79,6 +85,12 @@ type StudioMediaGenerationPart = Extract<
   StudioMessagePart,
   { type: "media_generation" }
 >
+type StudioFileGroupPart = {
+  id: string
+  type: "file_group"
+  files: StudioFilePart[]
+}
+type RenderableStudioMessagePart = StudioMessagePart | StudioFileGroupPart
 
 type MessageRenderEnvironment = "remote" | "local"
 
@@ -821,6 +833,38 @@ export function hasRenderableReasoningParts(parts: StudioMessagePart[]) {
   )
 }
 
+function groupFileParts(parts: StudioMessagePart[]): RenderableStudioMessagePart[] {
+  const groupedParts: RenderableStudioMessagePart[] = []
+  let fileBuffer: StudioFilePart[] = []
+
+  function flushFileBuffer() {
+    if (fileBuffer.length === 0) {
+      return
+    }
+
+    groupedParts.push({
+      id: `file-group-${fileBuffer[0]?.id ?? groupedParts.length}`,
+      type: "file_group",
+      files: fileBuffer,
+    })
+    fileBuffer = []
+  }
+
+  for (const part of parts) {
+    if (part.type === "file") {
+      fileBuffer.push(part)
+      continue
+    }
+
+    flushFileBuffer()
+    groupedParts.push(part)
+  }
+
+  flushFileBuffer()
+
+  return groupedParts
+}
+
 function getRenderableMessageParts({
   content,
   activities,
@@ -830,7 +874,9 @@ function getRenderableMessageParts({
   activities: StudioMessageActivity[]
   parts: StudioMessagePart[]
 }) {
-  return parts.length > 0 ? parts : getFallbackMessageParts(content, activities)
+  return groupFileParts(
+    parts.length > 0 ? parts : getFallbackMessageParts(content, activities)
+  )
 }
 
 function getWebSearchQuery(input: string) {
@@ -2827,18 +2873,232 @@ function getFilePartLabel(
   return isZh ? `已编辑 ${part.path}` : `Edited ${part.path}`
 }
 
-function AssistantFileChange({ part }: { part: StudioFilePart }) {
+type DiffViewMode = "summary" | "diff"
+
+type ParsedDiffLine = {
+  id: string
+  kind: "context" | "add" | "delete" | "meta"
+  oldLine: number | null
+  newLine: number | null
+  content: string
+}
+
+function getFilePartStats(part: StudioFilePart) {
+  if (part.stats) {
+    return part.stats
+  }
+
+  if (!part.diff) {
+    return { additions: 0, deletions: 0 }
+  }
+
+  let additions = 0
+  let deletions = 0
+
+  for (const line of part.diff.split(/\r?\n/)) {
+    if (line.startsWith("+++") || line.startsWith("---")) {
+      continue
+    }
+
+    if (line.startsWith("+")) {
+      additions += 1
+      continue
+    }
+
+    if (line.startsWith("-")) {
+      deletions += 1
+    }
+  }
+
+  return { additions, deletions }
+}
+
+function getFileGroupStats(files: StudioFilePart[]) {
+  return files.reduce(
+    (stats, file) => {
+      const fileStats = getFilePartStats(file)
+
+      return {
+        additions: stats.additions + fileStats.additions,
+        deletions: stats.deletions + fileStats.deletions,
+      }
+    },
+    { additions: 0, deletions: 0 }
+  )
+}
+
+function parseUnifiedDiff(diff: string): ParsedDiffLine[] {
+  const parsedLines: ParsedDiffLine[] = []
+  let oldLine: number | null = null
+  let newLine: number | null = null
+
+  diff.split(/\r?\n/).forEach((line, index) => {
+    const hunkMatch = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/)
+
+    if (hunkMatch) {
+      oldLine = Number.parseInt(hunkMatch[1], 10)
+      newLine = Number.parseInt(hunkMatch[2], 10)
+      parsedLines.push({
+        id: `${index}:meta`,
+        kind: "meta",
+        oldLine: null,
+        newLine: null,
+        content: line,
+      })
+      return
+    }
+
+    if (
+      line.startsWith("diff ") ||
+      line.startsWith("index ") ||
+      line.startsWith("---") ||
+      line.startsWith("+++") ||
+      line.startsWith("\\")
+    ) {
+      parsedLines.push({
+        id: `${index}:meta`,
+        kind: "meta",
+        oldLine: null,
+        newLine: null,
+        content: line,
+      })
+      return
+    }
+
+    if (line.startsWith("+")) {
+      parsedLines.push({
+        id: `${index}:add`,
+        kind: "add",
+        oldLine: null,
+        newLine,
+        content: line,
+      })
+      newLine = newLine === null ? null : newLine + 1
+      return
+    }
+
+    if (line.startsWith("-")) {
+      parsedLines.push({
+        id: `${index}:delete`,
+        kind: "delete",
+        oldLine,
+        newLine: null,
+        content: line,
+      })
+      oldLine = oldLine === null ? null : oldLine + 1
+      return
+    }
+
+    parsedLines.push({
+      id: `${index}:context`,
+      kind: "context",
+      oldLine,
+      newLine,
+      content: line,
+    })
+    oldLine = oldLine === null ? null : oldLine + 1
+    newLine = newLine === null ? null : newLine + 1
+  })
+
+  return parsedLines
+}
+
+function getDiffLineClassName(kind: ParsedDiffLine["kind"]) {
+  if (kind === "add") {
+    return "bg-emerald-500/10 text-emerald-900 dark:text-emerald-200"
+  }
+
+  if (kind === "delete") {
+    return "bg-destructive/10 text-destructive"
+  }
+
+  if (kind === "meta") {
+    return "bg-muted/70 text-muted-foreground"
+  }
+
+  return "text-foreground"
+}
+
+function FileDiffStats({ part }: { part: StudioFilePart }) {
+  const stats = getFilePartStats(part)
+
+  return (
+    <span className="flex shrink-0 items-center gap-1 font-mono text-xs tabular-nums">
+      <span className="text-emerald-600">+{stats.additions}</span>
+      <span className="text-destructive">-{stats.deletions}</span>
+    </span>
+  )
+}
+
+function FileDiffCode({ part }: { part: StudioFilePart }) {
+  const { t } = useI18n()
+  const lines = React.useMemo(
+    () => (part.diff ? parseUnifiedDiff(part.diff) : []),
+    [part.diff]
+  )
+  const isZh = isZhLocale(t)
+
+  if (!part.diff || lines.length === 0) {
+    return (
+      <div className="rounded-lg border border-border/70 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+        {isZh ? "没有可展示的 diff。" : "No diff available."}
+      </div>
+    )
+  }
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-border/70 bg-background">
+      <div className="flex items-center justify-between gap-3 border-b border-border/70 bg-muted/40 px-3 py-2">
+        <div className="min-w-0 truncate font-mono text-xs text-foreground">
+          {part.path}
+        </div>
+        <FileDiffStats part={part} />
+      </div>
+      <div className="max-h-[440px] overflow-auto text-[12px] leading-5">
+        {lines.map((line) => (
+          <div
+            key={line.id}
+            className={cn(
+              "grid min-w-max grid-cols-[3.25rem_3.25rem_1fr] font-mono",
+              getDiffLineClassName(line.kind)
+            )}
+          >
+            <span className="select-none border-r border-border/50 px-2 text-right text-muted-foreground">
+              {line.oldLine ?? ""}
+            </span>
+            <span className="select-none border-r border-border/50 px-2 text-right text-muted-foreground">
+              {line.newLine ?? ""}
+            </span>
+            <span className="whitespace-pre px-3">{line.content || " "}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function AssistantFileChangeSummaryRow({
+  active,
+  part,
+  onSelect,
+}: {
+  active: boolean
+  part: StudioFilePart
+  onSelect: () => void
+}) {
   const { t } = useI18n()
   const label = getFilePartLabel(part, t)
 
   return (
-    <div
+    <button
+      type="button"
       className={cn(
-        assistantTraceContainerClassName,
-        "flex min-w-0 items-center gap-2 rounded-xl border border-border/70 bg-muted/30 px-3 py-1.5 text-sm text-foreground",
-        part.status === "error" && "border-destructive/30 bg-destructive/5"
+        "flex min-h-9 w-full min-w-0 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors hover:bg-muted/60",
+        active && "bg-muted text-foreground",
+        part.status === "error" && "text-destructive"
       )}
       title={part.error ?? label}
+      onClick={onSelect}
     >
       <span
         className={cn(
@@ -2849,7 +3109,180 @@ function AssistantFileChange({ part }: { part: StudioFilePart }) {
         {getFilePartIcon(part)}
       </span>
       <span className="min-w-0 truncate">{label}</span>
-    </div>
+      <FileDiffStats part={part} />
+    </button>
+  )
+}
+
+function getFileGroupLabel({
+  count,
+  isZh,
+}: {
+  count: number
+  isZh: boolean
+}) {
+  if (isZh) {
+    return count > 1 ? `${count} 个文件变更` : "1 个文件变更"
+  }
+
+  return count > 1 ? `${count} file changes` : "1 file change"
+}
+
+function AssistantFileChangeGroup({ files }: { files: StudioFilePart[] }) {
+  const { t } = useI18n()
+  const isZh = isZhLocale(t)
+  const [open, setOpen] = React.useState(true)
+  const [query, setQuery] = React.useState("")
+  const [view, setView] = React.useState<DiffViewMode>("summary")
+  const [activeFileId, setActiveFileId] = React.useState(files[0]?.id ?? "")
+  const stats = React.useMemo(() => getFileGroupStats(files), [files])
+  const normalizedQuery = query.trim().toLowerCase()
+  const visibleFiles = React.useMemo(() => {
+    if (!normalizedQuery) {
+      return files
+    }
+
+    return files.filter((file) => {
+      const haystack = `${file.path}\n${file.content}\n${file.diff ?? ""}`
+        .toLowerCase()
+
+      return haystack.includes(normalizedQuery)
+    })
+  }, [files, normalizedQuery])
+  const selectedActiveFileId = visibleFiles.some(
+    (file) => file.id === activeFileId
+  )
+    ? activeFileId
+    : (visibleFiles[0]?.id ?? "")
+  const activeFile =
+    visibleFiles.find((file) => file.id === selectedActiveFileId) ?? null
+
+  if (files.length === 0) {
+    return null
+  }
+
+  return (
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      className={cn(
+        assistantTraceContainerClassName,
+        "overflow-hidden rounded-xl border border-border/70 bg-muted/30 text-sm text-foreground",
+        files.some((file) => file.status === "error") &&
+          "border-destructive/30 bg-destructive/5"
+      )}
+    >
+      <div className="flex min-w-0 items-center gap-2 px-3 py-2">
+        <CollapsibleTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="size-7 shrink-0 rounded-lg"
+            aria-label={open ? (isZh ? "收起" : "Collapse") : isZh ? "展开" : "Expand"}
+            title={open ? (isZh ? "收起" : "Collapse") : isZh ? "展开" : "Expand"}
+          >
+            <RiArrowDownSLine
+              aria-hidden
+              className={cn("size-4 transition-transform", !open && "-rotate-90")}
+            />
+          </Button>
+        </CollapsibleTrigger>
+        <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-background text-muted-foreground">
+          <RiFileEditLine aria-hidden className="size-4" />
+        </span>
+        <span className="min-w-0 flex-1 truncate font-medium">
+          {getFileGroupLabel({ count: files.length, isZh })}
+        </span>
+        <span className="flex shrink-0 items-center gap-1 font-mono text-xs tabular-nums">
+          <span className="text-emerald-600">+{stats.additions}</span>
+          <span className="text-destructive">-{stats.deletions}</span>
+        </span>
+      </div>
+
+      <CollapsibleContent>
+        <div className="flex flex-col gap-3 border-t border-border/70 p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative min-w-40 flex-1">
+              <RiSearchLine
+                aria-hidden
+                className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground"
+              />
+              <Input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={isZh ? "搜索文件或 diff" : "Search files or diff"}
+                className="h-8 rounded-lg pl-8 text-xs"
+              />
+            </div>
+            <ToggleGroup
+              type="single"
+              value={view}
+              onValueChange={(value) => {
+                if (value === "summary" || value === "diff") {
+                  setView(value)
+                }
+              }}
+              size="sm"
+              variant="outline"
+              spacing={0}
+              className="shrink-0"
+            >
+              <ToggleGroupItem value="summary">
+                {isZh ? "摘要" : "Summary"}
+              </ToggleGroupItem>
+              <ToggleGroupItem value="diff">
+                {isZh ? "Diff" : "Diff"}
+              </ToggleGroupItem>
+            </ToggleGroup>
+            <Badge variant="secondary" className="shrink-0">
+              {visibleFiles.length}/{files.length}
+            </Badge>
+          </div>
+
+          {visibleFiles.length === 0 ? (
+            <div className="rounded-lg border border-border/70 bg-background px-3 py-4 text-sm text-muted-foreground">
+              {isZh ? "没有匹配的文件。" : "No matching files."}
+            </div>
+          ) : view === "summary" ? (
+            <div className="flex flex-col gap-1 rounded-lg border border-border/70 bg-background p-1">
+              {visibleFiles.map((file) => (
+                <AssistantFileChangeSummaryRow
+                  key={file.id}
+                  active={file.id === activeFile?.id}
+                  part={file}
+                  onSelect={() => {
+                    setActiveFileId(file.id)
+                    setView("diff")
+                  }}
+                />
+              ))}
+            </div>
+          ) : activeFile ? (
+            <div className="flex flex-col gap-2">
+              {visibleFiles.length > 1 ? (
+                <div className="flex gap-1 overflow-x-auto pb-1">
+                  {visibleFiles.map((file) => (
+                    <Button
+                      key={file.id}
+                      type="button"
+                      variant={file.id === activeFile.id ? "secondary" : "ghost"}
+                      size="sm"
+                      className="h-7 max-w-56 shrink-0 rounded-lg px-2 text-xs"
+                      title={file.path}
+                      onClick={() => setActiveFileId(file.id)}
+                    >
+                      <span className="truncate">{file.path}</span>
+                    </Button>
+                  ))}
+                </div>
+              ) : null}
+              <FileDiffCode part={activeFile} />
+            </div>
+          ) : null}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
   )
 }
 
@@ -3046,7 +3479,7 @@ function getMediaUrlMapKeys(url: string) {
   return keys
 }
 
-function createMediaUrlMap(parts: StudioMessagePart[]) {
+function createMediaUrlMap(parts: RenderableStudioMessagePart[]) {
   const urlMap: Record<string, string> = {}
 
   for (const part of parts) {
@@ -3275,8 +3708,12 @@ export const MessagePartsRenderer = React.memo(function MessagePartsRenderer({
             return <AssistantSubagent key={part.id} part={part} />
           }
 
+          if (part.type === "file_group") {
+            return <AssistantFileChangeGroup key={part.id} files={part.files} />
+          }
+
           if (part.type === "file") {
-            return <AssistantFileChange key={part.id} part={part} />
+            return <AssistantFileChangeGroup key={part.id} files={[part]} />
           }
 
           if (part.type === "media_generation") {

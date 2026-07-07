@@ -51,6 +51,13 @@ export type StudioMessageTodo = {
   priority?: string | null
 }
 
+export type StudioDiffLineKind = "context" | "add" | "delete" | "meta"
+
+export type StudioFileDiffStats = {
+  additions: number
+  deletions: number
+}
+
 export type StudioMediaGenerationStatus =
   | "queued"
   | "running"
@@ -147,6 +154,8 @@ export type StudioMessagePart =
       status: "complete" | "error"
       error: string | null
       content: string
+      diff?: string | null
+      stats?: StudioFileDiffStats | null
       parentTaskId?: string | null
     }
   | {
@@ -235,6 +244,9 @@ export type StudioLocalProject = {
 export type StudioLocalProjectGitInfo = {
   branch: string | null
   isDirty: boolean | null
+  changedFiles: number | null
+  additions: number | null
+  deletions: number | null
 }
 
 export type StudioLocalProjectWithGitInfo = StudioLocalProject & {
