@@ -4092,7 +4092,15 @@ function StudioEnvironmentCard({
   const visibleFiles = files.slice(0, 8)
   const overflowCount = Math.max(0, files.length - visibleFiles.length)
   const git = project?.git ?? null
-  const hasGit = Boolean(git?.branch || git?.remote || git?.branches?.length)
+  const hasGitRepository = Boolean(
+    git?.branch || git?.remote || git?.branches?.length
+  )
+  const hasGitChanges =
+    hasGitRepository &&
+    (git?.isDirty === true ||
+      (git?.changedFiles ?? 0) > 0 ||
+      (git?.additions ?? 0) > 0 ||
+      (git?.deletions ?? 0) > 0)
   const completedTodoCount = todos.filter(
     (todo) => todo.status === "completed"
   ).length
@@ -4103,7 +4111,7 @@ function StudioEnvironmentCard({
       : null,
   ].filter(Boolean)
 
-  if (!project && files.length === 0 && !goalTitle) {
+  if (!hasGitChanges && files.length === 0 && !goalTitle && todos.length === 0) {
     return null
   }
 
@@ -4208,7 +4216,7 @@ function StudioEnvironmentCard({
 
   return (
     <div className="pointer-events-auto absolute top-4 right-8 z-20 w-64 max-w-[calc(100%-4rem)] rounded-2xl border bg-popover p-3 text-popover-foreground shadow-xl shadow-foreground/10">
-      {project ? (
+      {project && hasGitChanges ? (
         <>
           <div className="mb-1 flex items-center justify-between gap-2 px-2">
             <h2 className="text-xs font-medium text-muted-foreground">
@@ -4252,84 +4260,80 @@ function StudioEnvironmentCard({
               ) : null}
             </button>
 
-            {hasGit ? (
-              <>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <button type="button" className={environmentRowClassName}>
-                      <GitBranch aria-hidden className="size-3.5 shrink-0" />
-                      <span className="min-w-0 flex-1 truncate">
-                        {git?.branch ?? copy.envBranches}
-                      </span>
-                      <RiArrowDownSLine
-                        aria-hidden
-                        className="size-3.5 shrink-0 text-muted-foreground"
-                      />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="max-w-72">
-                    <DropdownMenuLabel>{copy.envBranches}</DropdownMenuLabel>
-                    {(git?.branches ?? []).map((branch) => (
-                      <DropdownMenuItem key={branch} disabled>
-                        <span
-                          className={cn(
-                            "truncate font-mono text-xs",
-                            branch === git?.branch && "font-semibold"
-                          )}
-                        >
-                          {branch}
-                        </span>
-                        {branch === git?.branch ? (
-                          <RiCheckLine aria-hidden className="ml-auto size-3.5" />
-                        ) : null}
-                      </DropdownMenuItem>
-                    ))}
-                    {git?.remoteUrl ? (
-                      <>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuLabel>{copy.envRemote}</DropdownMenuLabel>
-                        <DropdownMenuItem
-                          onSelect={() => {
-                            if (git?.remoteUrl) {
-                              void navigator.clipboard?.writeText(git.remoteUrl)
-                            }
-                          }}
-                        >
-                          <span className="truncate font-mono text-xs">
-                            {git.remoteUrl}
-                          </span>
-                        </DropdownMenuItem>
-                      </>
-                    ) : null}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-
-                <button
-                  type="button"
-                  className={environmentRowClassName}
-                  onClick={() => setCommitDialogOpen(true)}
-                >
-                  <GitCommitHorizontal
-                    aria-hidden
-                    className="size-3.5 shrink-0"
-                  />
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button type="button" className={environmentRowClassName}>
+                  <GitBranch aria-hidden className="size-3.5 shrink-0" />
                   <span className="min-w-0 flex-1 truncate">
-                    {copy.envCommitOrPush}
+                    {git?.branch ?? copy.envBranches}
                   </span>
-                  <Ellipsis
+                  <RiArrowDownSLine
                     aria-hidden
                     className="size-3.5 shrink-0 text-muted-foreground"
                   />
                 </button>
-              </>
-            ) : null}
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="max-w-72">
+                <DropdownMenuLabel>{copy.envBranches}</DropdownMenuLabel>
+                {(git?.branches ?? []).map((branch) => (
+                  <DropdownMenuItem key={branch} disabled>
+                    <span
+                      className={cn(
+                        "truncate font-mono text-xs",
+                        branch === git?.branch && "font-semibold"
+                      )}
+                    >
+                      {branch}
+                    </span>
+                    {branch === git?.branch ? (
+                      <RiCheckLine aria-hidden className="ml-auto size-3.5" />
+                    ) : null}
+                  </DropdownMenuItem>
+                ))}
+                {git?.remoteUrl ? (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuLabel>{copy.envRemote}</DropdownMenuLabel>
+                    <DropdownMenuItem
+                      onSelect={() => {
+                        if (git?.remoteUrl) {
+                          void navigator.clipboard?.writeText(git.remoteUrl)
+                        }
+                      }}
+                    >
+                      <span className="truncate font-mono text-xs">
+                        {git.remoteUrl}
+                      </span>
+                    </DropdownMenuItem>
+                  </>
+                ) : null}
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <button
+              type="button"
+              className={environmentRowClassName}
+              onClick={() => setCommitDialogOpen(true)}
+            >
+              <GitCommitHorizontal
+                aria-hidden
+                className="size-3.5 shrink-0"
+              />
+              <span className="min-w-0 flex-1 truncate">
+                {copy.envCommitOrPush}
+              </span>
+              <Ellipsis
+                aria-hidden
+                className="size-3.5 shrink-0 text-muted-foreground"
+              />
+            </button>
           </div>
         </>
       ) : null}
 
       {goalTitle ? (
         <>
-          {project ? <div className="my-2 border-t" /> : null}
+          {hasGitChanges ? <div className="my-2 border-t" /> : null}
           <div className="mb-1 px-2">
             <h2 className="text-xs font-medium text-muted-foreground">
               {copy.envGoal}
@@ -4368,7 +4372,9 @@ function StudioEnvironmentCard({
 
       {todos.length > 0 ? (
         <>
-          <div className="my-2 border-t" />
+          {hasGitChanges || goalTitle ? (
+            <div className="my-2 border-t" />
+          ) : null}
           <div className="mb-1 px-2">
             <h2 className="text-xs font-medium text-muted-foreground">
               {copy.envProgress}
@@ -4413,7 +4419,7 @@ function StudioEnvironmentCard({
 
       {files.length > 0 ? (
         <>
-          {project || goalTitle || todos.length > 0 ? (
+          {hasGitChanges || goalTitle || todos.length > 0 ? (
             <div className="my-2 border-t" />
           ) : null}
           <div className="mb-1 px-2">
@@ -4443,52 +4449,54 @@ function StudioEnvironmentCard({
         </>
       ) : null}
 
-      <Dialog open={commitDialogOpen} onOpenChange={setCommitDialogOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>{copy.envCommitOrPush}</DialogTitle>
-            <DialogDescription className="truncate">
-              {project?.path}
-            </DialogDescription>
-          </DialogHeader>
-          <Textarea
-            value={commitMessage}
-            onChange={(event) => setCommitMessage(event.target.value)}
-            placeholder={copy.envCommitMessagePlaceholder}
-            rows={3}
-          />
-          <div className="flex justify-end gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={gitActionPending}
-              onClick={() => void handleGitAction("push")}
-            >
-              {copy.envPushAction}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={gitActionPending || !commitMessage.trim()}
-              onClick={() => void handleGitAction("commit")}
-            >
-              {copy.envCommitAction}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              disabled={
-                gitActionPending || !commitMessage.trim() || !git?.remote
-              }
-              onClick={() => void handleGitAction("commit-and-push")}
-            >
-              {copy.envCommitAndPushAction}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {project && hasGitChanges ? (
+        <Dialog open={commitDialogOpen} onOpenChange={setCommitDialogOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>{copy.envCommitOrPush}</DialogTitle>
+              <DialogDescription className="truncate">
+                {project.path}
+              </DialogDescription>
+            </DialogHeader>
+            <Textarea
+              value={commitMessage}
+              onChange={(event) => setCommitMessage(event.target.value)}
+              placeholder={copy.envCommitMessagePlaceholder}
+              rows={3}
+            />
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={gitActionPending}
+                onClick={() => void handleGitAction("push")}
+              >
+                {copy.envPushAction}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={gitActionPending || !commitMessage.trim()}
+                onClick={() => void handleGitAction("commit")}
+              >
+                {copy.envCommitAction}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={
+                  gitActionPending || !commitMessage.trim() || !git?.remote
+                }
+                onClick={() => void handleGitAction("commit-and-push")}
+              >
+                {copy.envCommitAndPushAction}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      ) : null}
     </div>
   )
 }
@@ -5137,6 +5145,11 @@ function StudioRightPanel({
                   copy={copy}
                   defaultDirectory={project?.path ?? null}
                   fileTabs={fileTabs}
+                  open={
+                    open &&
+                    mode !== "browser-settings" &&
+                    activeWorkspaceTab?.kind === "files"
+                  }
                   onOpenFile={handleOpenFileTab}
                 />
               </div>
@@ -5691,12 +5704,14 @@ function StudioRightPanelFiles({
   copy,
   defaultDirectory,
   fileTabs,
+  open,
   onOpenFile,
 }: {
   activeFileTabId: string
   copy: StudioRightPanelCopy
   defaultDirectory: string | null
   fileTabs: StudioWorkspaceFileTab[]
+  open: boolean
   onOpenFile: (entry: AstraFlowSidePanelDirectoryEntry) => void
 }) {
   const [directory, setDirectory] = React.useState<string | null>(null)
@@ -5711,7 +5726,7 @@ function StudioRightPanelFiles({
   const [error, setError] = React.useState("")
   const previewRequestRef = React.useRef(0)
   const defaultDirectoryRef = React.useRef<string | null>(null)
-  const hasAppliedDefaultDirectoryRef = React.useRef(false)
+  const wasOpenRef = React.useRef(false)
 
   const activeFileTab =
     fileTabs.find((tab) => tab.id === activeFileTabId) ??
@@ -5728,32 +5743,28 @@ function StudioRightPanelFiles({
 
   React.useEffect(() => {
     let cancelled = false
+    const becameOpen = open && !wasOpenRef.current
     const projectChanged = defaultDirectoryRef.current !== defaultDirectory
 
-    if (!projectChanged && hasAppliedDefaultDirectoryRef.current) {
+    wasOpenRef.current = open
+    defaultDirectoryRef.current = defaultDirectory
+
+    if (!open || (!becameOpen && !projectChanged)) {
       return
     }
-
-    defaultDirectoryRef.current = defaultDirectory
 
     queueMicrotask(() => {
       if (cancelled) {
         return
       }
 
-      if (defaultDirectory) {
-        setDirectory(defaultDirectory)
-        hasAppliedDefaultDirectoryRef.current = true
-      } else if (projectChanged) {
-        setDirectory(null)
-        hasAppliedDefaultDirectoryRef.current = true
-      }
+      setDirectory(defaultDirectory)
     })
 
     return () => {
       cancelled = true
     }
-  }, [defaultDirectory])
+  }, [defaultDirectory, open])
 
   const loadPreviewForEntry = React.useCallback(
     async (entry: AstraFlowSidePanelDirectoryEntry) => {

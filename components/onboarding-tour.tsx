@@ -23,8 +23,42 @@ function requestStudioOnboardingTour() {
     return
   }
 
-  window.localStorage.setItem(STUDIO_ONBOARDING_FORCE_STORAGE_KEY, "1")
+  writeOnboardingStorage(STUDIO_ONBOARDING_FORCE_STORAGE_KEY, "1")
   window.dispatchEvent(new Event(STUDIO_ONBOARDING_START_EVENT))
+}
+
+function readOnboardingStorage(key: string) {
+  try {
+    return window.localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+function writeOnboardingStorage(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value)
+  } catch {
+    // localStorage can be unavailable in restricted browser contexts.
+  }
+}
+
+function removeOnboardingStorage(key: string) {
+  try {
+    window.localStorage.removeItem(key)
+  } catch {
+    // localStorage can be unavailable in restricted browser contexts.
+  }
+}
+
+function hasSeenStudioOnboarding() {
+  const value = readOnboardingStorage(STUDIO_ONBOARDING_STORAGE_KEY)
+
+  return value === "seen" || value === "done"
+}
+
+function markStudioOnboardingSeen(value: "seen" | "done") {
+  writeOnboardingStorage(STUDIO_ONBOARDING_STORAGE_KEY, value)
 }
 
 function isVisibleTarget(element: Element) {
@@ -151,17 +185,15 @@ function StudioOnboardingTour() {
       }
 
       const forceRequested =
-        window.localStorage.getItem(STUDIO_ONBOARDING_FORCE_STORAGE_KEY) === "1"
+        readOnboardingStorage(STUDIO_ONBOARDING_FORCE_STORAGE_KEY) === "1"
 
-      window.localStorage.removeItem(STUDIO_ONBOARDING_FORCE_STORAGE_KEY)
+      removeOnboardingStorage(STUDIO_ONBOARDING_FORCE_STORAGE_KEY)
 
-      if (
-        !force &&
-        !forceRequested &&
-        window.localStorage.getItem(STUDIO_ONBOARDING_STORAGE_KEY)
-      ) {
+      if (!force && !forceRequested && hasSeenStudioOnboarding()) {
         return
       }
+
+      markStudioOnboardingSeen("seen")
 
       const steps = getStudioTourSteps(t)
         .map(createDriveStep)
@@ -199,12 +231,11 @@ function StudioOnboardingTour() {
         doneBtnText: t.studioOnboardingDone,
         onDestroyed: () => {
           driverRef.current = null
-          window.localStorage.setItem(STUDIO_ONBOARDING_STORAGE_KEY, "done")
+          markStudioOnboardingSeen("done")
         },
       })
 
       driverRef.current = tour
-      window.localStorage.setItem(STUDIO_ONBOARDING_STORAGE_KEY, "seen")
       tour.drive()
     },
     [t]

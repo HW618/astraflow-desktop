@@ -513,6 +513,7 @@ function createDeepAgentsSystemPrompt({
     toolInstructions.push(
       [
         `You are running directly on the user's machine. The built-in filesystem tools (ls, read_file, write_file, edit_file, glob, grep) and execute operate on the local filesystem, with the working directory at ${localRootDir}.`,
+        "Avoid broad recursive glob or grep searches from the home directory, especially patterns like **/AGENTS.md. Use the loaded project context, known project folders, ls, or a narrower path first.",
         "Shell commands run with the user's own permissions and are NOT sandboxed, so be conservative: never run destructive or irreversible commands unless the user explicitly asked for them.",
       ].join(" ")
     )
